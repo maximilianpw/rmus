@@ -49,9 +49,14 @@ pub struct App {
 
 impl App {
     pub fn new() -> Self {
-        let (mut left_panel, mut center_panel, mut right_panel) =
+        let (left_panel, center_panel, right_panel) =
             (LeftPanel::new(), CenterPanel::new(), RightPanel::new());
-        Self::default()
+        Self {
+            left_panel,
+            center_panel,
+            right_panel,
+            ..Default::default()
+        }
     }
 
     pub fn run(mut self, mut terminal: DefaultTerminal) -> color_eyre::Result<()> {
