@@ -1,7 +1,7 @@
 [package]
-name = "sqlox"
+name = "rmus"
 version = "0.1.0"
-description = "SQL Database viewer"
+description = "Music Player TUI"
 authors = ["Maximilian PINDER-WHITE <mpinderwhite@proton.me>"]
 license = "MIT"
 edition = "2024"
