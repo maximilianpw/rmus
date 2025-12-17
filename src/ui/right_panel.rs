@@ -1,3 +1,4 @@
+use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -5,6 +6,7 @@ use ratatui::{
     widgets::{Block, Borders},
 };
 
+#[derive(Debug, Default)]
 pub struct RightPanel {}
 
 impl RightPanel {
@@ -12,7 +14,7 @@ impl RightPanel {
         Self {}
     }
 
-    pub fn render(&self, frame: &mut Frame, area: Rect, is_focused: bool) {
+    pub fn render(&mut self, frame: &mut Frame, area: Rect, is_focused: bool) {
         let border_style = if is_focused {
             Style::default().fg(Color::Yellow)
         } else {
@@ -25,5 +27,14 @@ impl RightPanel {
                 .border_style(border_style),
             area,
         );
+    }
+
+    pub fn handle_events(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char(' ') => {
+                println!("DEBUG: Center Panel: Play/Pause (Space)"); // For debugging
+            }
+            _ => {}
+        }
     }
 }

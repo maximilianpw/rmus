@@ -1,3 +1,4 @@
+use crossterm::event::KeyEvent;
 use ratatui::{
     Frame,
     layout::Rect,
@@ -5,6 +6,7 @@ use ratatui::{
     widgets::{Block, Borders},
 };
 
+#[derive(Debug, Default)]
 pub struct CenterPanel {
     selected_folder: String,
 }
@@ -16,7 +18,7 @@ impl CenterPanel {
         }
     }
 
-    pub fn render(&self, frame: &mut Frame, area: Rect, is_focused: bool) {
+    pub fn render(&mut self, frame: &mut Frame, area: Rect, is_focused: bool) {
         let border_style = if is_focused {
             Style::default().fg(Color::Yellow)
         } else {
@@ -30,5 +32,12 @@ impl CenterPanel {
                 .border_style(border_style),
             area,
         );
+    }
+
+    pub fn handle_events(&mut self, key: KeyEvent) {
+        // Add specific key events for the right panel here
+        match key.code {
+            _ => {}
+        }
     }
 }

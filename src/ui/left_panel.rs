@@ -7,6 +7,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState, Tabs},
 };
 
+#[derive(Debug, Default)]
 pub struct LeftPanel {
     selected_tab_index: usize,
     tabs_items: Vec<&'static str>,
@@ -70,5 +71,11 @@ impl LeftPanel {
 
         frame.render_stateful_widget(list, list_area, &mut self.list_state);
     }
-    // Event handling method will be added here
+
+    pub fn handle_events(&self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char('h') | KeyCode::Up => {}
+            _ => {}
+        }
+    }
 }

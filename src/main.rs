@@ -4,7 +4,11 @@ use ratatui::{
     layout::{Constraint, Layout},
 };
 
-use crate::ui::{center_panel::CenterPanel, left_panel::LeftPanel, right_panel::RightPanel};
+use crate::ui::{
+    center_panel::{self, CenterPanel},
+    left_panel::LeftPanel,
+    right_panel::{self, RightPanel},
+};
 
 mod ui;
 
@@ -14,12 +18,6 @@ fn main() -> color_eyre::Result<()> {
     let result = App::new().run(terminal);
     ratatui::restore();
     result
-}
-
-#[derive(Debug, Default)]
-pub struct App {
-    running: bool,
-    focused_window: FocusedWindow,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
@@ -40,8 +38,19 @@ impl FocusedWindow {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct App {
+    running: bool,
+    focused_window: FocusedWindow,
+    left_panel: LeftPanel,
+    center_panel: CenterPanel,
+    right_panel: RightPanel,
+}
+
 impl App {
     pub fn new() -> Self {
+        let (mut left_panel, mut center_panel, mut right_panel) =
+            (LeftPanel::new(), CenterPanel::new(), RightPanel::new());
         Self::default()
     }
 
@@ -62,13 +71,14 @@ impl App {
         ]);
         let [left_area, center_area, right_area] = layout.areas(frame.area());
 
-        LeftPanel::new().render(frame, left_area, self.focused_window == FocusedWindow::Left);
-        CenterPanel::new().render(
+        self.left_panel
+            .render(frame, left_area, self.focused_window == FocusedWindow::Left);
+        self.center_panel.render(
             frame,
             center_area,
             self.focused_window == FocusedWindow::Center,
         );
-        RightPanel::new().render(
+        self.right_panel.render(
             frame,
             right_area,
             self.focused_window == FocusedWindow::Right,
@@ -103,42 +113,9 @@ impl App {
 
         // Focused window specific key events
         match self.focused_window {
-            FocusedWindow::Left => self.handle_left_panel_events(key),
-            FocusedWindow::Center => self.handle_center_panel_events(key),
-            FocusedWindow::Right => self.handle_right_panel_events(key),
-        }
-    }
-
-    fn handle_left_panel_events(&mut self, key: KeyEvent) {
-        // Example: Handle 'j' and 'k' for navigation in the left panel
-        match key.code {
-            KeyCode::Char('j') => {
-                // Logic for moving down in left panel's list/selection
-                // println!("Left Panel: Move Down (j)"); // For debugging
-            }
-            KeyCode::Char('k') => {
-                // Logic for moving up in left panel's list/selection
-                // println!("Left Panel: Move Up (k)"); // For debugging
-            }
-            _ => {}
-        }
-    }
-
-    fn handle_center_panel_events(&mut self, key: KeyEvent) {
-        // Example: Handle 'space' for play/pause in the center panel
-        match key.code {
-            KeyCode::Char(' ') => {
-                // Logic for playing/pausing music
-                // println!("Center Panel: Play/Pause (Space)"); // For debugging
-            }
-            _ => {}
-        }
-    }
-
-    fn handle_right_panel_events(&mut self, key: KeyEvent) {
-        // Add specific key events for the right panel here
-        match key.code {
-            _ => {}
+            FocusedWindow::Left => self.left_panel.handle_events(key),
+            FocusedWindow::Center => self.center_panel.handle_events(key),
+            FocusedWindow::Right => self.right_panel.handle_events(key),
         }
     }
 
