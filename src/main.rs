@@ -4,7 +4,7 @@ use ratatui::{
     layout::{Constraint, Layout},
 };
 
-use crate::ui::left_panel::LeftPanel;
+use crate::ui::{center_panel::CenterPanel, left_panel::LeftPanel, right_panel::RightPanel};
 
 mod ui;
 
@@ -63,12 +63,12 @@ impl App {
         let [left_area, center_area, right_area] = layout.areas(frame.area());
 
         LeftPanel::new().render(frame, left_area, self.focused_window == FocusedWindow::Left);
-        ui::center_panel::render(
+        CenterPanel::new().render(
             frame,
             center_area,
             self.focused_window == FocusedWindow::Center,
         );
-        ui::right_panel::render(
+        RightPanel::new().render(
             frame,
             right_area,
             self.focused_window == FocusedWindow::Right,
