@@ -4,14 +4,16 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Style, Stylize},
     text::Line,
-    widgets::{Block, Borders, List, ListItem, ListState, Tabs},
+    widgets::{Block, Borders, List, ListItem, ListState, Tabs, Widget},
 };
+
+use crate::ui::widget::list_from_strings;
 
 #[derive(Debug, Default)]
 pub struct LeftPanel {
     selected_tab_index: usize,
     tabs_items: Vec<&'static str>,
-    list_items: Vec<String>, // Store actual list items
+    list_items: Vec<String>,
     list_state: ListState,
 }
 
@@ -32,7 +34,6 @@ impl LeftPanel {
         }
     }
 
-    // Render method will be added here
     pub fn render(&mut self, frame: &mut Frame, area: Rect, is_focused: bool) {
         let border_style = if is_focused {
             Style::default().fg(Color::Yellow)
@@ -54,26 +55,14 @@ impl LeftPanel {
             .highlight_style(Style::default().fg(Color::Yellow).bold());
         frame.render_widget(tabs, tabs_area);
 
-        let list_items: Vec<ListItem> = self
-            .list_items
-            .iter()
-            .map(|i| ListItem::new(Line::from(i.as_str())))
-            .collect();
-
-        let list = List::new(list_items)
-            .block(
-                Block::bordered()
-                    .title("Library")
-                    .borders(Borders::ALL)
-                    .border_style(border_style),
-            )
-            .highlight_style(Style::default().bg(Color::DarkGray));
+        let list = list_from_strings(&self.list_items, border_style);
 
         frame.render_stateful_widget(list, list_area, &mut self.list_state);
     }
 
     pub fn handle_events(&mut self, key: KeyEvent) {
         match key.code {
+            KeyCode::Char('n') => println!("adding a new folder"),
             KeyCode::Char('j') | KeyCode::Down => {
                 let i = match self.list_state.selected() {
                     Some(i) => {

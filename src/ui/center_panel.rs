@@ -1,4 +1,4 @@
-use crossterm::event::KeyEvent;
+use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -34,9 +34,10 @@ impl CenterPanel {
         );
     }
 
-    pub fn handle_events(&mut self, key: KeyEvent) {
-        // Add specific key events for the right panel here
+    pub(crate) fn handle_events(&mut self, key: KeyEvent) {
         match key.code {
+            KeyCode::Char(' ') => println!("test"),
+            KeyCode::Char('d') => println!("delete"),
             _ => {}
         }
     }
