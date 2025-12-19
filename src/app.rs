@@ -5,6 +5,7 @@ use ratatui::{
 
 use crate::{
     config::Config,
+    sources::local::LocalFiles,
     ui::{center_panel::CenterPanel, left_panel::LeftPanel, right_panel::RightPanel},
 };
 
@@ -42,7 +43,7 @@ impl App {
     pub fn new() -> Self {
         Self {
             config: Config::load(),
-            left_panel: LeftPanel::new(vec![]),
+            left_panel: LeftPanel::new(vec![LocalFiles::new()]),
             center_panel: CenterPanel::new(),
             right_panel: RightPanel::new(),
             ..Default::default()

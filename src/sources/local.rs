@@ -3,7 +3,7 @@ use std::{fmt::Debug, path::PathBuf};
 use crate::sources::MusicSource;
 
 #[derive(Debug, Default)]
-struct LocalFiles {
+pub struct LocalFiles {
     pub paths: Vec<PathBuf>,
 }
 
@@ -25,5 +25,11 @@ impl MusicSource for LocalFiles {
             "Song 4 - Artist D".to_string(),
         ]);
         albums
+    }
+}
+
+impl LocalFiles {
+    pub fn new() -> Box<Self> {
+        Box::new(LocalFiles { paths: vec![] })
     }
 }
