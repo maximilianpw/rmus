@@ -3,8 +3,7 @@ use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
     style::{Color, Style, Stylize},
-    text::Line,
-    widgets::{Block, Borders, List, ListItem, ListState, Tabs, Widget},
+    widgets::{Block, Borders, ListState, Tabs},
 };
 
 use crate::ui::widget::list_from_strings;
