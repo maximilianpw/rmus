@@ -30,7 +30,7 @@ pub fn list_from_strings<'a>(list_items: &'a Vec<String>, is_focused: bool) -> L
 }
 
 pub fn tabs_from_strings<'a>(
-    tabs_items: &'a Vec<&str>,
+    tabs_items: &'a Vec<String>,
     selected_tab_index: usize,
     is_focused: bool,
 ) -> Tabs<'a> {

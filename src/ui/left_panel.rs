@@ -5,25 +5,26 @@ use ratatui::{
     widgets::ListState,
 };
 
-use crate::ui::widget::{list_from_strings, tabs_from_strings};
+use crate::{
+    sources::MusicSource,
+    ui::widget::{list_from_strings, tabs_from_strings},
+};
 
 #[derive(Debug, Default)]
 pub struct LeftPanel {
     selected_tab_index: usize,
-    tabs_items: Vec<&'static str>,
+    tabs_items: Vec<Box<dyn MusicSource>>,
     list_items: Vec<String>,
     list_state: ListState,
 }
 
 impl LeftPanel {
-    pub fn new() -> Self {
-        let tabs_items = vec!["Local", "Apple Music", "Cloud"];
-        let list_items = vec![
-            "Song 1 - Artist A".to_string(),
-            "Song 2 - Artist B".to_string(),
-            "Song 3 - Artist C".to_string(),
-            "Song 4 - Artist D".to_string(),
-        ];
+    pub fn new(sources: Vec<Box<dyn MusicSource>>) -> Self {
+        let tabs_items = sources;
+        let list_items: Vec<String> = tabs_items
+            .iter()
+            .flat_map(|item| item.get_albums())
+            .collect();
         Self {
             selected_tab_index: 0,
             tabs_items,
@@ -35,8 +36,9 @@ impl LeftPanel {
     pub fn render(&mut self, frame: &mut Frame, area: Rect, is_focused: bool) {
         let layout = Layout::vertical([Constraint::Length(3), Constraint::Fill(1)]);
         let [tabs_area, list_area] = layout.areas(area);
+        let tab_names: Vec<String> = self.tabs_items.iter().map(|s| s.name()).collect();
 
-        let tabs = tabs_from_strings(&self.tabs_items, self.selected_tab_index, is_focused);
+        let tabs = tabs_from_strings(&tab_names, self.selected_tab_index, is_focused);
         frame.render_widget(tabs, tabs_area);
 
         let list = list_from_strings(&self.list_items, is_focused);

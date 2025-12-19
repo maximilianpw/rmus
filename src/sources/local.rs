@@ -1,9 +1,29 @@
+use std::{fmt::Debug, path::PathBuf};
+
 use crate::sources::MusicSource;
 
-struct LocalFiles {}
+#[derive(Debug, Default)]
+struct LocalFiles {
+    pub paths: Vec<PathBuf>,
+}
 
 impl MusicSource for LocalFiles {
+    fn name(&self) -> String {
+        "Local".to_string()
+    }
+
     fn get_albums(&self) -> Vec<String> {
-        todo!()
+        let mut albums: Vec<String> = self
+            .paths
+            .iter()
+            .map(|path| format!("{}", path.display()))
+            .collect();
+        albums.extend(vec![
+            "Song 1 - Artist A".to_string(),
+            "Song 2 - Artist B".to_string(),
+            "Song 3 - Artist C".to_string(),
+            "Song 4 - Artist D".to_string(),
+        ]);
+        albums
     }
 }

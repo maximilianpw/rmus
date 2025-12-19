@@ -3,7 +3,10 @@ use ratatui::{
     layout::{Constraint, Layout},
 };
 
-use crate::ui::{center_panel::CenterPanel, left_panel::LeftPanel, right_panel::RightPanel};
+use crate::{
+    config::Config,
+    ui::{center_panel::CenterPanel, left_panel::LeftPanel, right_panel::RightPanel},
+};
 
 use crate::event::handle_crossterm_events;
 
@@ -27,21 +30,21 @@ impl FocusedWindow {
 
 #[derive(Debug, Default)]
 pub struct App {
-    pub(crate) running: bool,
-    pub(crate) focused_window: FocusedWindow,
-    pub(crate) left_panel: LeftPanel,
-    pub(crate) center_panel: CenterPanel,
-    pub(crate) right_panel: RightPanel,
+    pub config: Config,
+    pub running: bool,
+    pub focused_window: FocusedWindow,
+    pub left_panel: LeftPanel,
+    pub center_panel: CenterPanel,
+    pub right_panel: RightPanel,
 }
 
 impl App {
     pub fn new() -> Self {
-        let (left_panel, center_panel, right_panel) =
-            (LeftPanel::new(), CenterPanel::new(), RightPanel::new());
         Self {
-            left_panel,
-            center_panel,
-            right_panel,
+            config: Config::load(),
+            left_panel: LeftPanel::new(vec![]),
+            center_panel: CenterPanel::new(),
+            right_panel: RightPanel::new(),
             ..Default::default()
         }
     }

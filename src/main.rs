@@ -1,6 +1,7 @@
 use crate::app::App;
 
 mod app;
+mod config;
 mod event;
 mod sources;
 mod ui;
