@@ -2,11 +2,10 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
-    style::{Color, Style, Stylize},
-    widgets::{Block, Borders, ListState, Tabs},
+    widgets::ListState,
 };
 
-use crate::ui::widget::list_from_strings;
+use crate::ui::widget::{list_from_strings, tabs_from_strings};
 
 #[derive(Debug, Default)]
 pub struct LeftPanel {
@@ -34,28 +33,13 @@ impl LeftPanel {
     }
 
     pub fn render(&mut self, frame: &mut Frame, area: Rect, is_focused: bool) {
-        let border_style = if is_focused {
-            Style::default().fg(Color::Yellow)
-        } else {
-            Style::default()
-        };
-
         let layout = Layout::vertical([Constraint::Length(3), Constraint::Fill(1)]);
         let [tabs_area, list_area] = layout.areas(area);
 
-        let tabs = Tabs::new(self.tabs_items.clone())
-            .block(
-                Block::bordered()
-                    .title("Sources")
-                    .borders(Borders::ALL)
-                    .border_style(border_style),
-            )
-            .select(self.selected_tab_index)
-            .highlight_style(Style::default().fg(Color::Yellow).bold());
+        let tabs = tabs_from_strings(&self.tabs_items, self.selected_tab_index, is_focused);
         frame.render_widget(tabs, tabs_area);
 
-        let list = list_from_strings(&self.list_items, border_style);
-
+        let list = list_from_strings(&self.list_items, is_focused);
         frame.render_stateful_widget(list, list_area, &mut self.list_state);
     }
 
