@@ -5,8 +5,19 @@ use std::path::PathBuf;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Config {
-    pub local_paths: Vec<PathBuf>,
+    pub local: LocalConfig,
     pub audio: AudioConfig,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct LocalSource {
+    pub name: String,
+    pub path: PathBuf,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct LocalConfig {
+    pub sources: Vec<LocalSource>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -17,7 +28,9 @@ pub struct AudioConfig {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            local_paths: Vec::new(),
+            local: LocalConfig {
+                sources: Vec::new(),
+            },
             audio: AudioConfig { default_volume: 50 },
         }
     }
@@ -43,6 +56,17 @@ impl Config {
         }
         let toml_string = toml::to_string_pretty(self).unwrap();
         fs::write(config_path, toml_string)
+    }
+
+    pub fn get_local_sources(&self) -> Vec<LocalSource> {
+        self.local
+            .sources
+            .iter()
+            .map(|s| LocalSource {
+                name: s.name.clone(),
+                path: s.path.clone(),
+            })
+            .collect()
     }
 }
 

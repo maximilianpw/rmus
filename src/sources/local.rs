@@ -1,39 +1,36 @@
-use std::{fmt::Debug, path::PathBuf};
+use std::{fmt::Debug, fs, path::PathBuf};
 
-use crate::sources::MusicSource;
+use crate::{config::LocalSource, sources::MusicSource};
 
 #[derive(Debug, Default)]
 pub struct LocalFiles {
-    pub paths: Vec<PathBuf>,
+    pub name: String,
+    pub files: Vec<LocalSource>,
 }
 
 impl MusicSource for LocalFiles {
     fn name(&self) -> String {
-        "Local".to_string()
+        self.name.clone()
     }
 
     fn get_albums(&self) -> Vec<String> {
-        let mut albums: Vec<String> = self
-            .paths
-            .iter()
-            .map(|path| format!("{}", path.display()))
-            .collect();
-        albums.extend(vec![
-            "Song 1 - Artist A".to_string(),
-            "Song 2 - Artist B".to_string(),
-            "Song 3 - Artist C".to_string(),
-            "Song 4 - Artist D".to_string(),
-        ]);
-        albums
+        self.files.iter().map(|f| f.name.clone()).collect()
     }
 
-    fn get_songs_from_album(&self, name: String) -> Vec<String> {
-        todo!()
+    fn get_songs_from_album(&self, path: PathBuf) -> Vec<String> {
+        if let Ok(files) = fs::read_dir(path) {
+            files
+                .filter_map(|f| f.ok())
+                .filter_map(|f| f.file_name().into_string().ok())
+                .collect()
+        } else {
+            Vec::new()
+        }
     }
 }
 
 impl LocalFiles {
-    pub fn new() -> Box<Self> {
-        Box::new(LocalFiles { paths: vec![] })
+    pub fn new(name: String, files: Vec<LocalSource>) -> Box<Self> {
+        Box::new(LocalFiles { name, files })
     }
 }

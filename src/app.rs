@@ -4,8 +4,8 @@ use ratatui::{
 };
 
 use crate::{
-    config::Config,
-    sources::local::LocalFiles,
+    config::{Config, LocalSource},
+    sources::{MusicSource, local::LocalFiles},
     ui::{center_panel::CenterPanel, left_panel::LeftPanel, right_panel::RightPanel},
 };
 
@@ -41,9 +41,14 @@ pub struct App {
 
 impl App {
     pub fn new() -> Self {
+        let config = Config::load();
+        let local_sources: Vec<LocalSource> = config.get_local_sources();
+        let sources: Vec<Box<dyn MusicSource>> =
+            vec![LocalFiles::new("Local".to_string(), local_sources)];
+
         Self {
-            config: Config::load(),
-            left_panel: LeftPanel::new(vec![LocalFiles::new(), LocalFiles::new()]),
+            config,
+            left_panel: LeftPanel::new(sources),
             center_panel: CenterPanel::new(),
             right_panel: RightPanel::new(),
             ..Default::default()
