@@ -45,3 +45,12 @@ pub fn tabs_from_strings<'a>(
         .select(selected_tab_index)
         .highlight_style(Style::default().fg(Color::Yellow).bold())
 }
+
+pub fn now_playing<'a>(selected_song: &'a String, is_focused: bool) -> Block<'a> {
+    let border_style = handle_focused_border_style(is_focused);
+
+    Block::bordered()
+        .title(selected_song.to_owned())
+        .borders(Borders::ALL)
+        .border_style(border_style)
+}
