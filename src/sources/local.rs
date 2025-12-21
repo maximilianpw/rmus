@@ -26,6 +26,10 @@ impl MusicSource for LocalFiles {
         ]);
         albums
     }
+
+    fn get_songs_from_album(&self, name: String) -> Vec<String> {
+        todo!()
+    }
 }
 
 impl LocalFiles {

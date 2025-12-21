@@ -43,7 +43,7 @@ impl App {
     pub fn new() -> Self {
         Self {
             config: Config::load(),
-            left_panel: LeftPanel::new(vec![LocalFiles::new()]),
+            left_panel: LeftPanel::new(vec![LocalFiles::new(), LocalFiles::new()]),
             center_panel: CenterPanel::new(),
             right_panel: RightPanel::new(),
             ..Default::default()
