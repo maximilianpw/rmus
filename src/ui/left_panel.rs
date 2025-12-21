@@ -10,6 +10,8 @@ use crate::{
     ui::widget::{list_from_strings, tabs_from_strings},
 };
 
+const TABS_HEIGHT: u16 = 3;
+
 #[derive(Debug, Default)]
 pub struct LeftPanel {
     selected_tab_index: usize,
@@ -27,7 +29,7 @@ impl LeftPanel {
     }
 
     pub fn render(&mut self, frame: &mut Frame, area: Rect, is_focused: bool) {
-        let layout = Layout::vertical([Constraint::Length(3), Constraint::Fill(1)]);
+        let layout = Layout::vertical([Constraint::Length(TABS_HEIGHT), Constraint::Fill(1)]);
         let [tabs_area, list_area] = layout.areas(area);
         let tab_names: Vec<String> = self.items.iter().map(|s| s.name()).collect();
         let list_items: Vec<String> = self.items[self.selected_tab_index].get_albums();
@@ -41,52 +43,65 @@ impl LeftPanel {
 
     pub fn handle_events(&mut self, key: KeyEvent) {
         match key.code {
-            KeyCode::Char('n') => println!("adding a new folder"),
-            KeyCode::Char('j') | KeyCode::Down => {
-                let list_items: Vec<String> = self.items[self.selected_tab_index].get_albums();
-                if list_items.is_empty() {
-                    return;
-                }
-                let i = match self.list_state.selected() {
-                    Some(i) => {
-                        if i >= list_items.len() - 1 {
-                            0
-                        } else {
-                            i + 1
-                        }
-                    }
-                    None => 0,
-                };
-                self.list_state.select(Some(i));
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                let list_items: Vec<String> = self.items[self.selected_tab_index].get_albums();
-                if list_items.is_empty() {
-                    return;
-                }
-                let i = match self.list_state.selected() {
-                    Some(i) => {
-                        if i == 0 {
-                            list_items.len() - 1
-                        } else {
-                            i - 1
-                        }
-                    }
-                    None => 0,
-                };
-                self.list_state.select(Some(i));
-            }
-            KeyCode::Char('l') | KeyCode::Right => {
-                self.selected_tab_index = (self.selected_tab_index + 1) % self.items.len();
-            }
-            KeyCode::Char('h') | KeyCode::Left => {
-                self.selected_tab_index = if self.selected_tab_index > 0 {
-                    self.selected_tab_index - 1
-                } else {
-                    self.items.len() - 1
-                };
-            }
+            KeyCode::Char('j') | KeyCode::Down => self.next_item(),
+            KeyCode::Char('k') | KeyCode::Up => self.previous_item(),
+            KeyCode::Char('l') | KeyCode::Right => self.next_tab(),
+            KeyCode::Char('h') | KeyCode::Left => self.previous_tab(),
             _ => {}
+        }
+    }
+
+    fn next_item(&mut self) {
+        let list_items = self.items[self.selected_tab_index].get_albums();
+        if list_items.is_empty() {
+            return;
+        }
+        let i = match self.list_state.selected() {
+            Some(i) => {
+                if i >= list_items.len() - 1 {
+                    0
+                } else {
+                    i + 1
+                }
+            }
+            None => 0,
+        };
+        self.list_state.select(Some(i));
+    }
+
+    fn previous_item(&mut self) {
+        let list_items = self.items[self.selected_tab_index].get_albums();
+        if list_items.is_empty() {
+            return;
+        }
+        let i = match self.list_state.selected() {
+            Some(i) => {
+                if i == 0 {
+                    list_items.len() - 1
+                } else {
+                    i - 1
+                }
+            }
+            None => 0,
+        };
+        self.list_state.select(Some(i));
+    }
+
+    fn next_tab(&mut self) {
+        if !self.items.is_empty() {
+            self.selected_tab_index = (self.selected_tab_index + 1) % self.items.len();
+            self.list_state.select(Some(0));
+        }
+    }
+
+    fn previous_tab(&mut self) {
+        if !self.items.is_empty() {
+            self.selected_tab_index = if self.selected_tab_index > 0 {
+                self.selected_tab_index - 1
+            } else {
+                self.items.len() - 1
+            };
+            self.list_state.select(Some(0));
         }
     }
 }
