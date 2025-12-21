@@ -47,7 +47,7 @@ impl Config {
 }
 
 fn get_config_path() -> PathBuf {
-    ProjectDirs::from("com", "your_name", "music_tui")
+    ProjectDirs::from("com", "your_name", "rmus")
         .map(|dirs| dirs.config_dir().join("config.toml"))
         .unwrap_or_else(|| PathBuf::from("config.toml"))
 }
