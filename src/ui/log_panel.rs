@@ -53,7 +53,6 @@ impl Logger {
 pub struct LogPanel {
     receiver: Receiver<LogItem>,
     log_list: Vec<LogItem>,
-    cached_items: Vec<String>,
     list_state: ListState,
 }
 
@@ -63,7 +62,6 @@ impl LogPanel {
         let panel = Self {
             receiver,
             log_list: Vec::new(),
-            cached_items: Vec::new(),
             list_state: ListState::default(),
         };
         (panel, Logger { sender })

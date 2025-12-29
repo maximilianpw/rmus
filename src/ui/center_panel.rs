@@ -6,15 +6,19 @@ use ratatui::{
     widgets::{Block, Borders},
 };
 
-#[derive(Debug, Default)]
+use crate::ui::log_panel::Logger;
+
+#[derive(Debug)]
 pub struct CenterPanel {
     selected_folder: String,
+    logger: Logger,
 }
 
 impl CenterPanel {
-    pub fn new() -> Self {
+    pub fn new(logger: Logger) -> Self {
         Self {
             selected_folder: String::new(),
+            logger,
         }
     }
 

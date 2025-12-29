@@ -6,7 +6,7 @@ use ratatui::{
 
 use crate::ui::{
     log_panel::{LogPanel, Logger},
-    widget::list_from_strings,
+    widget::now_playing,
 };
 
 #[derive(Debug)]
@@ -17,17 +17,17 @@ pub struct RightPanel {
 
 const PLAYING_FILL: u16 = 3;
 impl RightPanel {
-    pub fn new() -> Self {
+    pub fn new() -> (Self, Logger) {
         let (log_panel, logger) = LogPanel::new();
-        Self { log_panel, logger }
+        (Self { log_panel, logger: logger.clone() }, logger)
     }
 
     pub fn render(&mut self, frame: &mut Frame, area: Rect, is_focused: bool) {
         let layout = Layout::vertical([Constraint::Fill(PLAYING_FILL), Constraint::Fill(1)]);
         let [playing_area, log_area] = layout.areas(area);
 
-        let now_playing_list = vec!["LALA".to_owned()];
-        let now_playing = list_from_strings(&now_playing_list, is_focused);
+        let now_playing_song = String::from("American Wedding");
+        let now_playing = now_playing(&now_playing_song, is_focused);
         self.log_panel.poll();
 
         frame.render_widget(now_playing, playing_area);

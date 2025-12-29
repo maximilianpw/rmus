@@ -7,26 +7,31 @@ use ratatui::{
 
 use crate::{
     sources::MusicSource,
-    ui::widget::{list_from_strings, tabs_from_strings},
+    ui::{
+        log_panel::Logger,
+        widget::{list_from_strings, tabs_from_strings},
+    },
 };
 
 const TABS_HEIGHT: u16 = 3;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct LeftPanel {
     selected_tab_index: usize,
     items: Vec<Box<dyn MusicSource>>,
     list_state: ListState,
     cached_items: Vec<String>,
+    logger: Logger,
 }
 
 impl LeftPanel {
-    pub fn new(sources: Vec<Box<dyn MusicSource>>) -> Self {
+    pub fn new(sources: Vec<Box<dyn MusicSource>>, logger: Logger) -> Self {
         let mut panel = Self {
             selected_tab_index: 0,
             items: sources,
             list_state: ListState::default(),
             cached_items: Vec::new(),
+            logger,
         };
         panel.update_cache();
         panel

@@ -47,14 +47,15 @@ impl App {
         let local_sources: Vec<LocalSource> = config.get_local_sources();
         let sources: Vec<Box<dyn MusicSource>> =
             vec![LocalFiles::new("Local".to_string(), local_sources)];
+        let (right_panel, logger) = RightPanel::new();
 
         Self {
             config,
             running: false,
             focused_window: FocusedWindow::default(),
-            left_panel: LeftPanel::new(sources),
-            center_panel: CenterPanel::new(),
-            right_panel: RightPanel::new(),
+            left_panel: LeftPanel::new(sources, logger.clone()),
+            center_panel: CenterPanel::new(logger),
+            right_panel,
         }
     }
 
