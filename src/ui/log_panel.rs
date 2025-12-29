@@ -1,28 +1,54 @@
+use std::sync::mpsc::{self, Receiver, Sender};
+
 use crossterm::event::{KeyCode, KeyEvent};
-use ratatui::{
-    Frame,
-    layout::Rect,
-    style::{Color, Style},
-    widgets::{Block, Borders},
-};
+use ratatui::widgets::{List, ListState};
 
 use crate::ui::widget::list_from_strings;
 
-#[derive(Debug, Default)]
+struct LogItem {
+    message: String,
+}
+
+#[derive(Clone)]
+pub struct Logger {
+    sender: Sender<LogItem>,
+}
+
+impl Logger {
+    pub fn debug(&self, message: impl Into<String>) {
+        let _ = self.sender.send(LogItem { message: message.into() });
+    }
+}
+
 pub struct LogPanel {
-    selected_folder: String,
+    receiver: Receiver<LogItem>,
+    log_list: Vec<LogItem>,
+    cached_items: Vec<String>,
+    list_state: ListState,
 }
 
 impl LogPanel {
-    pub fn new() -> Self {
-        Self {
-            selected_folder: String::new(),
+    pub fn new() -> (Self, Logger) {
+        let (sender, receiver) = mpsc::channel();
+        let panel = Self {
+            receiver,
+            log_list: Vec::new(),
+            cached_items: Vec::new(),
+            list_state: ListState::default(),
+        };
+        (panel, Logger { sender })
+    }
+
+    /// Call this each frame to drain pending log messages
+    pub fn poll(&mut self) {
+        while let Ok(item) = self.receiver.try_recv() {
+            self.cached_items.push(format!("LOG: {}", &item.message));
+            self.log_list.push(item);
         }
     }
 
-    pub fn render(&mut self, frame: &mut Frame, area: Rect, is_focused: bool) {
-        let list = list_from_strings(&vec!["STIRNG".to_owned()], is_focused);
-        frame.render_widget(area);
+    pub fn render(&mut self) -> List {
+        list_from_strings(&self.cached_items, false)
     }
 
     pub(crate) fn handle_events(&mut self, key: KeyEvent) {
