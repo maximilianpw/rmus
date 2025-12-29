@@ -17,6 +17,7 @@ pub enum FocusedWindow {
     Left,
     Center,
     Right,
+    Logs,
 }
 
 impl FocusedWindow {
@@ -24,12 +25,13 @@ impl FocusedWindow {
         match self {
             Self::Left => Self::Center,
             Self::Center => Self::Right,
-            Self::Right => Self::Left,
+            Self::Right => Self::Logs,
+            Self::Logs => Self::Left,
         }
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct App {
     pub config: Config,
     pub running: bool,
@@ -48,10 +50,11 @@ impl App {
 
         Self {
             config,
+            running: false,
+            focused_window: FocusedWindow::default(),
             left_panel: LeftPanel::new(sources),
             center_panel: CenterPanel::new(),
             right_panel: RightPanel::new(),
-            ..Default::default()
         }
     }
 
