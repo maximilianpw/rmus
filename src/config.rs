@@ -1,5 +1,6 @@
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
+use std::fmt::{Debug, Display};
 use std::fs;
 use std::path::PathBuf;
 
@@ -33,6 +34,15 @@ impl Default for Config {
             },
             audio: AudioConfig { default_volume: 50 },
         }
+    }
+}
+
+impl Display for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Config")
+            .field("local", &self.local)
+            .field("audio", &self.audio)
+            .finish()
     }
 }
 

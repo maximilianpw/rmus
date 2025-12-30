@@ -4,7 +4,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, Tabs},
 };
 
-fn handle_focused_border_style(is_focused: bool) -> Style {
+pub fn handle_focused_border_style(is_focused: bool) -> Style {
     if is_focused {
         Style::default().fg(Color::Yellow)
     } else {

@@ -32,7 +32,7 @@ pub fn on_key_event(app: &mut App, key: KeyEvent) {
     match app.focused_window {
         FocusedWindow::Left => app.left_panel.handle_events(key),
         FocusedWindow::Center => app.center_panel.handle_events(key),
-        FocusedWindow::Right => app.right_panel.handle_events(key),
+        FocusedWindow::Right => {}
         FocusedWindow::Logs => app.right_panel.log_panel.handle_events(key),
     }
 }

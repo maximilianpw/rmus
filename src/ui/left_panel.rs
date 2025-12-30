@@ -106,6 +106,10 @@ impl LeftPanel {
             self.selected_tab_index = (self.selected_tab_index + 1) % self.items.len();
             self.list_state.select(Some(0));
             self.update_cache();
+            self.logger.debug(format!(
+                "switched to {tab_name}",
+                tab_name = self.items[self.selected_tab_index].name()
+            ));
         }
     }
 
@@ -118,6 +122,10 @@ impl LeftPanel {
             };
             self.list_state.select(Some(0));
             self.update_cache();
+            self.logger.debug(format!(
+                "switched to {tab_name}",
+                tab_name = self.items[self.selected_tab_index].name()
+            ));
         }
     }
 }

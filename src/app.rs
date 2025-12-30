@@ -6,7 +6,12 @@ use ratatui::{
 use crate::{
     config::{Config, LocalSource},
     sources::{MusicSource, local::LocalFiles},
-    ui::{center_panel::CenterPanel, left_panel::LeftPanel, right_panel::RightPanel},
+    ui::{
+        center_panel::CenterPanel,
+        left_panel::LeftPanel,
+        log_panel::{LogPanel, Logger},
+        right_panel::RightPanel,
+    },
 };
 
 use crate::event::handle_crossterm_events;
@@ -47,15 +52,16 @@ impl App {
         let local_sources: Vec<LocalSource> = config.get_local_sources();
         let sources: Vec<Box<dyn MusicSource>> =
             vec![LocalFiles::new("Local".to_string(), local_sources)];
-        let (right_panel, logger) = RightPanel::new();
+        let (log_panel, logger) = LogPanel::new();
+        logger.debug(format!("{something}", something = config));
 
         Self {
             config,
             running: false,
             focused_window: FocusedWindow::default(),
             left_panel: LeftPanel::new(sources, logger.clone()),
-            center_panel: CenterPanel::new(logger),
-            right_panel,
+            center_panel: CenterPanel::new(logger.clone()),
+            right_panel: RightPanel::new(log_panel),
         }
     }
 

@@ -1,31 +1,19 @@
-use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
 };
 
-use crate::ui::{
-    log_panel::{LogPanel, Logger},
-    widget::now_playing,
-};
+use crate::ui::{log_panel::LogPanel, widget::now_playing};
 
 #[derive(Debug)]
 pub struct RightPanel {
     pub log_panel: LogPanel,
-    logger: Logger,
 }
 
 const PLAYING_FILL: u16 = 3;
 impl RightPanel {
-    pub fn new() -> (Self, Logger) {
-        let (log_panel, logger) = LogPanel::new();
-        (
-            Self {
-                log_panel,
-                logger: logger.clone(),
-            },
-            logger,
-        )
+    pub fn new(log_panel: LogPanel) -> Self {
+        Self { log_panel }
     }
 
     pub fn render(&mut self, frame: &mut Frame, area: Rect, is_focused: bool) {
@@ -37,15 +25,6 @@ impl RightPanel {
         self.log_panel.poll();
 
         frame.render_widget(now_playing, playing_area);
-        self.log_panel.render(frame, log_area);
-    }
-
-    pub fn handle_events(&mut self, key: KeyEvent) {
-        match key.code {
-            KeyCode::Char(' ') => self.logger.error("space pressed"),
-            KeyCode::Char('d') => self.logger.debug("d pressed"),
-            KeyCode::Char('i') => self.logger.info("i pressed"),
-            _ => {}
-        }
+        self.log_panel.render(frame, log_area, is_focused);
     }
 }

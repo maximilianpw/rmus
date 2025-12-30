@@ -40,8 +40,8 @@ impl CenterPanel {
 
     pub(crate) fn handle_events(&mut self, key: KeyEvent) {
         match key.code {
-            KeyCode::Char(' ') => println!("test"),
-            KeyCode::Char('d') => println!("delete"),
+            KeyCode::Char(' ') => self.logger.info("test"),
+            KeyCode::Char('d') => self.logger.info("delete"),
             _ => {}
         }
     }
