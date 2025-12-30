@@ -19,7 +19,13 @@ const PLAYING_FILL: u16 = 3;
 impl RightPanel {
     pub fn new() -> (Self, Logger) {
         let (log_panel, logger) = LogPanel::new();
-        (Self { log_panel, logger: logger.clone() }, logger)
+        (
+            Self {
+                log_panel,
+                logger: logger.clone(),
+            },
+            logger,
+        )
     }
 
     pub fn render(&mut self, frame: &mut Frame, area: Rect, is_focused: bool) {
