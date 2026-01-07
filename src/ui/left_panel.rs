@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     Frame,
@@ -6,7 +8,7 @@ use ratatui::{
 };
 
 use crate::{
-    sources::MusicSource,
+    sources::{MusicSource, song::Song},
     ui::{
         log_panel::Logger,
         widget::{list_from_strings, tabs_from_strings},
@@ -99,6 +101,14 @@ impl LeftPanel {
             None => 0,
         };
         self.list_state.select(Some(i));
+    }
+
+    pub fn get_selected_album(&self) -> Option<(PathBuf, Vec<Song>)> {
+        let idx = self.list_state.selected()?;
+        let source = self.items.get(self.selected_tab_index)?;
+        let path = source.get_album_path(idx)?;
+        let songs = source.get_songs_from_album(path.clone());
+        Some((path, songs))
     }
 
     fn next_tab(&mut self) {

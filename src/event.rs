@@ -25,13 +25,29 @@ pub fn on_key_event(app: &mut App, key: KeyEvent) {
             app.focused_window = app.focused_window.next();
             return;
         }
-        _ => {} // Continue to focused window specific events
+        _ => {}
     }
 
     // Focused window specific key events
     match app.focused_window {
-        FocusedWindow::Left => app.left_panel.handle_events(key),
-        FocusedWindow::Center => app.center_panel.handle_events(key),
+        FocusedWindow::Left => {
+            if key.code == KeyCode::Char(' ') {
+                if let Some((path, songs)) = app.left_panel.get_selected_album() {
+                    app.center_panel.set_album(path, songs);
+                }
+            } else {
+                app.left_panel.handle_events(key);
+            }
+        }
+        FocusedWindow::Center => {
+            if key.code == KeyCode::Char(' ') {
+                if let Some(song) = app.center_panel.get_selected_song() {
+                    app.right_panel.play_song(song)
+                }
+            } else {
+                app.center_panel.handle_events(key)
+            }
+        }
         FocusedWindow::Right => {}
         FocusedWindow::Logs => app.right_panel.log_panel.handle_events(key),
     }

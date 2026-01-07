@@ -4,6 +4,8 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, Tabs},
 };
 
+use crate::sources::song::Song;
+
 pub fn handle_focused_border_style(is_focused: bool) -> Style {
     if is_focused {
         Style::default().fg(Color::Yellow)
@@ -46,11 +48,16 @@ pub fn tabs_from_strings<'a>(
         .highlight_style(Style::default().fg(Color::Yellow).bold())
 }
 
-pub fn now_playing<'a>(selected_song: &'a String, is_focused: bool) -> Block<'a> {
+pub fn now_playing<'a>(selected_song: &'a Option<Song>, is_focused: bool) -> Block<'a> {
     let border_style = handle_focused_border_style(is_focused);
-
-    Block::bordered()
-        .title(selected_song.to_owned())
-        .borders(Borders::ALL)
-        .border_style(border_style)
+    if let Some(song) = selected_song {
+        Block::bordered()
+            .title(song.title.to_owned())
+            .borders(Borders::ALL)
+            .border_style(border_style)
+    } else {
+        Block::bordered()
+            .borders(Borders::ALL)
+            .border_style(border_style)
+    }
 }

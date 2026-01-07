@@ -1,6 +1,13 @@
-use std::{fmt::Debug, fs, path::PathBuf};
+use std::{
+    fmt::Debug,
+    fs::{self},
+    path::PathBuf,
+};
 
-use crate::{config::LocalSource, sources::MusicSource};
+use crate::{
+    config::LocalSource,
+    sources::{MusicSource, song::Song},
+};
 
 #[derive(Debug, Default)]
 pub struct LocalFiles {
@@ -17,12 +24,13 @@ impl MusicSource for LocalFiles {
         self.files.iter().map(|f| f.name.clone()).collect()
     }
 
-    fn get_songs_from_album(&self, path: PathBuf) -> Vec<String> {
+    fn get_album_path(&self, index: usize) -> Option<PathBuf> {
+        self.files.get(index).map(|f| f.path.clone())
+    }
+
+    fn get_songs_from_album(&self, path: PathBuf) -> Vec<Song> {
         if let Ok(files) = fs::read_dir(path) {
-            files
-                .filter_map(|f| f.ok())
-                .filter_map(|f| f.file_name().into_string().ok())
-                .collect()
+            files.filter_map(|f| f.ok()).map(Song::new).collect()
         } else {
             Vec::new()
         }

@@ -7,9 +7,7 @@ use crate::{
     config::{Config, LocalSource},
     sources::{MusicSource, local::LocalFiles},
     ui::{
-        center_panel::CenterPanel,
-        left_panel::LeftPanel,
-        log_panel::{LogPanel, Logger},
+        center_panel::CenterPanel, left_panel::LeftPanel, log_panel::LogPanel,
         right_panel::RightPanel,
     },
 };
@@ -38,7 +36,6 @@ impl FocusedWindow {
 
 #[derive(Debug)]
 pub struct App {
-    pub config: Config,
     pub running: bool,
     pub focused_window: FocusedWindow,
     pub left_panel: LeftPanel,
@@ -56,7 +53,6 @@ impl App {
         logger.debug(format!("{something}", something = config));
 
         Self {
-            config,
             running: false,
             focused_window: FocusedWindow::default(),
             left_panel: LeftPanel::new(sources, logger.clone()),
