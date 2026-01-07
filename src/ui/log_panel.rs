@@ -154,10 +154,11 @@ impl LogPanel {
 
     pub fn scroll_right(&mut self) {
         if let Some(i) = self.list_state.selected() {
-            if let Some(item) = self.log_list.get(i) {
-                if self.h_scroll < item.message.len() {
+            match self.log_list.get(i) {
+                Some(item) if self.h_scroll < item.message.len() => {
                     self.h_scroll += 1;
                 }
+                _ => (),
             }
         }
     }
