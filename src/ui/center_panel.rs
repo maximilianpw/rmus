@@ -86,6 +86,14 @@ impl CenterPanel {
         }
     }
 
+    pub fn get_selected_index(&self) -> Option<usize> {
+        self.list_state.selected()
+    }
+
+    pub fn get_songs(&self) -> Vec<Song> {
+        self.songs.clone()
+    }
+
     fn next_item(&mut self) {
         if self.songs.is_empty() {
             return;

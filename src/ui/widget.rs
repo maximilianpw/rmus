@@ -1,10 +1,12 @@
 use ratatui::{
+    Frame,
+    layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Style, Stylize},
-    text::Line,
-    widgets::{Block, Borders, List, ListItem, Tabs},
+    text::{Line, Span},
+    widgets::{Block, Borders, Gauge, List, ListItem, Paragraph, Tabs},
 };
 
-use crate::sources::song::Song;
+use crate::players::{PlaybackInfo, PlaybackState};
 
 pub fn handle_focused_border_style(is_focused: bool) -> Style {
     if is_focused {
@@ -48,16 +50,64 @@ pub fn tabs_from_strings<'a>(
         .highlight_style(Style::default().fg(Color::Yellow).bold())
 }
 
-pub fn now_playing<'a>(selected_song: &'a Option<Song>, is_focused: bool) -> Block<'a> {
+pub fn now_playing_widget(info: &PlaybackInfo, is_focused: bool, frame: &mut Frame, area: Rect) {
     let border_style = handle_focused_border_style(is_focused);
-    if let Some(song) = selected_song {
-        Block::bordered()
-            .title(song.title.to_owned())
-            .borders(Borders::ALL)
-            .border_style(border_style)
-    } else {
-        Block::bordered()
-            .borders(Borders::ALL)
-            .border_style(border_style)
+
+    let title = match &info.current_song {
+        Some(song) => song.title.clone(),
+        None => "Not Playing".to_string(),
+    };
+
+    let block = Block::bordered()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(border_style);
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    if inner.height < 3 {
+        return;
     }
+
+    let chunks = Layout::vertical([
+        Constraint::Length(1), // Status
+        Constraint::Length(1), // Progress
+        Constraint::Length(1), // Time
+    ])
+    .split(inner);
+
+    // Status line
+    let status = match info.state {
+        PlaybackState::Playing => Span::styled("Playing", Style::default().fg(Color::Green)),
+        PlaybackState::Paused => Span::styled("Paused", Style::default().fg(Color::Yellow)),
+        PlaybackState::Stopped => Span::styled("Stopped", Style::default().fg(Color::Gray)),
+    };
+    let volume = Span::raw(format!(" | Vol: {}%", info.volume));
+    frame.render_widget(Paragraph::new(Line::from(vec![status, volume])), chunks[0]);
+
+    // Progress bar
+    let progress = if info.duration > 0.0 {
+        (info.position / info.duration).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let gauge = Gauge::default()
+        .ratio(progress)
+        .gauge_style(Style::default().fg(Color::Cyan));
+    frame.render_widget(gauge, chunks[1]);
+
+    // Time display
+    let pos_mins = (info.position / 60.0) as u32;
+    let pos_secs = (info.position % 60.0) as u32;
+    let dur_mins = (info.duration / 60.0) as u32;
+    let dur_secs = (info.duration % 60.0) as u32;
+    let time_str = format!(
+        "{:02}:{:02} / {:02}:{:02}",
+        pos_mins, pos_secs, dur_mins, dur_secs
+    );
+    frame.render_widget(
+        Paragraph::new(time_str).alignment(Alignment::Center),
+        chunks[2],
+    );
 }

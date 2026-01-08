@@ -5,7 +5,8 @@ use ratatui::{
 
 use crate::{
     config::{Config, LocalSource},
-    sources::{MusicSource, local::LocalFiles},
+    players::{MusicPlayer, mpv::MpvPlayer},
+    sources::{MusicSource, local::LocalFiles, song::Song},
     ui::{
         center_panel::CenterPanel, left_panel::LeftPanel, log_panel::LogPanel,
         right_panel::RightPanel,
@@ -41,6 +42,7 @@ pub struct App {
     pub left_panel: LeftPanel,
     pub center_panel: CenterPanel,
     pub right_panel: RightPanel,
+    pub player: MpvPlayer,
 }
 
 impl App {
@@ -58,16 +60,54 @@ impl App {
             left_panel: LeftPanel::new(sources, logger.clone()),
             center_panel: CenterPanel::new(logger.clone()),
             right_panel: RightPanel::new(log_panel),
+            player: MpvPlayer::new(),
         }
     }
 
     pub fn run(mut self, mut terminal: DefaultTerminal) -> color_eyre::Result<()> {
         self.running = true;
         while self.running {
+            // Poll player for updates
+            if let Ok(info) = self.player.poll() {
+                self.right_panel.update_playback_info(info);
+            }
+
             terminal.draw(|frame| self.render(frame))?;
             handle_crossterm_events(&mut self)?;
         }
+
+        // Clean shutdown
+        let _ = self.player.shutdown();
         Ok(())
+    }
+
+    pub fn play_song(&mut self, song: Song) {
+        if let Err(e) = self.player.play(&song) {
+            // Player will auto-spawn on first use
+            let _ = e;
+        }
+    }
+
+    pub fn play_album_from(&mut self, songs: Vec<Song>, index: usize) {
+        if let Err(e) = self.player.play_album(songs, index) {
+            let _ = e;
+        }
+    }
+
+    pub fn toggle_pause(&mut self) {
+        let _ = self.player.toggle_pause();
+    }
+
+    pub fn next_track(&mut self) {
+        let _ = self.player.next();
+    }
+
+    pub fn previous_track(&mut self) {
+        let _ = self.player.previous();
+    }
+
+    pub fn stop_playback(&mut self) {
+        let _ = self.player.stop();
     }
 
     fn render(&mut self, frame: &mut Frame) {
