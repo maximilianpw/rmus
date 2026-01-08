@@ -1,5 +1,5 @@
 use base64::Engine;
-use md5::{Digest, Md5};
+use md5::compute as md5_compute;
 use regex::Regex;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -151,7 +151,7 @@ async fn get_app_id_and_secret() -> Result<(String, String), Box<dyn std::error:
         let now = chrono::Utc::now();
         let ts = now.timestamp() as f64 + now.timestamp_subsec_micros() as f64 / 1_000_000.0;
         let sig_input = format!("trackgetFileUrlformat_id27intentstreamtrack_id1{ts}{secret}");
-        let sig = format!("{:x}", Md5::digest(sig_input.as_bytes()));
+        let sig = format!("{:x}", md5_compute(sig_input.as_bytes()));
 
         let url = format!(
             "{BASE_URL}/track/getFileUrl?format_id=27&intent=stream&track_id=1&request_ts={ts}&request_sig={sig}"
@@ -179,7 +179,7 @@ impl QobuzPlayer {
     }
 
     async fn login(&mut self, email: &str, password: &str) -> Result<bool, reqwest::Error> {
-        let pwd_hash = format!("{:x}", Md5::digest(password.as_bytes()));
+        let pwd_hash = format!("{:x}", md5_compute(password.as_bytes()));
 
         let resp: LoginResponse = self
             .client
@@ -231,7 +231,7 @@ impl QobuzPlayer {
             "trackgetFileUrlformat_id{QUALITY}intentstreamtrack_id{track_id}{ts}{}",
             self.app_secret
         );
-        let sig = format!("{:x}", Md5::digest(sig_input.as_bytes()));
+        let sig = format!("{:x}", md5_compute(sig_input.as_bytes()));
 
         let token = self.token.as_deref().unwrap_or("");
 

@@ -7,6 +7,7 @@ use std::path::PathBuf;
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Config {
     pub local: LocalConfig,
+    pub qobuz: QobuzConfig,
     pub audio: AudioConfig,
 }
 
@@ -22,6 +23,13 @@ pub struct LocalConfig {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct QobuzConfig {
+    pub email: String,
+    pub password: String,
+    pub app_id: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct AudioConfig {
     pub default_volume: u16,
 }
@@ -32,6 +40,11 @@ impl Default for Config {
             local: LocalConfig {
                 sources: Vec::new(),
             },
+            qobuz: QobuzConfig {
+                email: String::new(),
+                password: String::new(),
+                app_id: String::new(),
+            },
             audio: AudioConfig { default_volume: 50 },
         }
     }
@@ -41,6 +54,7 @@ impl Display for Config {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Config")
             .field("local", &self.local)
+            .field("qobuz", &self.qobuz)
             .field("audio", &self.audio)
             .finish()
     }
@@ -81,7 +95,7 @@ impl Config {
 }
 
 fn get_config_path() -> PathBuf {
-    ProjectDirs::from("com", "your_name", "rmus")
+    ProjectDirs::from("com", "maximilianpw", "rmus")
         .map(|dirs| dirs.config_dir().join("config.toml"))
         .unwrap_or_else(|| PathBuf::from("config.toml"))
 }
