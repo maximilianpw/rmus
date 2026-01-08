@@ -7,7 +7,8 @@ use std::path::PathBuf;
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Config {
     pub local: LocalConfig,
-    pub qobuz: QobuzConfig,
+    #[serde(default)]
+    pub qobuz: Option<QobuzConfig>,
     pub audio: AudioConfig,
 }
 
@@ -40,11 +41,7 @@ impl Default for Config {
             local: LocalConfig {
                 sources: Vec::new(),
             },
-            qobuz: QobuzConfig {
-                email: String::new(),
-                password: String::new(),
-                app_id: String::new(),
-            },
+            qobuz: None,
             audio: AudioConfig { default_volume: 50 },
         }
     }
@@ -98,4 +95,99 @@ fn get_config_path() -> PathBuf {
     ProjectDirs::from("com", "maximilianpw", "rmus")
         .map(|dirs| dirs.config_dir().join("config.toml"))
         .unwrap_or_else(|| PathBuf::from("config.toml"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_config_without_qobuz() {
+        let toml = r#"
+            [[local.sources]]
+            name = "Test Album"
+            path = "/music/test"
+
+            [audio]
+            default_volume = 75
+        "#;
+
+        let config: Config = toml::from_str(toml).unwrap();
+        assert!(config.qobuz.is_none());
+        assert_eq!(config.audio.default_volume, 75);
+        assert_eq!(config.local.sources.len(), 1);
+        assert_eq!(config.local.sources[0].name, "Test Album");
+    }
+
+    #[test]
+    fn test_parse_config_with_qobuz() {
+        let toml = r#"
+            [[local.sources]]
+            name = "Test"
+            path = "/music"
+
+            [qobuz]
+            email = "test@example.com"
+            password = "secret"
+            app_id = "12345"
+
+            [audio]
+            default_volume = 50
+        "#;
+
+        let config: Config = toml::from_str(toml).unwrap();
+        assert!(config.qobuz.is_some());
+        let qobuz = config.qobuz.unwrap();
+        assert_eq!(qobuz.email, "test@example.com");
+        assert_eq!(qobuz.app_id, "12345");
+    }
+
+    #[test]
+    fn test_parse_multiple_sources() {
+        let toml = r#"
+            [[local.sources]]
+            name = "Album 1"
+            path = "/music/album1"
+
+            [[local.sources]]
+            name = "Album 2"
+            path = "/music/album2"
+
+            [audio]
+            default_volume = 50
+        "#;
+
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.local.sources.len(), 2);
+        assert_eq!(config.local.sources[0].name, "Album 1");
+        assert_eq!(config.local.sources[1].name, "Album 2");
+    }
+
+    #[test]
+    fn test_default_config() {
+        let config = Config::default();
+        assert!(config.local.sources.is_empty());
+        assert!(config.qobuz.is_none());
+        assert_eq!(config.audio.default_volume, 50);
+    }
+
+    #[test]
+    fn test_get_local_sources() {
+        let config = Config {
+            local: LocalConfig {
+                sources: vec![
+                    LocalSource {
+                        name: "Test".to_string(),
+                        path: PathBuf::from("/test"),
+                    },
+                ],
+            },
+            qobuz: None,
+            audio: AudioConfig { default_volume: 50 },
+        };
+
+        let sources = config.get_local_sources();
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].name, "Test");
+    }
 }
