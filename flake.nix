@@ -16,6 +16,7 @@
         buildInputs = with pkgs; [
           rustc
           cargo
+          rust-analyzer
           openssl
           pkg-config
           mpv

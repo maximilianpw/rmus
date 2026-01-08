@@ -1,4 +1,4 @@
-use std::{fmt::Display, fs::DirEntry, path::PathBuf};
+use std::{fmt::Display, fs::DirEntry, path::PathBuf, process::Command};
 
 #[derive(Debug, Default, Clone)]
 pub struct Song {
@@ -24,5 +24,14 @@ impl Display for Song {
             .field("title", &self.title)
             .field("path", &self.path)
             .finish()
+    }
+}
+
+impl Song {
+    pub fn play(&self) {
+        let result = Command::new("mpv")
+            .args(["--no-video", "--term-osd-bar"])
+            .arg(&self.path)
+            .status();
     }
 }

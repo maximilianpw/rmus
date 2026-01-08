@@ -35,6 +35,7 @@ impl RightPanel {
     }
 
     pub fn play_song(&mut self, song: Song) {
+        song.play();
         self.selected_song = Some(song);
     }
 }
