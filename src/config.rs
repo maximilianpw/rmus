@@ -2,7 +2,7 @@ use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Display};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Config {
@@ -23,7 +23,7 @@ pub struct LocalConfig {
     pub sources: Vec<LocalSource>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize)]
 pub struct QobuzConfig {
     pub email: String,
     pub password: String,
@@ -57,6 +57,16 @@ impl Display for Config {
     }
 }
 
+impl Debug for QobuzConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("QobuzConfig")
+            .field("email", &self.email)
+            .field("password", &"<redacted>")
+            .field("app_id", &self.app_id)
+            .finish()
+    }
+}
+
 impl Config {
     pub fn load() -> Self {
         let config_path = get_config_path();
@@ -85,9 +95,22 @@ impl Config {
             .iter()
             .map(|s| LocalSource {
                 name: s.name.clone(),
-                path: s.path.clone(),
+                path: expand_local_path(&s.path),
             })
             .collect()
+    }
+}
+
+fn expand_local_path(path: &Path) -> PathBuf {
+    let raw = path.to_string_lossy();
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+
+    match home {
+        Some(home) if raw == "~" => home,
+        Some(home) if raw.starts_with("~/") => home.join(&raw[2..]),
+        Some(home) if raw == "$HOME" => home,
+        Some(home) if raw.starts_with("$HOME/") => home.join(&raw[6..]),
+        _ => path.to_path_buf(),
     }
 }
 
@@ -175,12 +198,10 @@ mod tests {
     fn test_get_local_sources() {
         let config = Config {
             local: LocalConfig {
-                sources: vec![
-                    LocalSource {
-                        name: "Test".to_string(),
-                        path: PathBuf::from("/test"),
-                    },
-                ],
+                sources: vec![LocalSource {
+                    name: "Test".to_string(),
+                    path: PathBuf::from("/test"),
+                }],
             },
             qobuz: None,
             audio: AudioConfig { default_volume: 50 },
@@ -189,5 +210,18 @@ mod tests {
         let sources = config.get_local_sources();
         assert_eq!(sources.len(), 1);
         assert_eq!(sources[0].name, "Test");
+    }
+
+    #[test]
+    fn test_qobuz_debug_redacts_password() {
+        let qobuz = QobuzConfig {
+            email: "user@example.com".to_string(),
+            password: "super-secret".to_string(),
+            app_id: "12345".to_string(),
+        };
+
+        let formatted = format!("{qobuz:?}");
+        assert!(!formatted.contains("super-secret"));
+        assert!(formatted.contains("<redacted>"));
     }
 }

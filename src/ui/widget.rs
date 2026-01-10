@@ -16,7 +16,7 @@ pub fn handle_focused_border_style(is_focused: bool) -> Style {
     }
 }
 
-pub fn list_from_strings<'a>(list_items: &'a Vec<String>, is_focused: bool) -> List<'a> {
+pub fn list_from_strings<'a>(list_items: &'a [String], is_focused: bool) -> List<'a> {
     let border_style = handle_focused_border_style(is_focused);
     let list_items: Vec<ListItem> = list_items
         .iter()
@@ -34,12 +34,12 @@ pub fn list_from_strings<'a>(list_items: &'a Vec<String>, is_focused: bool) -> L
 }
 
 pub fn tabs_from_strings<'a>(
-    tabs_items: &'a Vec<String>,
+    tabs_items: &'a [String],
     selected_tab_index: usize,
     is_focused: bool,
 ) -> Tabs<'a> {
     let border_style = handle_focused_border_style(is_focused);
-    Tabs::new(tabs_items.clone())
+    Tabs::new(tabs_items.to_owned())
         .block(
             Block::bordered()
                 .title("Sources")

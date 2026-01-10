@@ -8,7 +8,9 @@ use crate::{
     players::{MusicPlayer, mpv::MpvPlayer},
     sources::{MusicSource, local::LocalFiles, song::Song},
     ui::{
-        center_panel::CenterPanel, left_panel::LeftPanel, log_panel::LogPanel,
+        center_panel::CenterPanel,
+        left_panel::LeftPanel,
+        log_panel::{LogPanel, Logger},
         right_panel::RightPanel,
     },
 };
@@ -43,6 +45,7 @@ pub struct App {
     pub center_panel: CenterPanel,
     pub right_panel: RightPanel,
     pub player: MpvPlayer,
+    pub logger: Logger,
 }
 
 impl App {
@@ -52,15 +55,17 @@ impl App {
         let sources: Vec<Box<dyn MusicSource>> =
             vec![LocalFiles::new("Local".to_string(), local_sources)];
         let (log_panel, logger) = LogPanel::new();
+        logger.info("Loaded config");
         logger.debug(format!("{something}", something = config));
 
         Self {
             running: false,
             focused_window: FocusedWindow::default(),
             left_panel: LeftPanel::new(sources, logger.clone()),
-            center_panel: CenterPanel::new(logger.clone()),
+            center_panel: CenterPanel::new(),
             right_panel: RightPanel::new(log_panel),
             player: MpvPlayer::new(),
+            logger,
         }
     }
 
@@ -81,33 +86,36 @@ impl App {
         Ok(())
     }
 
-    pub fn play_song(&mut self, song: Song) {
-        if let Err(e) = self.player.play(&song) {
-            // Player will auto-spawn on first use
-            let _ = e;
-        }
-    }
-
     pub fn play_album_from(&mut self, songs: Vec<Song>, index: usize) {
         if let Err(e) = self.player.play_album(songs, index) {
-            let _ = e;
+            self.logger.error(format!("Failed to play album: {e}"));
         }
     }
 
     pub fn toggle_pause(&mut self) {
-        let _ = self.player.toggle_pause();
+        if let Err(e) = self.player.toggle_pause() {
+            self.logger.error(format!("Failed to toggle pause: {e}"));
+        }
     }
 
     pub fn next_track(&mut self) {
-        let _ = self.player.next();
+        if let Err(e) = self.player.next() {
+            self.logger
+                .error(format!("Failed to skip to next track: {e}"));
+        }
     }
 
     pub fn previous_track(&mut self) {
-        let _ = self.player.previous();
+        if let Err(e) = self.player.previous() {
+            self.logger
+                .error(format!("Failed to go to previous track: {e}"));
+        }
     }
 
     pub fn stop_playback(&mut self) {
-        let _ = self.player.stop();
+        if let Err(e) = self.player.stop() {
+            self.logger.error(format!("Failed to stop playback: {e}"));
+        }
     }
 
     fn render(&mut self, frame: &mut Frame) {

@@ -8,23 +8,21 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState},
 };
 
-use crate::{sources::song::Song, ui::log_panel::Logger};
+use crate::sources::song::Song;
 
 #[derive(Debug)]
 pub struct CenterPanel {
     selected_album: Option<PathBuf>,
     songs: Vec<Song>,
     list_state: ListState,
-    logger: Logger,
 }
 
 impl CenterPanel {
-    pub fn new(logger: Logger) -> Self {
+    pub fn new() -> Self {
         Self {
             selected_album: None,
             songs: Vec::new(),
             list_state: ListState::default(),
-            logger,
         }
     }
 
@@ -75,14 +73,6 @@ impl CenterPanel {
             KeyCode::Char('j') | KeyCode::Down => self.next_item(),
             KeyCode::Char('k') | KeyCode::Up => self.previous_item(),
             _ => {}
-        }
-    }
-
-    pub fn get_selected_song(&mut self) -> Option<Song> {
-        if let Some(index) = self.list_state.selected() {
-            Some(self.songs[index].clone())
-        } else {
-            None
         }
     }
 

@@ -26,6 +26,7 @@ pub enum PlayerError {
     NotConnected,
     IpcError(String),
     ProcessError(String),
+    FileNotFound(String),
 }
 
 impl fmt::Display for PlayerError {
@@ -34,6 +35,7 @@ impl fmt::Display for PlayerError {
             PlayerError::NotConnected => write!(f, "Player not connected"),
             PlayerError::IpcError(msg) => write!(f, "IPC error: {}", msg),
             PlayerError::ProcessError(msg) => write!(f, "Process error: {}", msg),
+            PlayerError::FileNotFound(path) => write!(f, "File not found: {}", path),
         }
     }
 }
@@ -43,7 +45,6 @@ impl std::error::Error for PlayerError {}
 pub type PlayerResult<T> = Result<T, PlayerError>;
 
 pub trait MusicPlayer {
-    fn play(&mut self, song: &Song) -> PlayerResult<()>;
     fn play_album(&mut self, songs: Vec<Song>, start_index: usize) -> PlayerResult<()>;
     fn toggle_pause(&mut self) -> PlayerResult<()>;
     fn stop(&mut self) -> PlayerResult<()>;
@@ -53,6 +54,5 @@ pub trait MusicPlayer {
     fn set_volume(&mut self, volume: u8) -> PlayerResult<()>;
     fn poll(&mut self) -> PlayerResult<PlaybackInfo>;
     fn get_playback_info(&self) -> &PlaybackInfo;
-    fn is_alive(&self) -> bool;
     fn shutdown(&mut self) -> PlayerResult<()>;
 }

@@ -10,6 +10,18 @@ use std::sync::mpsc::{self, Receiver, Sender};
 
 use crate::ui::widget::handle_focused_border_style;
 
+fn slice_from_char_index(message: &str, char_index: usize) -> &str {
+    if char_index == 0 {
+        return message;
+    }
+    let byte_index = message
+        .char_indices()
+        .nth(char_index)
+        .map(|(idx, _)| idx)
+        .unwrap_or(message.len());
+    &message[byte_index..]
+}
+
 #[derive(Debug)]
 pub enum LogLevel {
     Info,
@@ -99,8 +111,7 @@ impl LogPanel {
                     LogLevel::Error => ("ERROR: ", Color::Red),
                 };
                 let msg = if selected == Some(i) && self.h_scroll > 0 {
-                    let skip = self.h_scroll.min(item.message.len());
-                    &item.message[skip..]
+                    slice_from_char_index(&item.message, self.h_scroll)
                 } else {
                     &item.message
                 };
@@ -155,7 +166,7 @@ impl LogPanel {
     pub fn scroll_right(&mut self) {
         if let Some(i) = self.list_state.selected() {
             match self.log_list.get(i) {
-                Some(item) if self.h_scroll < item.message.len() => {
+                Some(item) if self.h_scroll < item.message.chars().count() => {
                     self.h_scroll += 1;
                 }
                 _ => (),
@@ -175,5 +186,19 @@ impl LogPanel {
             KeyCode::Left | KeyCode::Char('h') => self.scroll_left(),
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::slice_from_char_index;
+
+    #[test]
+    fn slice_from_char_index_handles_unicode() {
+        let message = "a\u{1F4BF}b";
+        assert_eq!(slice_from_char_index(message, 0), "a\u{1F4BF}b");
+        assert_eq!(slice_from_char_index(message, 1), "\u{1F4BF}b");
+        assert_eq!(slice_from_char_index(message, 2), "b");
+        assert_eq!(slice_from_char_index(message, 3), "");
     }
 }

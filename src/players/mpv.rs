@@ -1,17 +1,17 @@
-use std::io::{BufRead, BufReader, Write};
+use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
 use crate::players::{MusicPlayer, PlaybackInfo, PlaybackState, PlayerError, PlayerResult};
 use crate::sources::song::Song;
 
-const SOCKET_PATH: &str = "/tmp/rmus-mpv.sock";
-
 pub struct MpvPlayer {
     process: Option<Child>,
     socket: Option<UnixStream>,
+    socket_path: PathBuf,
+    message_buffer: String,
     playback_info: PlaybackInfo,
     playlist: Vec<Song>,
     playlist_index: usize,
@@ -23,6 +23,8 @@ impl Default for MpvPlayer {
         Self {
             process: None,
             socket: None,
+            socket_path: default_socket_path(),
+            message_buffer: String::new(),
             playback_info: PlaybackInfo::default(),
             playlist: Vec::new(),
             playlist_index: 0,
@@ -36,16 +38,18 @@ impl MpvPlayer {
         Self::default()
     }
 
-    fn spawn_mpv(&mut self) -> PlayerResult<()> {
-        let _ = std::fs::remove_file(SOCKET_PATH);
+    fn socket_arg(&self) -> String {
+        format!("--input-ipc-server={}", self.socket_path.to_string_lossy())
+    }
 
+    fn spawn_mpv(&mut self) -> PlayerResult<()> {
+        let _ = std::fs::remove_file(&self.socket_path);
+        self.message_buffer.clear();
+
+        let socket_arg = self.socket_arg();
         let child = Command::new("mpv")
-            .args([
-                "--idle=yes",
-                "--no-video",
-                "--no-terminal",
-                &format!("--input-ipc-server={}", SOCKET_PATH),
-            ])
+            .args(["--idle=yes", "--no-video", "--no-terminal"])
+            .arg(socket_arg)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -61,7 +65,7 @@ impl MpvPlayer {
     }
 
     fn connect_socket(&mut self) -> PlayerResult<()> {
-        let stream = UnixStream::connect(SOCKET_PATH)
+        let stream = UnixStream::connect(&self.socket_path)
             .map_err(|e| PlayerError::IpcError(format!("Failed to connect: {}", e)))?;
 
         stream
@@ -73,6 +77,7 @@ impl MpvPlayer {
         stream.set_nonblocking(true).ok();
 
         self.socket = Some(stream);
+        self.message_buffer.clear();
 
         // Observe properties for real-time updates
         self.observe_property("time-pos", 1)?;
@@ -124,28 +129,28 @@ impl MpvPlayer {
     }
 
     fn process_messages(&mut self) -> PlayerResult<()> {
-        let socket = match self.socket.as_mut() {
-            Some(s) => s,
-            None => return Ok(()),
-        };
-
-        let socket_clone = match socket.try_clone() {
-            Ok(s) => s,
-            Err(_) => return Ok(()),
-        };
-
-        let mut reader = BufReader::new(socket_clone);
-        let mut line = String::new();
-
+        let mut buf = [0u8; 4096];
         loop {
-            line.clear();
-            match reader.read_line(&mut line) {
+            let read_result = match self.socket.as_mut() {
+                Some(socket) => socket.read(&mut buf),
+                None => return Ok(()),
+            };
+
+            match read_result {
                 Ok(0) => break,
-                Ok(_) => {
-                    self.handle_message(&line);
+                Ok(n) => {
+                    let chunk = String::from_utf8_lossy(&buf[..n]);
+                    self.message_buffer.push_str(&chunk);
+                    while let Some(idx) = self.message_buffer.find('\n') {
+                        let line: String = self.message_buffer.drain(..=idx).collect();
+                        let trimmed = line.trim_end_matches(['\n', '\r']);
+                        if !trimmed.is_empty() {
+                            self.handle_message(trimmed);
+                        }
+                    }
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
-                Err(_) => break,
+                Err(e) => return Err(PlayerError::IpcError(e.to_string())),
             }
         }
 
@@ -175,14 +180,14 @@ impl MpvPlayer {
                     }
                 }
                 "pause" => {
-                    if let Some(paused) = data.and_then(|d| d.as_bool()) {
-                        if self.playback_info.state != PlaybackState::Stopped {
-                            self.playback_info.state = if paused {
-                                PlaybackState::Paused
-                            } else {
-                                PlaybackState::Playing
-                            };
-                        }
+                    if let Some(paused) = data.and_then(|d| d.as_bool())
+                        && self.playback_info.state != PlaybackState::Stopped
+                    {
+                        self.playback_info.state = if paused {
+                            PlaybackState::Paused
+                        } else {
+                            PlaybackState::Playing
+                        };
                     }
                 }
                 "volume" => {
@@ -220,7 +225,12 @@ impl MpvPlayer {
         }
     }
 
-    fn load_file(&mut self, path: &PathBuf) -> PlayerResult<()> {
+    fn load_file(&mut self, path: &Path) -> PlayerResult<()> {
+        if !path.is_file() {
+            return Err(PlayerError::FileNotFound(
+                path.to_string_lossy().into_owned(),
+            ));
+        }
         let path_str = path.to_string_lossy();
         self.send_command(&["loadfile", &path_str, "replace"])
     }
@@ -244,18 +254,6 @@ impl MpvPlayer {
 }
 
 impl MusicPlayer for MpvPlayer {
-    fn play(&mut self, song: &Song) -> PlayerResult<()> {
-        self.ensure_running()?;
-        self.playlist = vec![song.clone()];
-        self.playlist_index = 0;
-        self.playback_info.current_song = Some(song.clone());
-        self.playback_info.position = 0.0;
-        self.playback_info.duration = 0.0;
-        self.load_file(&song.path)?;
-        self.playback_info.state = PlaybackState::Playing;
-        Ok(())
-    }
-
     fn play_album(&mut self, songs: Vec<Song>, start_index: usize) -> PlayerResult<()> {
         if songs.is_empty() {
             return Ok(());
@@ -338,13 +336,6 @@ impl MusicPlayer for MpvPlayer {
         &self.playback_info
     }
 
-    fn is_alive(&self) -> bool {
-        match &self.process {
-            Some(_) => self.socket.is_some(),
-            None => false,
-        }
-    }
-
     fn shutdown(&mut self) -> PlayerResult<()> {
         if let Some(ref mut socket) = self.socket {
             let cmd = serde_json::json!({"command": ["quit"]});
@@ -358,7 +349,7 @@ impl MusicPlayer for MpvPlayer {
         }
 
         self.socket = None;
-        let _ = std::fs::remove_file(SOCKET_PATH);
+        let _ = std::fs::remove_file(&self.socket_path);
 
         Ok(())
     }
@@ -377,6 +368,13 @@ impl std::fmt::Debug for MpvPlayer {
             .field("playlist_len", &self.playlist.len())
             .field("playlist_index", &self.playlist_index)
             .field("is_connected", &self.socket.is_some())
+            .field("socket_path", &self.socket_path)
             .finish()
     }
+}
+
+fn default_socket_path() -> PathBuf {
+    let mut path = std::env::temp_dir();
+    path.push(format!("rmus-mpv-{}.sock", std::process::id()));
+    path
 }
