@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Music Player TUI"
 authors = ["Maximilian PINDER-WHITE <mpinderwhite@proton.me>"]
 license = "MIT"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
 crossterm = "0.29.0"
