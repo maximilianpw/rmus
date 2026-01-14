@@ -130,6 +130,9 @@ impl App {
             right_area,
             self.focused_window == FocusedWindow::Right,
         );
+
+        // Render popup on top of everything
+        crate::ui::popup_widget(frame);
     }
 
     pub(crate) fn quit(&mut self) {

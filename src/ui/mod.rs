@@ -3,3 +3,5 @@ pub mod left_panel;
 pub mod log_panel;
 pub mod right_panel;
 mod widget;
+
+pub use widget::popup_widget;
