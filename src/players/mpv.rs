@@ -9,6 +9,7 @@ use crate::sources::song::Song;
 
 const SOCKET_PATH: &str = "/tmp/rmus-mpv.sock";
 
+#[derive(Default)]
 pub struct MpvPlayer {
     process: Option<Child>,
     socket: Option<UnixStream>,
@@ -16,19 +17,6 @@ pub struct MpvPlayer {
     playlist: Vec<Song>,
     playlist_index: usize,
     request_id: u64,
-}
-
-impl Default for MpvPlayer {
-    fn default() -> Self {
-        Self {
-            process: None,
-            socket: None,
-            playback_info: PlaybackInfo::default(),
-            playlist: Vec::new(),
-            playlist_index: 0,
-            request_id: 0,
-        }
-    }
 }
 
 impl MpvPlayer {
