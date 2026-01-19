@@ -1,15 +1,15 @@
 use ratatui::{
-    DefaultTerminal, Frame,
     layout::{Constraint, Layout},
+    DefaultTerminal, Frame,
 };
 
 use crate::{
     config::{Config, LocalSource},
-    players::{MusicPlayer, mpv::MpvPlayer},
-    sources::{MusicSource, local::LocalFiles, song::Song},
+    players::{mpv::MpvPlayer, MusicPlayer},
+    sources::{local::LocalFiles, song::Song, MusicSource},
     ui::{
         center_panel::CenterPanel, left_panel::LeftPanel, log_panel::LogPanel,
-        right_panel::RightPanel,
+        right_panel::RightPanel, AppPanel,
     },
 };
 
@@ -39,6 +39,7 @@ impl FocusedWindow {
 pub struct App {
     pub running: bool,
     pub focused_window: FocusedWindow,
+    pub settings_opened: bool,
     pub left_panel: LeftPanel,
     pub center_panel: CenterPanel,
     pub right_panel: RightPanel,
@@ -57,6 +58,7 @@ impl App {
         Self {
             running: false,
             focused_window: FocusedWindow::default(),
+            settings_opened: false,
             left_panel: LeftPanel::new(sources, logger.clone()),
             center_panel: CenterPanel::new(logger.clone()),
             right_panel: RightPanel::new(log_panel),
@@ -79,13 +81,6 @@ impl App {
         // Clean shutdown
         let _ = self.player.shutdown();
         Ok(())
-    }
-
-    pub fn play_song(&mut self, song: Song) {
-        if let Err(e) = self.player.play(&song) {
-            // Player will auto-spawn on first use
-            let _ = e;
-        }
     }
 
     pub fn play_album_from(&mut self, songs: Vec<Song>, index: usize) {

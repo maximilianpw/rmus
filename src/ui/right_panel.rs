@@ -1,11 +1,11 @@
 use ratatui::{
-    Frame,
     layout::{Constraint, Layout, Rect},
+    Frame,
 };
 
 use crate::{
     players::PlaybackInfo,
-    ui::{log_panel::LogPanel, widget::now_playing_widget},
+    ui::{log_panel::LogPanel, widget::now_playing_widget, AppPanel},
 };
 
 #[derive(Debug)]
@@ -27,8 +27,10 @@ impl RightPanel {
     pub fn update_playback_info(&mut self, info: PlaybackInfo) {
         self.playback_info = info;
     }
+}
 
-    pub fn render(&mut self, frame: &mut Frame, area: Rect, is_focused: bool) {
+impl AppPanel for RightPanel {
+    fn render(&mut self, frame: &mut Frame, area: Rect, is_focused: bool) {
         let layout = Layout::vertical([Constraint::Fill(PLAYING_FILL), Constraint::Fill(1)]);
         let [playing_area, log_area] = layout.areas(area);
 

@@ -1,14 +1,14 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
-    Frame,
     layout::Rect,
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState},
+    Frame,
 };
 use std::sync::mpsc::{self, Receiver, Sender};
 
-use crate::ui::widget::handle_focused_border_style;
+use crate::ui::{widget::handle_focused_border_style, AppPanel};
 
 #[derive(Debug)]
 pub enum LogLevel {
@@ -59,32 +59,8 @@ pub struct LogPanel {
     h_scroll: usize,
 }
 
-impl LogPanel {
-    pub fn new() -> (Self, Logger) {
-        let (sender, receiver) = mpsc::channel();
-        let panel = Self {
-            receiver,
-            log_list: Vec::new(),
-            list_state: ListState::default(),
-            h_scroll: 0,
-        };
-        (panel, Logger { sender })
-    }
-
-    /// Call this each frame to drain pending log messages
-    pub fn poll(&mut self) {
-        let mut new_items = false;
-        while let Ok(item) = self.receiver.try_recv() {
-            self.log_list.push(item);
-            new_items = true;
-        }
-        if new_items {
-            self.list_state
-                .select(Some(self.log_list.len().saturating_sub(1)));
-        }
-    }
-
-    pub fn render(&mut self, frame: &mut Frame, area: Rect, is_focused: bool) {
+impl AppPanel for LogPanel {
+    fn render(&mut self, frame: &mut Frame, area: Rect, is_focused: bool) {
         let border_style = handle_focused_border_style(is_focused);
         let selected = self.list_state.selected();
 
@@ -120,6 +96,31 @@ impl LogPanel {
             )
             .highlight_style(Style::default().bg(Color::DarkGray));
         frame.render_stateful_widget(list, area, &mut self.list_state);
+    }
+}
+impl LogPanel {
+    pub fn new() -> (Self, Logger) {
+        let (sender, receiver) = mpsc::channel();
+        let panel = Self {
+            receiver,
+            log_list: Vec::new(),
+            list_state: ListState::default(),
+            h_scroll: 0,
+        };
+        (panel, Logger { sender })
+    }
+
+    /// Call this each frame to drain pending log messages
+    pub fn poll(&mut self) {
+        let mut new_items = false;
+        while let Ok(item) = self.receiver.try_recv() {
+            self.log_list.push(item);
+            new_items = true;
+        }
+        if new_items {
+            self.list_state
+                .select(Some(self.log_list.len().saturating_sub(1)));
+        }
     }
 
     pub fn scroll_down(&mut self) {
