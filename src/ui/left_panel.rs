@@ -15,7 +15,7 @@ use crate::{
     },
 };
 
-const TABS_HEIGHT: u16 = 3;
+pub const TABS_HEIGHT: u16 = 3;
 
 #[derive(Debug)]
 pub struct LeftPanel {
@@ -24,7 +24,6 @@ pub struct LeftPanel {
     list_state: ListState,
     cached_items: Vec<String>,
     logger: Logger,
-    config_popup_opened: bool,
 }
 
 impl LeftPanel {
@@ -35,13 +34,10 @@ impl LeftPanel {
             list_state: ListState::default(),
             cached_items: Vec::new(),
             logger,
-            config_popup_opened: false,
         };
         panel.update_cache();
         panel
     }
-
-    fn render_config_popup(&mut self) {}
 
     pub fn update_cache(&mut self) {
         if let Some(sources) = self.items.get(self.selected_tab_index) {
@@ -69,7 +65,6 @@ impl LeftPanel {
             KeyCode::Char('k') | KeyCode::Up => self.previous_item(),
             KeyCode::Char('l') | KeyCode::Right => self.next_tab(),
             KeyCode::Char('h') | KeyCode::Left => self.previous_tab(),
-            KeyCode::Char('n') => self.render_config_popup(),
             _ => {}
         }
     }

@@ -2,7 +2,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Style, Stylize},
     text::{Line, Span},
-    widgets::{Block, Borders, Gauge, List, ListItem, Paragraph, Tabs},
+    widgets::{Block, Borders, Clear, Gauge, List, ListItem, Paragraph, Tabs},
     Frame,
 };
 
@@ -48,14 +48,6 @@ pub fn tabs_from_strings<'a>(
         )
         .select(selected_tab_index)
         .highlight_style(Style::default().fg(Color::Yellow).bold())
-}
-
-pub fn popup_widget(frame: &mut Frame) {
-    let area = frame
-        .area()
-        .centered(Constraint::Percentage(20), Constraint::Length(3));
-    let popup = Paragraph::new("Popup content").block(Block::bordered().title("Popup"));
-    frame.render_widget(popup, area);
 }
 
 pub fn now_playing_widget(info: &PlaybackInfo, is_focused: bool, frame: &mut Frame, area: Rect) {

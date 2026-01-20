@@ -9,7 +9,7 @@ use crate::{
     sources::{local::LocalFiles, song::Song, MusicSource},
     ui::{
         center_panel::CenterPanel, left_panel::LeftPanel, log_panel::LogPanel,
-        right_panel::RightPanel, AppPanel,
+        right_panel::RightPanel, settings_panel::SettingsPanel, AppPanel,
     },
 };
 
@@ -22,6 +22,7 @@ pub enum FocusedWindow {
     Center,
     Right,
     Logs,
+    Settings,
 }
 
 impl FocusedWindow {
@@ -30,7 +31,7 @@ impl FocusedWindow {
             Self::Left => Self::Center,
             Self::Center => Self::Right,
             Self::Right => Self::Logs,
-            Self::Logs => Self::Left,
+            _ => Self::Left,
         }
     }
 }
@@ -39,10 +40,10 @@ impl FocusedWindow {
 pub struct App {
     pub running: bool,
     pub focused_window: FocusedWindow,
-    pub settings_opened: bool,
     pub left_panel: LeftPanel,
     pub center_panel: CenterPanel,
     pub right_panel: RightPanel,
+    pub settings_panel: SettingsPanel,
     pub player: MpvPlayer,
 }
 
@@ -58,10 +59,10 @@ impl App {
         Self {
             running: false,
             focused_window: FocusedWindow::default(),
-            settings_opened: false,
             left_panel: LeftPanel::new(sources, logger.clone()),
             center_panel: CenterPanel::new(logger.clone()),
             right_panel: RightPanel::new(log_panel),
+            settings_panel: SettingsPanel::new(),
             player: MpvPlayer::new(),
         }
     }
@@ -125,9 +126,11 @@ impl App {
             right_area,
             self.focused_window == FocusedWindow::Right,
         );
-
-        // Render popup on top of everything
-        crate::ui::popup_widget(frame);
+        self.settings_panel.render(
+            frame,
+            frame.area(),
+            self.focused_window == FocusedWindow::Settings,
+        );
     }
 
     pub(crate) fn quit(&mut self) {

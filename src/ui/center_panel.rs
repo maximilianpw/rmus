@@ -2,10 +2,10 @@ use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
-    Frame,
     layout::Rect,
     style::{Color, Style},
     widgets::{Block, Borders, List, ListItem, ListState},
+    Frame,
 };
 
 use crate::{sources::song::Song, ui::log_panel::Logger};

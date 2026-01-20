@@ -175,12 +175,10 @@ mod tests {
     fn test_get_local_sources() {
         let config = Config {
             local: LocalConfig {
-                sources: vec![
-                    LocalSource {
-                        name: "Test".to_string(),
-                        path: PathBuf::from("/test"),
-                    },
-                ],
+                sources: vec![LocalSource {
+                    name: "Test".to_string(),
+                    path: PathBuf::from("/test"),
+                }],
             },
             qobuz: None,
             audio: AudioConfig { default_volume: 50 },

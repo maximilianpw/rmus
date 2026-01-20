@@ -21,7 +21,22 @@ pub fn handle_crossterm_events(app: &mut App) -> color_eyre::Result<()> {
 }
 
 pub fn on_key_event(app: &mut App, key: KeyEvent) {
-    // Global key events first
+    // Settings popup keybind events first
+    if app.settings_panel.opened {
+        match key.code {
+            KeyCode::Esc => {
+                app.settings_panel.close();
+                return;
+            }
+            KeyCode::Tab => {
+                app.settings_panel.next_tab();
+                return;
+            }
+            _ => {}
+        }
+    }
+
+    // Global key events
     match (key.modifiers, key.code) {
         (_, KeyCode::Esc | KeyCode::Char('q'))
         | (KeyModifiers::CONTROL, KeyCode::Char('c') | KeyCode::Char('C')) => {
@@ -30,6 +45,10 @@ pub fn on_key_event(app: &mut App, key: KeyEvent) {
         }
         (_, KeyCode::Tab) => {
             app.focused_window = app.focused_window.next();
+            return;
+        }
+        (_, KeyCode::Char('s')) => {
+            app.settings_panel.open();
             return;
         }
         _ => {}
@@ -84,5 +103,6 @@ pub fn on_key_event(app: &mut App, key: KeyEvent) {
             }
         }
         FocusedWindow::Logs => app.right_panel.log_panel.handle_events(key),
+        FocusedWindow::Settings => app.settings_panel.handle_events(key),
     }
 }

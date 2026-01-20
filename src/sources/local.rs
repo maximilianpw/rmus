@@ -6,7 +6,7 @@ use std::{
 
 use crate::{
     config::LocalSource,
-    sources::{MusicSource, song::Song},
+    sources::{song::Song, MusicSource},
 };
 
 #[derive(Debug, Default)]
