@@ -9,7 +9,7 @@ use crate::{
     sources::{local::LocalFiles, song::Song, MusicSource},
     ui::{
         center_panel::CenterPanel, left_panel::LeftPanel, log_panel::LogPanel,
-        right_panel::RightPanel, settings_panel::SettingsPanel, AppPanel,
+        right_panel::RightPanel, settings::settings_panel::SettingsPanel, AppPanel,
     },
 };
 
@@ -62,7 +62,7 @@ impl App {
             left_panel: LeftPanel::new(sources, logger.clone()),
             center_panel: CenterPanel::new(logger.clone()),
             right_panel: RightPanel::new(log_panel),
-            settings_panel: SettingsPanel::new(),
+            settings_panel: SettingsPanel::new(config),
             player: MpvPlayer::new(),
         }
     }

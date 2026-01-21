@@ -89,6 +89,10 @@ impl Config {
             })
             .collect()
     }
+
+    pub fn add_local_source(&mut self, name: String, path: PathBuf) {
+        self.local.sources.push(LocalSource { name, path });
+    }
 }
 
 fn get_config_path() -> PathBuf {

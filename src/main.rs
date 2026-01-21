@@ -6,6 +6,7 @@ mod event;
 mod players;
 mod sources;
 mod ui;
+mod utils;
 
 fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;

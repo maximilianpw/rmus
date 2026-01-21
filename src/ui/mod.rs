@@ -2,7 +2,7 @@ pub mod center_panel;
 pub mod left_panel;
 pub mod log_panel;
 pub mod right_panel;
-pub mod settings_panel;
+pub mod settings;
 mod widget;
 
 use ratatui::{layout::Rect, Frame};

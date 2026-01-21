@@ -23,17 +23,8 @@ pub fn handle_crossterm_events(app: &mut App) -> color_eyre::Result<()> {
 pub fn on_key_event(app: &mut App, key: KeyEvent) {
     // Settings popup keybind events first
     if app.settings_panel.opened {
-        match key.code {
-            KeyCode::Esc => {
-                app.settings_panel.close();
-                return;
-            }
-            KeyCode::Tab => {
-                app.settings_panel.next_tab();
-                return;
-            }
-            _ => {}
-        }
+        app.settings_panel.handle_events(key);
+        return;
     }
 
     // Global key events
@@ -48,7 +39,7 @@ pub fn on_key_event(app: &mut App, key: KeyEvent) {
             return;
         }
         (_, KeyCode::Char('s')) => {
-            app.settings_panel.open();
+            app.settings_panel.toggle_open();
             return;
         }
         _ => {}

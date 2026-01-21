@@ -1,0 +1,205 @@
+use crossterm::event::{KeyCode, KeyEvent};
+use ratatui::{
+    layout::{Constraint, Layout, Rect},
+    style::{Color, Modifier, Style, Stylize},
+    text::{Line, Span},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Tabs, Widget},
+};
+
+use crate::{
+    config::Config,
+    ui::{
+        settings::{sources::SourceSettings, SettingsTab},
+        widget::handle_focused_border_style,
+        AppPanel,
+    },
+    utils::centered_rect,
+};
+
+#[derive(Debug)]
+pub struct SettingsPanel {
+    pub opened: bool,
+    selected_tab: usize,
+    source_settings: SourceSettings,
+}
+
+impl AppPanel for SettingsPanel {
+    fn render(&mut self, frame: &mut ratatui::Frame, area: Rect, is_focused: bool) {
+        if !self.opened {
+            return;
+        }
+
+        let popup_area = centered_rect(60, 70, area);
+
+        frame.render_widget(Clear, popup_area);
+
+        let border_style = handle_focused_border_style(is_focused);
+        let block = Block::bordered()
+            .title(" Settings ")
+            .border_style(border_style);
+
+        let inner = block.inner(popup_area);
+        frame.render_widget(block, popup_area);
+
+        let [tabs_area, content_area] =
+            Layout::vertical([Constraint::Length(3), Constraint::Fill(1)]).areas(inner);
+
+        self.render_tabs(frame, tabs_area);
+        self.render_content(frame, content_area);
+    }
+}
+
+impl SettingsPanel {
+    pub fn new(config: Config) -> Self {
+        Self {
+            opened: false,
+            selected_tab: 0,
+            source_settings: SourceSettings::new(config),
+        }
+    }
+
+    pub fn toggle_open(&mut self) {
+        self.opened = !self.opened;
+    }
+
+    pub fn close(&mut self) {
+        self.opened = false;
+    }
+
+    pub fn handle_events(&mut self, key: KeyEvent) {
+        if !self.opened {
+            return;
+        }
+        if self.current_tab() == SettingsTab::General {
+            if self.source_settings.handle_events(key) {
+                return;
+            }
+        }
+
+        match key.code {
+            KeyCode::Esc => {
+                self.close();
+            }
+            KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => {
+                self.next_tab();
+            }
+            KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => {
+                self.prev_tab();
+            }
+            _ => {}
+        }
+    }
+
+    pub fn next_tab(&mut self) {
+        self.selected_tab = (self.selected_tab + 1) % SettingsTab::ALL.len();
+    }
+
+    fn prev_tab(&mut self) {
+        self.selected_tab = self
+            .selected_tab
+            .checked_sub(1)
+            .unwrap_or(SettingsTab::ALL.len() - 1);
+    }
+
+    fn current_tab(&self) -> SettingsTab {
+        SettingsTab::ALL[self.selected_tab]
+    }
+
+    fn render_tabs(&self, frame: &mut ratatui::Frame, area: Rect) {
+        let titles: Vec<Line> = SettingsTab::ALL
+            .iter()
+            .map(|t| Line::from(t.title()))
+            .collect();
+
+        let tabs = Tabs::new(titles)
+            .select(self.selected_tab)
+            .highlight_style(
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .divider(Span::raw(" │ "));
+
+        frame.render_widget(tabs, area);
+    }
+
+    fn render_content(&mut self, frame: &mut ratatui::Frame, area: Rect) {
+        let content_block = Block::default()
+            .borders(Borders::TOP)
+            .border_style(Style::default().fg(Color::DarkGray));
+
+        let inner = content_block.inner(area);
+        frame.render_widget(content_block, area);
+
+        match self.current_tab() {
+            SettingsTab::General => self.source_settings.render_sources(frame, inner),
+            SettingsTab::Account => self.render_account_settings(frame, inner),
+            SettingsTab::Keybinds => self.render_keybinds(frame, inner),
+        }
+    }
+
+    fn render_account_settings(&self, frame: &mut ratatui::Frame, area: Rect) {
+        let text = vec![
+            Line::from("Email: max@example.com"),
+            Line::from(""),
+            Line::from("Password: test".bold()),
+        ];
+
+        let paragraph = Paragraph::new(text);
+        frame.render_widget(paragraph, area);
+    }
+
+    fn render_keybinds(&self, frame: &mut ratatui::Frame, area: Rect) {
+        let keybind = |key: &str, desc: &str| -> Line<'static> {
+            Line::from(vec![
+                Span::styled(format!("{:<12}", key), Style::default().fg(Color::Cyan)),
+                Span::raw(desc.to_string()),
+            ])
+        };
+
+        let section = |title: &str| -> Line<'static> {
+            Line::from(Span::styled(
+                title.to_string(),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ))
+        };
+
+        let text = vec![
+            section("Global"),
+            keybind("Esc / q", "Quit application"),
+            keybind("Ctrl+C", "Quit application"),
+            keybind("Tab", "Switch focused panel"),
+            keybind("s", "Toggle settings"),
+            Line::from(""),
+            section("Album List (Left Panel)"),
+            keybind("Space", "Select album"),
+            keybind("j / Down", "Move down"),
+            keybind("k / Up", "Move up"),
+            Line::from(""),
+            section("Song List (Center Panel)"),
+            keybind("Space", "Play from selected song"),
+            keybind("j / Down", "Move down"),
+            keybind("k / Up", "Move up"),
+            Line::from(""),
+            section("Playback (Right Panel)"),
+            keybind("Space", "Toggle pause"),
+            keybind("n", "Next track"),
+            keybind("p", "Previous track"),
+            keybind("s", "Stop playback"),
+            keybind("+ / =", "Volume up"),
+            keybind("-", "Volume down"),
+            keybind("Left", "Seek backward 5s"),
+            keybind("Right", "Seek forward 5s"),
+            Line::from(""),
+            section("Settings Panel"),
+            keybind("Esc", "Close settings"),
+            keybind("Tab / l", "Next tab"),
+            keybind("Shift+Tab / h", "Previous tab"),
+        ];
+
+        let paragraph = Paragraph::new(text);
+        frame.render_widget(paragraph, area);
+    }
+}
