@@ -8,7 +8,10 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState},
 };
 
-use crate::config::{Config, LocalSource};
+use crate::{
+    config::{Config, LocalSource},
+    ui::input_line::InputLine,
+};
 
 #[derive(Debug, Default)]
 pub struct SourceSettings {
@@ -17,8 +20,8 @@ pub struct SourceSettings {
     list_state: ListState,
     h_scroll: usize,
     input_mode: bool,
-    name_input: String,
-    path_input: String,
+    name_input: InputLine,
+    path_input: InputLine,
     active_field: usize, // 0 = name, 1 = path
 }
 
@@ -30,8 +33,8 @@ impl SourceSettings {
             list_state: ListState::default(),
             h_scroll: 0,
             input_mode: false,
-            name_input: String::new(),
-            path_input: String::new(),
+            name_input: InputLine::new(),
+            path_input: InputLine::new(),
             active_field: 0,
         }
     }
@@ -54,8 +57,8 @@ impl SourceSettings {
             let path_cursor = if self.active_field == 1 { "_" } else { "" };
 
             let input_item = ListItem::new(vec![
-                Line::from(format!("Name: {}{}", self.name_input, name_cursor)),
-                Line::from(format!("Path: {}{}", self.path_input, path_cursor)),
+                Line::from(format!("Name: {}{}", self.name_input.value, name_cursor)),
+                Line::from(format!("Path: {}{}", self.path_input.value, path_cursor)),
                 Line::from(""),
             ]);
             list_items.push(input_item);
@@ -72,12 +75,22 @@ impl SourceSettings {
 
     pub fn handle_events(&mut self, key: KeyEvent) -> bool {
         if self.input_mode {
+            let active_input = if self.active_field == 0 {
+                &mut self.name_input
+            } else {
+                &mut self.path_input
+            };
+
             match key.code {
                 KeyCode::Esc => {
-                    self.exit_input_mode();
+                    self.name_input.exit_input_mode();
+                    self.path_input.exit_input_mode();
+                    self.input_mode = false;
                 }
                 KeyCode::Enter => {
-                    self.confirm_input();
+                    self.name_input.confirm_input();
+                    self.path_input.confirm_input();
+                    self.input_mode = false;
                 }
                 KeyCode::Tab | KeyCode::Down => {
                     self.active_field = (self.active_field + 1) % 2;
@@ -86,10 +99,16 @@ impl SourceSettings {
                     self.active_field = if self.active_field == 0 { 1 } else { 0 };
                 }
                 KeyCode::Char(c) => {
-                    self.append_char(c);
+                    active_input.append_char(c);
                 }
                 KeyCode::Backspace => {
-                    self.delete_char();
+                    active_input.delete_char();
+                }
+                KeyCode::Left => {
+                    active_input.move_cursor_left();
+                }
+                KeyCode::Right => {
+                    active_input.move_cursor_right();
                 }
                 _ => {}
             }
@@ -97,7 +116,10 @@ impl SourceSettings {
         } else {
             match key.code {
                 KeyCode::Char('a') => {
-                    self.enter_input_mode();
+                    self.input_mode = true;
+                    self.name_input.enter_input_mode();
+                    self.path_input.enter_input_mode();
+                    self.active_field = 0;
                     true
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
@@ -110,49 +132,6 @@ impl SourceSettings {
                 }
                 _ => false,
             }
-        }
-    }
-
-    fn enter_input_mode(&mut self) {
-        self.input_mode = true;
-        self.name_input.clear();
-        self.path_input.clear();
-        self.active_field = 0;
-    }
-
-    fn exit_input_mode(&mut self) {
-        self.input_mode = false;
-        self.name_input.clear();
-        self.path_input.clear();
-        self.active_field = 0;
-    }
-
-    fn confirm_input(&mut self) {
-        if !self.name_input.is_empty() && !self.path_input.is_empty() {
-            let name = self.name_input.clone();
-            let path = PathBuf::from(&self.path_input);
-
-            self.config.add_local_source(name.clone(), path.clone());
-            let _ = self.config.save();
-
-            self.sources.push(LocalSource { name, path });
-        }
-        self.exit_input_mode();
-    }
-
-    fn append_char(&mut self, c: char) {
-        if self.active_field == 0 {
-            self.name_input.push(c);
-        } else {
-            self.path_input.push(c);
-        }
-    }
-
-    fn delete_char(&mut self) {
-        if self.active_field == 0 {
-            self.name_input.pop();
-        } else {
-            self.path_input.pop();
         }
     }
 
