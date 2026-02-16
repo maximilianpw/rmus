@@ -7,9 +7,6 @@ use std::time::Duration;
 use crate::players::{MusicPlayer, PlaybackInfo, PlaybackState, PlayerError, PlayerResult};
 use crate::sources::song::Song;
 
-const SOCKET_PATH: &str = "/tmp/rmus-mpv.sock";
-
-#[derive(Default)]
 pub struct MpvPlayer {
     process: Option<Child>,
     socket: Option<UnixStream>,
@@ -17,22 +14,31 @@ pub struct MpvPlayer {
     playlist: Vec<Song>,
     playlist_index: usize,
     request_id: u64,
+    socket_path: PathBuf,
 }
 
 impl MpvPlayer {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(socket_path: PathBuf) -> Self {
+        Self {
+            process: None,
+            socket: None,
+            playback_info: PlaybackInfo::default(),
+            playlist: Vec::new(),
+            playlist_index: 0,
+            request_id: 0,
+            socket_path,
+        }
     }
 
     fn spawn_mpv(&mut self) -> PlayerResult<()> {
-        let _ = std::fs::remove_file(SOCKET_PATH);
+        let _ = std::fs::remove_file(&self.socket_path);
 
         let child = Command::new("mpv")
             .args([
                 "--idle=yes",
                 "--no-video",
                 "--no-terminal",
-                &format!("--input-ipc-server={}", SOCKET_PATH),
+                &format!("--input-ipc-server={}", self.socket_path.display()),
             ])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -49,7 +55,7 @@ impl MpvPlayer {
     }
 
     fn connect_socket(&mut self) -> PlayerResult<()> {
-        let stream = UnixStream::connect(SOCKET_PATH)
+        let stream = UnixStream::connect(&self.socket_path)
             .map_err(|e| PlayerError::IpcError(format!("Failed to connect: {}", e)))?;
 
         stream
@@ -346,7 +352,7 @@ impl MusicPlayer for MpvPlayer {
         }
 
         self.socket = None;
-        let _ = std::fs::remove_file(SOCKET_PATH);
+        let _ = std::fs::remove_file(&self.socket_path);
 
         Ok(())
     }

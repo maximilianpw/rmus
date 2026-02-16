@@ -9,10 +9,7 @@ pub struct Song {
 impl Song {
     pub fn new(f: DirEntry) -> Self {
         Song {
-            title: f
-                .file_name()
-                .into_string()
-                .expect("could not get title from path"),
+            title: f.file_name().to_string_lossy().into_owned(),
             path: f.path(),
         }
     }

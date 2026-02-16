@@ -7,7 +7,7 @@ use ratatui::{
 use crate::{
     action::Action,
     config::{Config, LocalSource},
-    players::{mpv::MpvPlayer, MusicPlayer},
+    players::{SafePlayer, MusicPlayer},
     sources::{local::LocalFiles, song::Song, MusicSource},
     ui::{
         center_panel::CenterPanel, left_panel::LeftPanel, log_panel::LogPanel,
@@ -46,7 +46,7 @@ pub struct App {
     pub center_panel: CenterPanel,
     pub right_panel: RightPanel,
     pub settings_panel: SettingsPanel,
-    pub player: MpvPlayer,
+    pub player: SafePlayer,
 }
 
 impl App {
@@ -65,7 +65,7 @@ impl App {
             center_panel: CenterPanel::new(logger.clone()),
             right_panel: RightPanel::new(log_panel),
             settings_panel: SettingsPanel::new(config),
-            player: MpvPlayer::new(),
+            player: SafePlayer::new(),
         }
     }
 
