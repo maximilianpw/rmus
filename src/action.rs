@@ -1,0 +1,15 @@
+pub enum Action {
+    Quit,
+    SwitchPanel,
+    ToggleSettings,
+    SelectAlbum,
+    PlaySelected,
+    TogglePause,
+    NextTrack,
+    PreviousTrack,
+    StopPlayback,
+    SeekForward(f64),
+    SeekBackward(f64),
+    VolumeUp(u8),
+    VolumeDown(u8),
+}

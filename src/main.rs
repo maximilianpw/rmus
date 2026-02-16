@@ -1,8 +1,10 @@
 use crate::app::App;
 
+mod action;
 mod app;
 mod config;
 mod event;
+mod keymap;
 mod players;
 mod sources;
 mod ui;

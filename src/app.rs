@@ -1,9 +1,11 @@
+use crossterm::event::KeyEvent;
 use ratatui::{
     layout::{Constraint, Layout},
     DefaultTerminal, Frame,
 };
 
 use crate::{
+    action::Action,
     config::{Config, LocalSource},
     players::{mpv::MpvPlayer, MusicPlayer},
     sources::{local::LocalFiles, song::Song, MusicSource},
@@ -84,26 +86,71 @@ impl App {
         Ok(())
     }
 
-    pub fn play_album_from(&mut self, songs: Vec<Song>, index: usize) {
-        if let Err(e) = self.player.play_album(songs, index) {
-            let _ = e;
+    pub fn execute(&mut self, action: Action) {
+        match action {
+            Action::Quit => self.quit(),
+            Action::SwitchPanel => self.focused_window = self.focused_window.next(),
+            Action::ToggleSettings => self.settings_panel.toggle_open(),
+            Action::SelectAlbum => {
+                if let Some((path, songs)) = self.left_panel.get_selected_album() {
+                    self.center_panel.set_album(path, songs);
+                }
+            }
+            Action::PlaySelected => {
+                if let Some(index) = self.center_panel.get_selected_index() {
+                    let songs = self.center_panel.get_songs();
+                    self.play_album_from(songs, index);
+                }
+            }
+            Action::TogglePause => {
+                let _ = self.player.toggle_pause();
+            }
+            Action::NextTrack => {
+                let _ = self.player.next();
+            }
+            Action::PreviousTrack => {
+                let _ = self.player.previous();
+            }
+            Action::StopPlayback => {
+                let _ = self.player.stop();
+            }
+            Action::SeekForward(secs) => {
+                let info = self.player.get_playback_info();
+                let _ = self.player.seek(info.position + secs);
+            }
+            Action::SeekBackward(secs) => {
+                let info = self.player.get_playback_info();
+                let _ = self.player.seek((info.position - secs).max(0.0));
+            }
+            Action::VolumeUp(amount) => {
+                let info = self.player.get_playback_info();
+                let _ = self.player.set_volume(info.volume.saturating_add(amount));
+            }
+            Action::VolumeDown(amount) => {
+                let info = self.player.get_playback_info();
+                let _ = self.player.set_volume(info.volume.saturating_sub(amount));
+            }
         }
     }
 
-    pub fn toggle_pause(&mut self) {
-        let _ = self.player.toggle_pause();
+    pub fn delegate_key_to_panel(&mut self, key: KeyEvent) {
+        if self.settings_panel.opened {
+            self.settings_panel.handle_events(key);
+            return;
+        }
+        match self.focused_window {
+            FocusedWindow::Left => self.left_panel.handle_events(key),
+            FocusedWindow::Center => self.center_panel.handle_events(key),
+            FocusedWindow::Logs => self.right_panel.log_panel.handle_events(key),
+            FocusedWindow::Settings => self.settings_panel.handle_events(key),
+            _ => {}
+        }
     }
 
-    pub fn next_track(&mut self) {
-        let _ = self.player.next();
-    }
-
-    pub fn previous_track(&mut self) {
-        let _ = self.player.previous();
-    }
-
-    pub fn stop_playback(&mut self) {
-        let _ = self.player.stop();
+    fn play_album_from(&mut self, songs: Vec<Song>, index: usize) {
+        if let Err(e) = self.player.play_album(songs, index) {
+            let _ = e;
+        }
     }
 
     fn render(&mut self, frame: &mut Frame) {
