@@ -48,10 +48,26 @@ impl MpvPlayer {
 
         self.process = Some(child);
 
-        // Wait for socket to be created
-        std::thread::sleep(Duration::from_millis(200));
+        // Poll for socket file to appear (up to 3 seconds)
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while std::time::Instant::now() < deadline {
+            if self.socket_path.exists() {
+                match self.connect_socket() {
+                    Ok(()) => return Ok(()),
+                    Err(_) => {
+                        // Socket file exists but not ready yet
+                        std::thread::sleep(Duration::from_millis(50));
+                    }
+                }
+            } else {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
 
-        self.connect_socket()
+        Err(PlayerError::IpcError(format!(
+            "Timed out waiting for mpv socket at {}",
+            self.socket_path.display()
+        )))
     }
 
     fn connect_socket(&mut self) -> PlayerResult<()> {

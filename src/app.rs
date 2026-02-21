@@ -133,8 +133,9 @@ impl App {
         }
     }
 
-    /// Process one "tick" of the app loop: poll auth and handle pending searches.
+    /// Process one "tick" of the app loop: sync config, poll auth, handle pending searches.
     pub fn tick(&mut self) {
+        self.sync_config_from_settings();
         self.poll_pending_auth();
         if let Some(query) = self.center_panel.take_pending_query() {
             self.perform_search(&query);
@@ -148,6 +149,9 @@ impl App {
             if let Ok(info) = self.player.poll() {
                 self.right_panel.update_playback_info(info);
             }
+
+            // Sync config changes from settings panel
+            self.sync_config_from_settings();
 
             // Poll pending auth (e.g. Tidal device code flow)
             self.poll_pending_auth();
@@ -230,6 +234,33 @@ impl App {
             FocusedWindow::Logs => self.right_panel.log_panel.handle_events(key),
             FocusedWindow::Settings => self.settings_panel.handle_events(key),
             _ => {}
+        }
+    }
+
+    fn sync_config_from_settings(&mut self) {
+        if let Some(new_config) = self.settings_panel.take_config_update() {
+            let service_changed =
+                self.config.streaming_service != new_config.streaming_service;
+            self.config = new_config;
+
+            if service_changed {
+                self.streaming = match self.config.streaming_service.as_str() {
+                    "tidal" => {
+                        let tidal_cfg = self.config.tidal.clone().unwrap_or_default();
+                        Some(Box::new(TidalSource::new(tidal_cfg)) as Box<dyn StreamingService>)
+                    }
+                    _ => self.config.qobuz.as_ref().map(|q| {
+                        Box::new(QobuzSource::with_credentials(
+                            q.app_id.clone(),
+                            q.app_secret.clone(),
+                            q.email.clone(),
+                            q.password.clone(),
+                        )) as Box<dyn StreamingService>
+                    }),
+                };
+                self.pending_auth = false;
+                self.deferred_search = None;
+            }
         }
     }
 
@@ -346,7 +377,6 @@ impl App {
                     if let Some(ref mut qobuz_config) = self.config.qobuz {
                         qobuz_config.app_id = app_id;
                         qobuz_config.app_secret = app_secret;
-                        let _ = self.config.save();
                     }
                 }
             }
@@ -354,12 +384,19 @@ impl App {
                 if let Some(data) = service.persist_data() {
                     if let Ok(tidal_cfg) = serde_json::from_str::<TidalConfig>(&data) {
                         self.config.tidal = Some(tidal_cfg);
-                        let _ = self.config.save();
                     }
                 }
             }
             _ => {}
         }
+
+        match self.config.save() {
+            Ok(()) => self.logger.info("Credentials saved".to_string()),
+            Err(e) => self.logger.error(format!("Failed to save config: {}", e)),
+        }
+
+        // Keep the settings panel's config copy in sync so it can't overwrite tokens
+        self.settings_panel.update_config(&self.config);
     }
 
     fn perform_search(&mut self, query: &str) {

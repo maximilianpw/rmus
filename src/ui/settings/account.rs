@@ -26,6 +26,7 @@ pub struct AccountSettings {
     password_input: InputLine,
     active_field: usize, // 0 = email, 1 = password
     selected_service_idx: usize,
+    config_dirty: bool,
 }
 
 impl AccountSettings {
@@ -54,6 +55,7 @@ impl AccountSettings {
             password_input,
             active_field: 0,
             selected_service_idx,
+            config_dirty: false,
         }
     }
 
@@ -288,6 +290,7 @@ impl AccountSettings {
 
     fn save_service_selection(&mut self) {
         self.config.streaming_service = self.current_service().to_string();
+        self.config_dirty = true;
         let _ = self.config.save();
     }
 
@@ -309,6 +312,23 @@ impl AccountSettings {
 
         self.config.streaming_service = "qobuz".to_string();
         self.selected_service_idx = 0;
+        self.config_dirty = true;
         let _ = self.config.save();
+    }
+
+    /// Returns the updated config if it changed since last check.
+    pub fn take_config_update(&mut self) -> Option<Config> {
+        if self.config_dirty {
+            self.config_dirty = false;
+            Some(self.config.clone())
+        } else {
+            None
+        }
+    }
+
+    /// Update the internal config copy to stay in sync with the App's config.
+    pub fn update_config(&mut self, config: &Config) {
+        self.config.tidal = config.tidal.clone();
+        self.config.qobuz = config.qobuz.clone();
     }
 }

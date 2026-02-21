@@ -8,8 +8,9 @@ use super::streaming::{AuthStatus, StreamTrack, StreamingService};
 
 const AUTH_URL: &str = "https://auth.tidal.com/v1/oauth2";
 const API_URL: &str = "https://api.tidal.com/v1";
-const CLIENT_ID: &str = "zU4XHVVkc2tDPo4t";
-const POLL_INTERVAL: Duration = Duration::from_secs(5);
+const CLIENT_ID: &str = "fX2JxdmntZWK0ixT";
+const CLIENT_SECRET: &str = "1Nn9AfDAjxrgJFJbKNWLeAyKGVGmINuXPPLHVXAvxAg=";
+const POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 // --- API response types ---
 
@@ -61,6 +62,7 @@ struct TidalTrackResponse {
     id: u64,
     title: Option<String>,
     artist: Option<TidalArtist>,
+    artists: Option<Vec<TidalArtist>>,
     album: Option<TidalAlbum>,
 }
 
@@ -108,36 +110,57 @@ impl TidalClient {
         query: &str,
         limit: u32,
     ) -> Result<Vec<StreamTrack>, Box<dyn std::error::Error>> {
-        let resp: TidalSearchResponse = self
+        let country = if self.country_code.is_empty() {
+            "US"
+        } else {
+            &self.country_code
+        };
+
+        let resp = self
             .client
-            .get(format!("{API_URL}/search/tracks"))
+            .get(format!("{API_URL}/search"))
             .bearer_auth(&self.access_token)
             .query(&[
                 ("query", query),
                 ("limit", &limit.to_string()),
-                ("countryCode", &self.country_code),
+                ("countryCode", country),
+                ("types", "TRACKS"),
             ])
             .send()
-            .await?
-            .json()
             .await?;
 
-        let tracks = resp
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(format!("Tidal search failed ({}): {}", status, body).into());
+        }
+
+        let search_resp: TidalSearchResponse = resp.json().await?;
+
+        let tracks = search_resp
             .tracks
             .and_then(|t| t.items)
             .unwrap_or_default()
             .into_iter()
-            .map(|t| StreamTrack {
-                id: t.id.to_string(),
-                title: t.title.unwrap_or_else(|| "Unknown".to_string()),
-                artist: t
+            .map(|t| {
+                let artist_name = t
                     .artist
                     .and_then(|a| a.name)
-                    .unwrap_or_else(|| "Unknown".to_string()),
-                album: t
-                    .album
-                    .and_then(|a| a.title)
-                    .unwrap_or_else(|| "Unknown".to_string()),
+                    .or_else(|| {
+                        t.artists
+                            .and_then(|mut v| v.pop())
+                            .and_then(|a| a.name)
+                    })
+                    .unwrap_or_else(|| "Unknown".to_string());
+                StreamTrack {
+                    id: t.id.to_string(),
+                    title: t.title.unwrap_or_else(|| "Unknown".to_string()),
+                    artist: artist_name,
+                    album: t
+                        .album
+                        .and_then(|a| a.title)
+                        .unwrap_or_else(|| "Unknown".to_string()),
+                }
             })
             .collect();
 
@@ -148,6 +171,12 @@ impl TidalClient {
         &self,
         track_id: &str,
     ) -> Result<Option<String>, Box<dyn std::error::Error>> {
+        let country = if self.country_code.is_empty() {
+            "US"
+        } else {
+            &self.country_code
+        };
+
         let resp = self
             .client
             .get(format!(
@@ -158,6 +187,7 @@ impl TidalClient {
                 ("audioquality", "LOSSLESS"),
                 ("playbackmode", "STREAM"),
                 ("assetpresentation", "FULL"),
+                ("countryCode", country),
             ])
             .send()
             .await?;
@@ -201,13 +231,19 @@ async fn start_device_auth(
         .post(format!("{AUTH_URL}/device_authorization"))
         .form(&[
             ("client_id", CLIENT_ID),
-            ("scope", "r_usr+w_usr+w_sub"),
+            ("scope", "r_usr w_usr w_sub"),
         ])
         .send()
-        .await?
-        .json::<DeviceAuthResponse>()
         .await?;
-    Ok(resp)
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Tidal device auth failed ({}): {}", status, body).into());
+    }
+
+    let device_resp = resp.json::<DeviceAuthResponse>().await?;
+    Ok(device_resp)
 }
 
 async fn poll_token(
@@ -218,12 +254,13 @@ async fn poll_token(
         .post(format!("{AUTH_URL}/token"))
         .form(&[
             ("client_id", CLIENT_ID),
+            ("client_secret", CLIENT_SECRET),
             ("device_code", device_code),
             (
                 "grant_type",
                 "urn:ietf:params:oauth:grant-type:device_code",
             ),
-            ("scope", "r_usr+w_usr+w_sub"),
+            ("scope", "r_usr w_usr w_sub"),
         ])
         .send()
         .await?;
@@ -251,9 +288,10 @@ async fn refresh_token(
         .post(format!("{AUTH_URL}/token"))
         .form(&[
             ("client_id", CLIENT_ID),
+            ("client_secret", CLIENT_SECRET),
             ("refresh_token", refresh_tok),
             ("grant_type", "refresh_token"),
-            ("scope", "r_usr+w_usr+w_sub"),
+            ("scope", "r_usr w_usr w_sub"),
         ])
         .send()
         .await?;

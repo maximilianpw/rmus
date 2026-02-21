@@ -65,6 +65,16 @@ impl SettingsPanel {
         self.opened = !self.opened;
     }
 
+    /// Returns the updated config if account settings changed it.
+    pub fn take_config_update(&mut self) -> Option<Config> {
+        self.account_settings.take_config_update()
+    }
+
+    /// Push an updated config into the settings panel so its copy stays current.
+    pub fn update_config(&mut self, config: &Config) {
+        self.account_settings.update_config(config);
+    }
+
     pub fn close(&mut self) {
         self.opened = false;
     }

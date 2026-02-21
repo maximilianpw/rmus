@@ -254,4 +254,46 @@ mod tests {
         assert_eq!(sources.len(), 1);
         assert_eq!(sources[0].name, "Test");
     }
+
+    #[test]
+    fn test_tidal_credentials_round_trip() {
+        let config = Config {
+            local: LocalConfig {
+                sources: Vec::new(),
+            },
+            qobuz: None,
+            tidal: Some(TidalConfig {
+                access_token: "abc123".to_string(),
+                refresh_token: "def456".to_string(),
+                country_code: "US".to_string(),
+                token_expiry: 1700000000,
+            }),
+            audio: AudioConfig { default_volume: 50 },
+            streaming_service: "tidal".to_string(),
+        };
+
+        // Verify TOML serialization includes [tidal] section
+        let toml_string = toml::to_string_pretty(&config).unwrap();
+        assert!(
+            toml_string.contains("[tidal]"),
+            "TOML should contain [tidal] section, got:\n{}",
+            toml_string
+        );
+        assert!(toml_string.contains("abc123"));
+        assert!(toml_string.contains("def456"));
+
+        // Verify round-trip through TOML
+        let loaded: Config = toml::from_str(&toml_string).unwrap();
+        assert_eq!(loaded.streaming_service, "tidal");
+        let tidal = loaded.tidal.unwrap();
+        assert_eq!(tidal.access_token, "abc123");
+        assert_eq!(tidal.refresh_token, "def456");
+        assert_eq!(tidal.country_code, "US");
+        assert_eq!(tidal.token_expiry, 1700000000);
+
+        // Verify JSON round-trip (persist_data path)
+        let json = serde_json::to_string(&config.tidal.as_ref().unwrap()).unwrap();
+        let from_json: TidalConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(from_json.access_token, "abc123");
+    }
 }
