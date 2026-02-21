@@ -6,6 +6,7 @@ pub mod local;
 pub mod qobuz;
 pub mod song;
 pub mod streaming;
+pub mod tidal;
 
 pub trait MusicSource {
     fn name(&self) -> String;

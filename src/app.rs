@@ -6,13 +6,14 @@ use ratatui::{
 
 use crate::{
     action::Action,
-    config::{Config, LocalSource},
+    config::{Config, LocalSource, TidalConfig},
     players::{MusicPlayer, SafePlayer},
     sources::{
         local::LocalFiles,
         qobuz::QobuzSource,
         song::Song,
-        streaming::{StreamTrack, StreamingService},
+        streaming::{AuthStatus, StreamTrack, StreamingService},
+        tidal::TidalSource,
         MusicSource,
     },
     ui::{
@@ -56,6 +57,8 @@ pub struct App {
     search_results: Vec<StreamTrack>,
     config: Config,
     logger: Logger,
+    pending_auth: bool,
+    deferred_search: Option<String>,
 }
 
 impl App {
@@ -67,13 +70,24 @@ impl App {
         let (log_panel, logger) = LogPanel::new();
         logger.debug(format!("{something}", something = config));
 
-        // Initialize streaming source from config
-        let streaming: Option<Box<dyn StreamingService>> = config.qobuz.as_ref().map(|q| {
-            Box::new(QobuzSource::with_credentials(
-                q.app_id.clone(),
-                q.app_secret.clone(),
-            )) as Box<dyn StreamingService>
-        });
+        // Initialize streaming source based on config selection
+        let streaming: Option<Box<dyn StreamingService>> = match config.streaming_service.as_str() {
+            "tidal" => {
+                let tidal_cfg = config.tidal.clone().unwrap_or_default();
+                Some(Box::new(TidalSource::new(tidal_cfg)) as Box<dyn StreamingService>)
+            }
+            _ => {
+                // Default: qobuz
+                config.qobuz.as_ref().map(|q| {
+                    Box::new(QobuzSource::with_credentials(
+                        q.app_id.clone(),
+                        q.app_secret.clone(),
+                        q.email.clone(),
+                        q.password.clone(),
+                    )) as Box<dyn StreamingService>
+                })
+            }
+        };
 
         Self {
             running: false,
@@ -87,6 +101,43 @@ impl App {
             search_results: Vec::new(),
             config,
             logger,
+            pending_auth: false,
+            deferred_search: None,
+        }
+    }
+
+    /// Test constructor that accepts injected dependencies (no disk I/O, no network).
+    pub fn new_for_test(
+        config: Config,
+        streaming: Option<Box<dyn StreamingService>>,
+    ) -> Self {
+        let local_sources: Vec<LocalSource> = config.get_local_sources();
+        let sources: Vec<Box<dyn MusicSource>> =
+            vec![LocalFiles::new("Local".to_string(), local_sources)];
+        let (log_panel, logger) = LogPanel::new();
+
+        Self {
+            running: false,
+            focused_window: FocusedWindow::default(),
+            left_panel: LeftPanel::new(sources, logger.clone()),
+            center_panel: CenterPanel::new(logger.clone()),
+            right_panel: RightPanel::new(log_panel),
+            settings_panel: SettingsPanel::new(config.clone()),
+            player: SafePlayer::new(),
+            streaming,
+            search_results: Vec::new(),
+            config,
+            logger,
+            pending_auth: false,
+            deferred_search: None,
+        }
+    }
+
+    /// Process one "tick" of the app loop: poll auth and handle pending searches.
+    pub fn tick(&mut self) {
+        self.poll_pending_auth();
+        if let Some(query) = self.center_panel.take_pending_query() {
+            self.perform_search(&query);
         }
     }
 
@@ -97,6 +148,9 @@ impl App {
             if let Ok(info) = self.player.poll() {
                 self.right_panel.update_playback_info(info);
             }
+
+            // Poll pending auth (e.g. Tidal device code flow)
+            self.poll_pending_auth();
 
             // Check for pending search queries
             if let Some(query) = self.center_panel.take_pending_query() {
@@ -179,6 +233,41 @@ impl App {
         }
     }
 
+    fn poll_pending_auth(&mut self) {
+        if !self.pending_auth {
+            return;
+        }
+
+        let service = match self.streaming.as_mut() {
+            Some(s) => s,
+            None => return,
+        };
+
+        match service.poll_auth() {
+            Ok(true) => {
+                self.pending_auth = false;
+                self.logger
+                    .info(format!("Authenticated with {}", service.name()));
+
+                self.persist_streaming_credentials();
+
+                // Retry deferred search
+                if let Some(query) = self.deferred_search.take() {
+                    self.perform_search(&query);
+                }
+            }
+            Ok(false) => {
+                // Still waiting
+            }
+            Err(e) => {
+                self.pending_auth = false;
+                self.deferred_search = None;
+                self.logger
+                    .error(format!("Auth polling failed: {}", e));
+            }
+        }
+    }
+
     fn ensure_streaming_auth(&mut self) -> bool {
         // Already authenticated
         if let Some(ref service) = self.streaming {
@@ -187,41 +276,56 @@ impl App {
             }
         }
 
-        // Get credentials from config
-        let (email, password) = match &self.config.qobuz {
-            Some(q) if !q.email.is_empty() && !q.password.is_empty() => {
-                (q.email.clone(), q.password.clone())
-            }
-            _ => {
-                self.logger
-                    .error("No Qobuz credentials configured. Set them in Settings > Account.".to_string());
-                return false;
-            }
-        };
-
-        // Create source if needed
+        // Create source if needed based on config
         if self.streaming.is_none() {
-            self.streaming = Some(Box::new(QobuzSource::new()));
-        }
-
-        self.logger.info("Connecting to Qobuz...".to_string());
-
-        let service = self.streaming.as_mut().unwrap();
-        match service.authenticate(&email, &password) {
-            Ok(()) => {
-                self.logger
-                    .info(format!("Authenticated with {}", service.name()));
-
-                // Cache app credentials in config
-                if let Some((app_id, app_secret)) = service.app_credentials() {
-                    if let Some(ref mut qobuz_config) = self.config.qobuz {
-                        qobuz_config.app_id = app_id;
-                        qobuz_config.app_secret = app_secret;
-                        let _ = self.config.save();
+            match self.config.streaming_service.as_str() {
+                "tidal" => {
+                    let tidal_cfg = self.config.tidal.clone().unwrap_or_default();
+                    self.streaming =
+                        Some(Box::new(TidalSource::new(tidal_cfg)));
+                }
+                _ => {
+                    match &self.config.qobuz {
+                        Some(q) if !q.email.is_empty() && !q.password.is_empty() => {
+                            self.streaming = Some(Box::new(QobuzSource::with_credentials(
+                                q.app_id.clone(),
+                                q.app_secret.clone(),
+                                q.email.clone(),
+                                q.password.clone(),
+                            )));
+                        }
+                        _ => {
+                            self.logger.error(
+                                "No streaming credentials configured. Set them in Settings > Account."
+                                    .to_string(),
+                            );
+                            return false;
+                        }
                     }
                 }
+            }
+        }
 
+        let service_name = self
+            .streaming
+            .as_ref()
+            .map(|s| s.name().to_string())
+            .unwrap_or_default();
+        self.logger
+            .info(format!("Connecting to {}...", service_name));
+
+        let service = self.streaming.as_mut().unwrap();
+        match service.authenticate() {
+            Ok(AuthStatus::Authenticated) => {
+                self.logger
+                    .info(format!("Authenticated with {}", service.name()));
+                self.persist_streaming_credentials();
                 true
+            }
+            Ok(AuthStatus::PendingUserAction(msg)) => {
+                self.logger.info(msg);
+                self.pending_auth = true;
+                false
             }
             Err(e) => {
                 self.logger.error(format!("Auth failed: {}", e));
@@ -230,12 +334,44 @@ impl App {
         }
     }
 
+    fn persist_streaming_credentials(&mut self) {
+        let service = match self.streaming.as_ref() {
+            Some(s) => s,
+            None => return,
+        };
+
+        match service.name() {
+            "Qobuz" => {
+                if let Some((app_id, app_secret)) = service.app_credentials() {
+                    if let Some(ref mut qobuz_config) = self.config.qobuz {
+                        qobuz_config.app_id = app_id;
+                        qobuz_config.app_secret = app_secret;
+                        let _ = self.config.save();
+                    }
+                }
+            }
+            "Tidal" => {
+                if let Some(data) = service.persist_data() {
+                    if let Ok(tidal_cfg) = serde_json::from_str::<TidalConfig>(&data) {
+                        self.config.tidal = Some(tidal_cfg);
+                        let _ = self.config.save();
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn perform_search(&mut self, query: &str) {
         if !self.ensure_streaming_auth() {
+            // If auth is pending (device flow), defer the search
+            if self.pending_auth {
+                self.deferred_search = Some(query.to_string());
+            }
             return;
         }
 
-        let service = self.streaming.as_ref().unwrap();
+        let service = self.streaming.as_mut().unwrap();
         self.logger
             .info(format!("Searching {} for '{}'...", service.name(), query));
 
@@ -273,13 +409,13 @@ impl App {
             None => return,
         };
 
-        let service = match self.streaming.as_ref() {
+        self.logger
+            .info(format!("Getting stream for {}...", track.display_title()));
+
+        let service = match self.streaming.as_mut() {
             Some(s) => s,
             None => return,
         };
-
-        self.logger
-            .info(format!("Getting stream for {}...", track.display_title()));
 
         match service.get_stream_url(&track.id) {
             Ok(Some(url)) => {
@@ -305,7 +441,7 @@ impl App {
         }
     }
 
-    fn render(&mut self, frame: &mut Frame) {
+    pub fn render(&mut self, frame: &mut Frame) {
         let layout = Layout::horizontal([
             Constraint::Fill(1),
             Constraint::Percentage(60),

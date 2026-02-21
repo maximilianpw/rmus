@@ -184,7 +184,7 @@ impl SettingsPanel {
             keybind("k / Up", "Move up"),
             Line::from(""),
             section("Search"),
-            keybind("/", "Open search (Qobuz)"),
+            keybind("/", "Open search"),
             keybind("Enter", "Execute search / play"),
             keybind("Esc", "Close search"),
             Line::from(""),

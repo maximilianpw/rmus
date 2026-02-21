@@ -4,7 +4,7 @@ use regex::Regex;
 use serde::Deserialize;
 use std::collections::HashMap;
 
-use super::streaming::{StreamTrack, StreamingService};
+use super::streaming::{AuthStatus, StreamTrack, StreamingService};
 
 const BASE_URL: &str = "https://www.qobuz.com/api.json/0.2";
 const QUALITY: u32 = 27; // 24-bit/192kHz FLAC
@@ -281,6 +281,8 @@ pub struct QobuzSource {
     client: Option<QobuzClient>,
     app_id: Option<String>,
     app_secret: Option<String>,
+    email: String,
+    password: String,
 }
 
 impl QobuzSource {
@@ -289,11 +291,18 @@ impl QobuzSource {
             client: None,
             app_id: None,
             app_secret: None,
+            email: String::new(),
+            password: String::new(),
         }
     }
 
-    /// Create with cached app credentials from config.
-    pub fn with_credentials(app_id: String, app_secret: String) -> Self {
+    /// Create with cached app credentials and login credentials from config.
+    pub fn with_credentials(
+        app_id: String,
+        app_secret: String,
+        email: String,
+        password: String,
+    ) -> Self {
         Self {
             client: None,
             app_id: if app_id.is_empty() { None } else { Some(app_id) },
@@ -302,9 +311,10 @@ impl QobuzSource {
             } else {
                 Some(app_secret)
             },
+            email,
+            password,
         }
     }
-
 }
 
 impl StreamingService for QobuzSource {
@@ -319,11 +329,11 @@ impl StreamingService for QobuzSource {
             .unwrap_or(false)
     }
 
-    fn authenticate(
-        &mut self,
-        email: &str,
-        password: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn authenticate(&mut self) -> Result<AuthStatus, Box<dyn std::error::Error>> {
+        if self.email.is_empty() || self.password.is_empty() {
+            return Err("No Qobuz credentials configured. Set them in Settings > Account.".into());
+        }
+
         let rt = make_runtime();
 
         // Fetch app credentials if we don't have them
@@ -338,17 +348,17 @@ impl StreamingService for QobuzSource {
             self.app_secret.clone().unwrap(),
         );
 
-        let success = rt.block_on(client.login(email, password))?;
+        let success = rt.block_on(client.login(&self.email, &self.password))?;
         if success {
             self.client = Some(client);
-            Ok(())
+            Ok(AuthStatus::Authenticated)
         } else {
             Err("Login failed - check your Qobuz credentials".into())
         }
     }
 
     fn search(
-        &self,
+        &mut self,
         query: &str,
         limit: u32,
     ) -> Result<Vec<StreamTrack>, Box<dyn std::error::Error>> {
@@ -362,7 +372,7 @@ impl StreamingService for QobuzSource {
     }
 
     fn get_stream_url(
-        &self,
+        &mut self,
         track_id: &str,
     ) -> Result<Option<String>, Box<dyn std::error::Error>> {
         let client = self

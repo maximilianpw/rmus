@@ -8,6 +8,16 @@ use ratatui::{
 
 use crate::{config::Config, ui::input_line::InputLine};
 
+const SERVICES: &[&str] = &["qobuz", "tidal"];
+
+fn service_display_name(service: &str) -> &str {
+    match service {
+        "qobuz" => "Qobuz",
+        "tidal" => "Tidal",
+        _ => service,
+    }
+}
+
 #[derive(Debug)]
 pub struct AccountSettings {
     config: Config,
@@ -15,6 +25,7 @@ pub struct AccountSettings {
     email_input: InputLine,
     password_input: InputLine,
     active_field: usize, // 0 = email, 1 = password
+    selected_service_idx: usize,
 }
 
 impl AccountSettings {
@@ -31,16 +42,58 @@ impl AccountSettings {
         let mut password_input = InputLine::new();
         password_input.value = password;
 
+        let selected_service_idx = SERVICES
+            .iter()
+            .position(|&s| s == config.streaming_service)
+            .unwrap_or(0);
+
         Self {
             config,
             input_mode: false,
             email_input,
             password_input,
             active_field: 0,
+            selected_service_idx,
         }
     }
 
+    fn current_service(&self) -> &str {
+        SERVICES[self.selected_service_idx]
+    }
+
     pub fn render(&self, frame: &mut ratatui::Frame, area: Rect) {
+        let [selector_area, content_area] = Layout::vertical([
+            Constraint::Length(2),
+            Constraint::Fill(1),
+        ])
+        .areas(area);
+
+        self.render_service_selector(frame, selector_area);
+
+        match self.current_service() {
+            "qobuz" => self.render_qobuz_form(frame, content_area),
+            "tidal" => self.render_tidal_status(frame, content_area),
+            _ => {}
+        }
+    }
+
+    fn render_service_selector(&self, frame: &mut ratatui::Frame, area: Rect) {
+        let service_name = service_display_name(self.current_service());
+        let selector = Line::from(vec![
+            Span::styled("Service:  ", Style::default().fg(Color::Cyan)),
+            Span::styled("< ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                service_name,
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" >", Style::default().fg(Color::DarkGray)),
+        ]);
+        frame.render_widget(Paragraph::new(selector), area);
+    }
+
+    fn render_qobuz_form(&self, frame: &mut ratatui::Frame, area: Rect) {
         let [email_area, password_area, hint_area] = Layout::vertical([
             Constraint::Length(3),
             Constraint::Length(3),
@@ -99,8 +152,42 @@ impl AccountSettings {
                     .fg(Color::DarkGray),
             )
         } else {
-            Line::from("e: edit account".fg(Color::DarkGray))
+            Line::from("e: edit account | Left/Right: switch service".fg(Color::DarkGray))
         };
+        frame.render_widget(Paragraph::new(hint), hint_area);
+    }
+
+    fn render_tidal_status(&self, frame: &mut ratatui::Frame, area: Rect) {
+        let [status_area, hint_area] = Layout::vertical([
+            Constraint::Length(3),
+            Constraint::Length(2),
+        ])
+        .areas(area);
+
+        let has_token = self
+            .config
+            .tidal
+            .as_ref()
+            .map(|t| !t.access_token.is_empty())
+            .unwrap_or(false);
+
+        let status_text = if has_token {
+            Line::from(vec![
+                Span::styled("Status:   ", Style::default().fg(Color::Cyan)),
+                Span::styled("Authenticated", Style::default().fg(Color::Green)),
+            ])
+        } else {
+            Line::from(vec![
+                Span::styled("Status:   ", Style::default().fg(Color::Cyan)),
+                Span::styled("Not authenticated", Style::default().fg(Color::Red)),
+            ])
+        };
+        frame.render_widget(Paragraph::new(status_text), status_area);
+
+        let hint = Line::from(
+            "Use search (/) to trigger Tidal login | Left/Right: switch service"
+                .fg(Color::DarkGray),
+        );
         frame.render_widget(Paragraph::new(hint), hint_area);
     }
 
@@ -131,7 +218,7 @@ impl AccountSettings {
                     self.email_input.confirm_input();
                     self.password_input.confirm_input();
                     self.input_mode = false;
-                    self.save_to_config();
+                    self.save_qobuz_to_config();
                 }
                 KeyCode::Tab | KeyCode::Down => {
                     self.active_field = (self.active_field + 1) % 2;
@@ -156,11 +243,10 @@ impl AccountSettings {
             true
         } else {
             match key.code {
-                KeyCode::Char('e') => {
+                KeyCode::Char('e') if self.current_service() == "qobuz" => {
                     self.input_mode = true;
                     self.email_input.enter_input_mode();
                     self.password_input.enter_input_mode();
-                    // Preserve existing values
                     let (email, password) = self
                         .config
                         .qobuz
@@ -174,12 +260,38 @@ impl AccountSettings {
                     self.active_field = 0;
                     true
                 }
+                KeyCode::Left | KeyCode::Char('h') => {
+                    self.prev_service();
+                    true
+                }
+                KeyCode::Right | KeyCode::Char('l') => {
+                    self.next_service();
+                    true
+                }
                 _ => false,
             }
         }
     }
 
-    fn save_to_config(&mut self) {
+    fn next_service(&mut self) {
+        self.selected_service_idx = (self.selected_service_idx + 1) % SERVICES.len();
+        self.save_service_selection();
+    }
+
+    fn prev_service(&mut self) {
+        self.selected_service_idx = self
+            .selected_service_idx
+            .checked_sub(1)
+            .unwrap_or(SERVICES.len() - 1);
+        self.save_service_selection();
+    }
+
+    fn save_service_selection(&mut self) {
+        self.config.streaming_service = self.current_service().to_string();
+        let _ = self.config.save();
+    }
+
+    fn save_qobuz_to_config(&mut self) {
         let email = self.email_input.value.clone();
         let password = self.password_input.value.clone();
 
@@ -195,6 +307,8 @@ impl AccountSettings {
             });
         }
 
+        self.config.streaming_service = "qobuz".to_string();
+        self.selected_service_idx = 0;
         let _ = self.config.save();
     }
 }

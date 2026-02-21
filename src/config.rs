@@ -9,7 +9,15 @@ pub struct Config {
     pub local: LocalConfig,
     #[serde(default)]
     pub qobuz: Option<QobuzConfig>,
+    #[serde(default)]
+    pub tidal: Option<TidalConfig>,
     pub audio: AudioConfig,
+    #[serde(default = "default_streaming_service")]
+    pub streaming_service: String,
+}
+
+fn default_streaming_service() -> String {
+    "qobuz".to_string()
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -33,6 +41,18 @@ pub struct QobuzConfig {
     pub app_secret: String,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct TidalConfig {
+    #[serde(default)]
+    pub access_token: String,
+    #[serde(default)]
+    pub refresh_token: String,
+    #[serde(default)]
+    pub country_code: String,
+    #[serde(default)]
+    pub token_expiry: u64,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AudioConfig {
     pub default_volume: u16,
@@ -45,7 +65,9 @@ impl Default for Config {
                 sources: Vec::new(),
             },
             qobuz: None,
+            tidal: None,
             audio: AudioConfig { default_volume: 50 },
+            streaming_service: default_streaming_service(),
         }
     }
 }
@@ -55,7 +77,9 @@ impl Display for Config {
         f.debug_struct("Config")
             .field("local", &self.local)
             .field("qobuz", &self.qobuz)
+            .field("tidal", &self.tidal)
             .field("audio", &self.audio)
+            .field("streaming_service", &self.streaming_service)
             .finish()
     }
 }
@@ -121,6 +145,8 @@ mod tests {
 
         let config: Config = toml::from_str(toml).unwrap();
         assert!(config.qobuz.is_none());
+        assert!(config.tidal.is_none());
+        assert_eq!(config.streaming_service, "qobuz");
         assert_eq!(config.audio.default_volume, 75);
         assert_eq!(config.local.sources.len(), 1);
         assert_eq!(config.local.sources[0].name, "Test Album");
@@ -150,6 +176,35 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_config_with_tidal() {
+        let toml = r#"
+            streaming_service = "tidal"
+
+            [[local.sources]]
+            name = "Test"
+            path = "/music"
+
+            [tidal]
+            access_token = "abc123"
+            refresh_token = "def456"
+            country_code = "US"
+            token_expiry = 1700000000
+
+            [audio]
+            default_volume = 50
+        "#;
+
+        let config: Config = toml::from_str(toml).unwrap();
+        assert!(config.tidal.is_some());
+        let tidal = config.tidal.unwrap();
+        assert_eq!(tidal.access_token, "abc123");
+        assert_eq!(tidal.refresh_token, "def456");
+        assert_eq!(tidal.country_code, "US");
+        assert_eq!(tidal.token_expiry, 1700000000);
+        assert_eq!(config.streaming_service, "tidal");
+    }
+
+    #[test]
     fn test_parse_multiple_sources() {
         let toml = r#"
             [[local.sources]]
@@ -175,6 +230,8 @@ mod tests {
         let config = Config::default();
         assert!(config.local.sources.is_empty());
         assert!(config.qobuz.is_none());
+        assert!(config.tidal.is_none());
+        assert_eq!(config.streaming_service, "qobuz");
         assert_eq!(config.audio.default_volume, 50);
     }
 
@@ -188,7 +245,9 @@ mod tests {
                 }],
             },
             qobuz: None,
+            tidal: None,
             audio: AudioConfig { default_volume: 50 },
+            streaming_service: "qobuz".to_string(),
         };
 
         let sources = config.get_local_sources();
