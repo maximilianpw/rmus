@@ -4,7 +4,7 @@ use std::fmt::{Debug, Display};
 use std::fs;
 use std::path::PathBuf;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Config {
     pub local: LocalConfig,
     #[serde(default)]
@@ -12,25 +12,25 @@ pub struct Config {
     pub audio: AudioConfig,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct LocalSource {
     pub name: String,
     pub path: PathBuf,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct LocalConfig {
     pub sources: Vec<LocalSource>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct QobuzConfig {
     pub email: String,
     pub password: String,
     pub app_id: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AudioConfig {
     pub default_volume: u16,
 }

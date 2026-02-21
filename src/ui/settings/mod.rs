@@ -1,3 +1,4 @@
+pub mod account;
 pub mod settings_panel;
 pub mod sources;
 

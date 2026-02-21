@@ -1,15 +1,15 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     layout::{Constraint, Layout, Rect},
-    style::{Color, Modifier, Style, Stylize},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Tabs, Widget},
+    widgets::{Block, Borders, Clear, Paragraph, Tabs},
 };
 
 use crate::{
     config::Config,
     ui::{
-        settings::{sources::SourceSettings, SettingsTab},
+        settings::{account::AccountSettings, sources::SourceSettings, SettingsTab},
         widget::handle_focused_border_style,
         AppPanel,
     },
@@ -21,6 +21,7 @@ pub struct SettingsPanel {
     pub opened: bool,
     selected_tab: usize,
     source_settings: SourceSettings,
+    account_settings: AccountSettings,
 }
 
 impl AppPanel for SettingsPanel {
@@ -51,10 +52,12 @@ impl AppPanel for SettingsPanel {
 
 impl SettingsPanel {
     pub fn new(config: Config) -> Self {
+        let account_settings = AccountSettings::new(config.clone());
         Self {
             opened: false,
             selected_tab: 0,
             source_settings: SourceSettings::new(config),
+            account_settings,
         }
     }
 
@@ -70,10 +73,18 @@ impl SettingsPanel {
         if !self.opened {
             return;
         }
-        if self.current_tab() == SettingsTab::General {
-            if self.source_settings.handle_events(key) {
-                return;
+        match self.current_tab() {
+            SettingsTab::General => {
+                if self.source_settings.handle_events(key) {
+                    return;
+                }
             }
+            SettingsTab::Account => {
+                if self.account_settings.handle_events(key) {
+                    return;
+                }
+            }
+            _ => {}
         }
 
         match key.code {
@@ -133,20 +144,9 @@ impl SettingsPanel {
 
         match self.current_tab() {
             SettingsTab::General => self.source_settings.render_sources(frame, inner),
-            SettingsTab::Account => self.render_account_settings(frame, inner),
+            SettingsTab::Account => self.account_settings.render(frame, inner),
             SettingsTab::Keybinds => self.render_keybinds(frame, inner),
         }
-    }
-
-    fn render_account_settings(&self, frame: &mut ratatui::Frame, area: Rect) {
-        let text = vec![
-            Line::from("Email: max@example.com"),
-            Line::from(""),
-            Line::from("Password: test".bold()),
-        ];
-
-        let paragraph = Paragraph::new(text);
-        frame.render_widget(paragraph, area);
     }
 
     fn render_keybinds(&self, frame: &mut ratatui::Frame, area: Rect) {
