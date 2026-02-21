@@ -12,4 +12,5 @@ pub enum Action {
     SeekBackward(f64),
     VolumeUp(u8),
     VolumeDown(u8),
+    OpenSearch,
 }

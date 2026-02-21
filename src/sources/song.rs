@@ -4,6 +4,7 @@ use std::{fmt::Display, fs::DirEntry, path::PathBuf};
 pub struct Song {
     pub path: PathBuf,
     pub title: String,
+    pub url: Option<String>,
 }
 
 impl Song {
@@ -11,7 +12,20 @@ impl Song {
         Song {
             title: f.file_name().to_string_lossy().into_owned(),
             path: f.path(),
+            url: None,
         }
+    }
+
+    pub fn from_url(title: String, url: String) -> Self {
+        Song {
+            title,
+            path: PathBuf::new(),
+            url: Some(url),
+        }
+    }
+
+    pub fn is_stream(&self) -> bool {
+        self.url.is_some()
     }
 }
 

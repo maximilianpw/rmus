@@ -12,7 +12,13 @@ pub fn handle_crossterm_events(app: &mut App) -> color_eyre::Result<()> {
     if event::poll(POLL_TIMEOUT)? {
         match event::read()? {
             Event::Key(key) if key.kind == KeyEventKind::Press => {
-                match resolve_key(key, app.focused_window, app.settings_panel.opened) {
+                let search_active = app.center_panel.is_search_input_active();
+                match resolve_key(
+                    key,
+                    app.focused_window,
+                    app.settings_panel.opened,
+                    search_active,
+                ) {
                     KeyAction::Execute(action) => app.execute(action),
                     KeyAction::DelegateToPanel => app.delegate_key_to_panel(key),
                     KeyAction::None => {}

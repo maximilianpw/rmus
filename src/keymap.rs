@@ -9,8 +9,17 @@ pub enum KeyAction {
     None,
 }
 
-pub fn resolve_key(key: KeyEvent, focused_window: FocusedWindow, settings_open: bool) -> KeyAction {
+pub fn resolve_key(
+    key: KeyEvent,
+    focused_window: FocusedWindow,
+    settings_open: bool,
+    search_input_active: bool,
+) -> KeyAction {
     if settings_open {
+        return KeyAction::DelegateToPanel;
+    }
+
+    if search_input_active {
         return KeyAction::DelegateToPanel;
     }
 
@@ -24,6 +33,7 @@ pub fn resolve_key(key: KeyEvent, focused_window: FocusedWindow, settings_open: 
         (_, KeyCode::Char('s')) if focused_window != FocusedWindow::Right => {
             return KeyAction::Execute(Action::ToggleSettings);
         }
+        (_, KeyCode::Char('/')) => return KeyAction::Execute(Action::OpenSearch),
         _ => {}
     }
 

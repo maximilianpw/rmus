@@ -191,6 +191,7 @@ impl AccountSettings {
                 email,
                 password,
                 app_id: String::new(),
+                app_secret: String::new(),
             });
         }
 

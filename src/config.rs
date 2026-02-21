@@ -27,7 +27,10 @@ pub struct LocalConfig {
 pub struct QobuzConfig {
     pub email: String,
     pub password: String,
+    #[serde(default)]
     pub app_id: String,
+    #[serde(default)]
+    pub app_secret: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

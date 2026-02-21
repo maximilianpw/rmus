@@ -3,7 +3,9 @@ use std::{fmt::Debug, path::PathBuf};
 use crate::sources::song::Song;
 
 pub mod local;
+pub mod qobuz;
 pub mod song;
+pub mod streaming;
 
 pub trait MusicSource {
     fn name(&self) -> String;

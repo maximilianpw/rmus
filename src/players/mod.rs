@@ -147,7 +147,9 @@ fn dirs_fallback() -> std::path::PathBuf {
 
 impl MusicPlayer for SafePlayer {
     fn play(&mut self, song: &Song) -> PlayerResult<()> {
-        Self::validate_song_path(&song.path)?;
+        if !song.is_stream() {
+            Self::validate_song_path(&song.path)?;
+        }
         self.inner.play(song)
     }
 
@@ -165,7 +167,9 @@ impl MusicPlayer for SafePlayer {
         }
 
         for song in &songs {
-            Self::validate_song_path(&song.path)?;
+            if !song.is_stream() {
+                Self::validate_song_path(&song.path)?;
+            }
         }
 
         self.inner.play_album(songs, start_index)

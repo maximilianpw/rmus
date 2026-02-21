@@ -202,7 +202,7 @@ impl MpvPlayer {
                     self.playlist_index += 1;
                     let song = self.playlist[self.playlist_index].clone();
                     self.playback_info.current_song = Some(song.clone());
-                    let _ = self.load_file(&song.path);
+                    let _ = self.load_song(&song);
                     self.playback_info.state = PlaybackState::Playing;
                 } else {
                     self.playback_info.state = PlaybackState::Stopped;
@@ -214,9 +214,13 @@ impl MpvPlayer {
         }
     }
 
-    fn load_file(&mut self, path: &PathBuf) -> PlayerResult<()> {
-        let path_str = path.to_string_lossy();
-        self.send_command(&["loadfile", &path_str, "replace"])
+    fn load_song(&mut self, song: &Song) -> PlayerResult<()> {
+        let source = if let Some(ref url) = song.url {
+            url.clone()
+        } else {
+            song.path.to_string_lossy().into_owned()
+        };
+        self.send_command(&["loadfile", &source, "replace"])
     }
 
     fn ensure_running(&mut self) -> PlayerResult<()> {
@@ -245,7 +249,7 @@ impl MusicPlayer for MpvPlayer {
         self.playback_info.current_song = Some(song.clone());
         self.playback_info.position = 0.0;
         self.playback_info.duration = 0.0;
-        self.load_file(&song.path)?;
+        self.load_song(song)?;
         self.playback_info.state = PlaybackState::Playing;
         Ok(())
     }
@@ -261,7 +265,7 @@ impl MusicPlayer for MpvPlayer {
         self.playback_info.current_song = Some(song.clone());
         self.playback_info.position = 0.0;
         self.playback_info.duration = 0.0;
-        self.load_file(&song.path)?;
+        self.load_song(&song)?;
         self.playback_info.state = PlaybackState::Playing;
         Ok(())
     }
@@ -288,7 +292,7 @@ impl MusicPlayer for MpvPlayer {
             let song = self.playlist[self.playlist_index].clone();
             self.playback_info.current_song = Some(song.clone());
             self.playback_info.position = 0.0;
-            self.load_file(&song.path)?;
+            self.load_song(&song)?;
             self.playback_info.state = PlaybackState::Playing;
         }
         Ok(())
@@ -303,7 +307,7 @@ impl MusicPlayer for MpvPlayer {
             let song = self.playlist[self.playlist_index].clone();
             self.playback_info.current_song = Some(song.clone());
             self.playback_info.position = 0.0;
-            self.load_file(&song.path)?;
+            self.load_song(&song)?;
             self.playback_info.state = PlaybackState::Playing;
         } else {
             // At first track, just restart it
