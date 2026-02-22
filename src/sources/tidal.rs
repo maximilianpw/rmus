@@ -146,11 +146,7 @@ impl TidalClient {
                 let artist_name = t
                     .artist
                     .and_then(|a| a.name)
-                    .or_else(|| {
-                        t.artists
-                            .and_then(|mut v| v.pop())
-                            .and_then(|a| a.name)
-                    })
+                    .or_else(|| t.artists.and_then(|mut v| v.pop()).and_then(|a| a.name))
                     .unwrap_or_else(|| "Unknown".to_string());
                 StreamTrack {
                     id: t.id.to_string(),
@@ -211,8 +207,7 @@ impl TidalClient {
             .unwrap_or(true);
 
         if is_json_manifest {
-            let manifest_bytes =
-                base64::engine::general_purpose::STANDARD.decode(&manifest_b64)?;
+            let manifest_bytes = base64::engine::general_purpose::STANDARD.decode(&manifest_b64)?;
             let manifest: ManifestJson = serde_json::from_slice(&manifest_bytes)?;
             Ok(manifest.urls.and_then(|u| u.into_iter().next()))
         } else {
@@ -229,10 +224,7 @@ async fn start_device_auth(
 ) -> Result<DeviceAuthResponse, Box<dyn std::error::Error>> {
     let resp = client
         .post(format!("{AUTH_URL}/device_authorization"))
-        .form(&[
-            ("client_id", CLIENT_ID),
-            ("scope", "r_usr w_usr w_sub"),
-        ])
+        .form(&[("client_id", CLIENT_ID), ("scope", "r_usr w_usr w_sub")])
         .send()
         .await?;
 
@@ -256,10 +248,7 @@ async fn poll_token(
             ("client_id", CLIENT_ID),
             ("client_secret", CLIENT_SECRET),
             ("device_code", device_code),
-            (
-                "grant_type",
-                "urn:ietf:params:oauth:grant-type:device_code",
-            ),
+            ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
             ("scope", "r_usr w_usr w_sub"),
         ])
         .send()
@@ -351,7 +340,8 @@ impl TidalSource {
         }
 
         let rt = make_runtime();
-        let token_resp = rt.block_on(refresh_token(&self.http_client, &self.config.refresh_token))?;
+        let token_resp =
+            rt.block_on(refresh_token(&self.http_client, &self.config.refresh_token))?;
 
         self.config.access_token = token_resp.access_token.clone();
         if let Some(rt) = token_resp.refresh_token {

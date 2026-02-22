@@ -9,7 +9,10 @@ use ratatui::{
     Frame,
 };
 
-use crate::{sources::song::Song, ui::{input_line::InputLine, log_panel::Logger}};
+use crate::{
+    sources::song::Song,
+    ui::{input_line::InputLine, log_panel::Logger},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CenterPanelMode {
@@ -22,6 +25,8 @@ pub enum CenterPanelMode {
 pub struct CenterPanel {
     selected_album: Option<PathBuf>,
     songs: Vec<Song>,
+    /// Unfiltered album songs, used to restore after local search filtering.
+    album_songs: Vec<Song>,
     list_state: ListState,
     logger: Logger,
     mode: CenterPanelMode,
@@ -34,6 +39,7 @@ impl CenterPanel {
         Self {
             selected_album: None,
             songs: Vec::new(),
+            album_songs: Vec::new(),
             list_state: ListState::default(),
             logger,
             mode: CenterPanelMode::Album,
@@ -44,6 +50,7 @@ impl CenterPanel {
 
     pub fn set_album(&mut self, path: PathBuf, songs: Vec<Song>) {
         self.selected_album = Some(path);
+        self.album_songs = songs.clone();
         self.songs = songs;
         self.mode = CenterPanelMode::Album;
         if !self.songs.is_empty() {
@@ -63,23 +70,51 @@ impl CenterPanel {
         }
     }
 
+    /// Open search for streaming services — clears songs to avoid stale data.
     pub fn open_search(&mut self) {
+        self.songs.clear();
+        self.album_songs.clear();
+        self.list_state.select(None);
         self.mode = CenterPanelMode::SearchInput;
         self.search_input.enter_input_mode();
     }
 
+    /// Open search for local filtering — keeps album songs visible while typing.
+    pub fn open_search_local(&mut self) {
+        self.mode = CenterPanelMode::SearchInput;
+        self.search_input.enter_input_mode();
+    }
+
+    /// Filter album_songs by query and display the matches.
+    pub fn filter_songs(&mut self, query: &str) {
+        let query_lower = query.to_lowercase();
+        self.songs = self
+            .album_songs
+            .iter()
+            .filter(|s| s.title.to_lowercase().contains(&query_lower))
+            .cloned()
+            .collect();
+        self.mode = CenterPanelMode::SearchResults;
+        if !self.songs.is_empty() {
+            self.list_state.select(Some(0));
+        } else {
+            self.list_state.select(None);
+        }
+    }
+
     pub fn close_search(&mut self) {
         self.search_input.exit_input_mode();
-        if self.mode == CenterPanelMode::SearchInput
-            && self.songs.is_empty()
-        {
-            // No results to show, go back to album mode
-            self.mode = CenterPanelMode::Album;
-        } else if self.mode == CenterPanelMode::SearchInput {
-            // Had previous search results, show them
-            self.mode = CenterPanelMode::SearchResults;
-        } else {
-            self.mode = CenterPanelMode::Album;
+        self.restore_album_songs();
+        self.mode = CenterPanelMode::Album;
+    }
+
+    /// If we have stashed album songs (from local filtering), restore them.
+    fn restore_album_songs(&mut self) {
+        if !self.album_songs.is_empty() {
+            self.songs = self.album_songs.clone();
+            if !self.songs.is_empty() {
+                self.list_state.select(Some(0));
+            }
         }
     }
 
@@ -245,6 +280,7 @@ impl CenterPanel {
             KeyCode::Char('k') | KeyCode::Up => self.previous_item(),
             KeyCode::Char('/') => self.open_search(),
             KeyCode::Esc => {
+                self.restore_album_songs();
                 self.mode = CenterPanelMode::Album;
             }
             _ => {}

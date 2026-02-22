@@ -111,6 +111,13 @@ impl LeftPanel {
         Some((path, songs))
     }
 
+    pub fn active_tab_name(&self) -> String {
+        self.items
+            .get(self.selected_tab_index)
+            .map(|s| s.name())
+            .unwrap_or_default()
+    }
+
     fn next_tab(&mut self) {
         if !self.items.is_empty() {
             self.selected_tab_index = (self.selected_tab_index + 1) % self.items.len();

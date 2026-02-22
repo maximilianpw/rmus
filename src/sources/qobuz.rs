@@ -163,8 +163,7 @@ impl QobuzClient {
 
 // --- Credential fetching ---
 
-async fn get_app_id_and_secret(
-) -> Result<(String, String), Box<dyn std::error::Error>> {
+async fn get_app_id_and_secret() -> Result<(String, String), Box<dyn std::error::Error>> {
     let seed_timezone_regex = Regex::new(
         r#"[a-z]\.initialSeed\("(?P<seed>[\w=]+)",window\.utimezone\.(?P<timezone>[a-z]+)\)"#,
     )?;
@@ -305,7 +304,11 @@ impl QobuzSource {
     ) -> Self {
         Self {
             client: None,
-            app_id: if app_id.is_empty() { None } else { Some(app_id) },
+            app_id: if app_id.is_empty() {
+                None
+            } else {
+                Some(app_id)
+            },
             app_secret: if app_secret.is_empty() {
                 None
             } else {
@@ -362,10 +365,7 @@ impl StreamingService for QobuzSource {
         query: &str,
         limit: u32,
     ) -> Result<Vec<StreamTrack>, Box<dyn std::error::Error>> {
-        let client = self
-            .client
-            .as_ref()
-            .ok_or("Not authenticated with Qobuz")?;
+        let client = self.client.as_ref().ok_or("Not authenticated with Qobuz")?;
         let rt = make_runtime();
         let tracks = rt.block_on(client.search(query, limit))?;
         Ok(tracks)
@@ -375,10 +375,7 @@ impl StreamingService for QobuzSource {
         &mut self,
         track_id: &str,
     ) -> Result<Option<String>, Box<dyn std::error::Error>> {
-        let client = self
-            .client
-            .as_ref()
-            .ok_or("Not authenticated with Qobuz")?;
+        let client = self.client.as_ref().ok_or("Not authenticated with Qobuz")?;
         let rt = make_runtime();
         let url = rt.block_on(client.get_stream_url(track_id))?;
         Ok(url)
