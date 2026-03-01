@@ -124,7 +124,7 @@ impl Config {
             fs::create_dir_all(parent)?;
         }
         let toml_string = toml::to_string_pretty(self).unwrap();
-        fs::write(config_path, toml_string)
+        write_config_file(&config_path, &toml_string)
     }
 
     pub fn get_local_sources(&self) -> Vec<LocalSource> {
@@ -149,9 +149,23 @@ fn get_config_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("config.toml"))
 }
 
+fn write_config_file(path: &PathBuf, content: &str) -> Result<(), std::io::Error> {
+    fs::write(path, content)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn test_parse_config_without_qobuz() {
@@ -308,5 +322,21 @@ mod tests {
         let json = serde_json::to_string(&config.tidal.as_ref().unwrap()).unwrap();
         let from_json: TidalConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(from_json.access_token, "abc123");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_write_config_file_sets_permissions_600() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("rmus-config-test-{}.toml", nonce));
+        write_config_file(&path, "test = true\n").unwrap();
+
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+
+        let _ = fs::remove_file(path);
     }
 }

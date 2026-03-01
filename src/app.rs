@@ -15,7 +15,7 @@ use crate::{
         local::LocalFiles,
         qobuz::QobuzSource,
         song::Song,
-        streaming::{AuthStatus, StreamTrack, StreamingService},
+        streaming::{AuthStatus, StreamTrack, StreamingService, StreamingServiceId},
         tidal::TidalSource,
         MusicSource, StreamingTab,
     },
@@ -64,15 +64,15 @@ pub struct App {
     tidal: Option<Box<dyn StreamingService>>,
     search_results: Vec<StreamTrack>,
     /// Which service produced the current search results (needed for playback).
-    search_source: Option<String>,
+    search_source: Option<StreamingServiceId>,
     config: Config,
     logger: Logger,
-    /// Which service has a pending auth flow (e.g. "Tidal").
-    pending_auth_service: Option<String>,
+    /// Which service has a pending auth flow.
+    pending_auth_service: Option<StreamingServiceId>,
     deferred_search: Option<String>,
     streaming_task_tx: Sender<StreamingTaskResult>,
     streaming_task_rx: Receiver<StreamingTaskResult>,
-    busy_service: Option<String>,
+    busy_service: Option<StreamingServiceId>,
 }
 
 enum StreamingTask {
@@ -94,7 +94,7 @@ enum StreamingTaskOutput {
 }
 
 struct StreamingTaskResult {
-    service_name: String,
+    service_name: StreamingServiceId,
     service: Box<dyn StreamingService>,
     output: StreamingTaskOutput,
 }
@@ -309,19 +309,17 @@ impl App {
         }
     }
 
-    fn take_service(&mut self, name: &str) -> Option<Box<dyn StreamingService>> {
-        match name {
-            "Qobuz" => self.qobuz.take(),
-            "Tidal" => self.tidal.take(),
-            _ => None,
+    fn take_service(&mut self, service_id: StreamingServiceId) -> Option<Box<dyn StreamingService>> {
+        match service_id {
+            StreamingServiceId::Qobuz => self.qobuz.take(),
+            StreamingServiceId::Tidal => self.tidal.take(),
         }
     }
 
-    fn put_service(&mut self, name: &str, service: Box<dyn StreamingService>) {
-        match name {
-            "Qobuz" => self.qobuz = Some(service),
-            "Tidal" => self.tidal = Some(service),
-            _ => {}
+    fn put_service(&mut self, service_id: StreamingServiceId, service: Box<dyn StreamingService>) {
+        match service_id {
+            StreamingServiceId::Qobuz => self.qobuz = Some(service),
+            StreamingServiceId::Tidal => self.tidal = Some(service),
         }
     }
 
@@ -355,23 +353,23 @@ impl App {
     }
 
     fn poll_pending_auth(&mut self) {
-        let service_name = match &self.pending_auth_service {
-            Some(name) => name.clone(),
+        let service_id = match self.pending_auth_service {
+            Some(id) => id,
             None => return,
         };
 
-        if self.busy_service.as_deref() == Some(&service_name) {
+        if self.busy_service == Some(service_id) {
             return;
         }
 
-        if let Some(service) = self.take_service(&service_name) {
-            self.spawn_streaming_task(service_name, service, StreamingTask::PollAuth);
+        if let Some(service) = self.take_service(service_id) {
+            self.spawn_streaming_task(service_id, service, StreamingTask::PollAuth);
         }
     }
 
-    fn persist_streaming_credentials(&mut self, service_name: &str) {
-        match service_name {
-            "Qobuz" => {
+    fn persist_streaming_credentials(&mut self, service_id: StreamingServiceId) {
+        match service_id {
+            StreamingServiceId::Qobuz => {
                 if let Some(ref service) = self.qobuz {
                     if let Some((app_id, app_secret)) = service.app_credentials() {
                         if let Some(ref mut qobuz_config) = self.config.qobuz {
@@ -381,7 +379,7 @@ impl App {
                     }
                 }
             }
-            "Tidal" => {
+            StreamingServiceId::Tidal => {
                 if let Some(ref service) = self.tidal {
                     if let Some(data) = service.persist_data() {
                         if let Ok(tidal_cfg) = serde_json::from_str::<TidalConfig>(&data) {
@@ -390,7 +388,6 @@ impl App {
                     }
                 }
             }
-            _ => {}
         }
 
         match self.config.save() {
@@ -405,25 +402,23 @@ impl App {
     fn perform_search(&mut self, query: &str) {
         // Determine search mode based on the active left panel tab
         let tab = self.left_panel.active_tab_name();
-        if tab != "Qobuz" && tab != "Tidal" {
+        let Some(service_id) = StreamingServiceId::from_tab_name(&tab) else {
             // Local filtering
             self.search_source = None;
             self.center_panel.filter_songs(query);
             return;
-        }
+        };
 
-        let service_name = tab;
-
-        if self.busy_service.as_deref() == Some(&service_name) {
+        if self.busy_service == Some(service_id) {
             self.logger.info("Streaming request already in progress...".to_string());
             return;
         }
 
         self.logger
-            .info(format!("Searching {} for '{}'...", service_name, query));
-        if let Some(service) = self.take_service(&service_name) {
+            .info(format!("Searching {} for '{}'...", service_id.as_str(), query));
+        if let Some(service) = self.take_service(service_id) {
             self.spawn_streaming_task(
-                service_name,
+                service_id,
                 service,
                 StreamingTask::Search {
                     query: query.to_string(),
@@ -449,18 +444,18 @@ impl App {
             .info(format!("Getting stream for {}...", track.display_title()));
 
         // Use the service that produced these search results
-        let service_name = match &self.search_source {
-            Some(name) => name.clone(),
+        let service_id = match self.search_source {
+            Some(id) => id,
             None => return,
         };
 
-        if self.busy_service.as_deref() == Some(&service_name) {
+        if self.busy_service == Some(service_id) {
             self.logger.info("Streaming request already in progress...".to_string());
             return;
         }
-        if let Some(service) = self.take_service(&service_name) {
+        if let Some(service) = self.take_service(service_id) {
             self.spawn_streaming_task(
-                service_name,
+                service_id,
                 service,
                 StreamingTask::GetStreamUrl {
                     track_id: track.id,
@@ -509,17 +504,17 @@ impl App {
 
     fn spawn_streaming_task(
         &mut self,
-        service_name: String,
+        service_id: StreamingServiceId,
         mut service: Box<dyn StreamingService>,
         task: StreamingTask,
     ) {
         let status = match &task {
-            StreamingTask::Search { .. } => format!("Searching {}...", service_name),
-            StreamingTask::PollAuth => format!("Authenticating {}...", service_name),
+            StreamingTask::Search { .. } => format!("Searching {}...", service_id.as_str()),
+            StreamingTask::PollAuth => format!("Authenticating {}...", service_id.as_str()),
             StreamingTask::GetStreamUrl { .. } => "Loading stream...".to_string(),
         };
         self.center_panel.set_status(Some(status));
-        self.busy_service = Some(service_name.clone());
+        self.busy_service = Some(service_id);
         let tx = self.streaming_task_tx.clone();
         thread::spawn(move || {
             let output = match task {
@@ -559,7 +554,7 @@ impl App {
             };
 
             let _ = tx.send(StreamingTaskResult {
-                service_name,
+                service_name: service_id,
                 service,
                 output,
             });
@@ -584,7 +579,7 @@ impl App {
     fn handle_streaming_task_result(&mut self, result: StreamingTaskResult) {
         self.busy_service = None;
         self.center_panel.set_status(None);
-        self.put_service(&result.service_name, result.service);
+        self.put_service(result.service_name, result.service);
 
         match result.output {
             StreamingTaskOutput::SearchResults(tracks) => {
@@ -611,9 +606,9 @@ impl App {
             }
             StreamingTaskOutput::AuthCompleted => {
                 self.logger
-                    .info(format!("Authenticated with {}", result.service_name));
+                    .info(format!("Authenticated with {}", result.service_name.as_str()));
                 self.pending_auth_service = None;
-                self.persist_streaming_credentials(&result.service_name);
+                self.persist_streaming_credentials(result.service_name);
                 if let Some(query) = self.deferred_search.take() {
                     self.perform_search(&query);
                 }

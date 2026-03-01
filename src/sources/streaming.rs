@@ -14,6 +14,29 @@ impl StreamTrack {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamingServiceId {
+    Qobuz,
+    Tidal,
+}
+
+impl StreamingServiceId {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Qobuz => "Qobuz",
+            Self::Tidal => "Tidal",
+        }
+    }
+
+    pub fn from_tab_name(name: &str) -> Option<Self> {
+        match name {
+            "Qobuz" => Some(Self::Qobuz),
+            "Tidal" => Some(Self::Tidal),
+            _ => None,
+        }
+    }
+}
+
 /// Result of an authentication attempt.
 #[derive(Debug)]
 pub enum AuthStatus {
