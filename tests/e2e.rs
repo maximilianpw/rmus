@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::time::Duration;
+use std::collections::HashMap;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{backend::TestBackend, buffer::Buffer, style::Color, Terminal};
@@ -82,6 +83,8 @@ struct MockStreamingService {
     polls_until_ready: usize,
     poll_count: usize,
     search_delay_ms: u64,
+    query_results: HashMap<String, Vec<StreamTrack>>,
+    query_delays_ms: HashMap<String, u64>,
 }
 
 impl MockStreamingService {
@@ -93,6 +96,8 @@ impl MockStreamingService {
             polls_until_ready: 0,
             poll_count: 0,
             search_delay_ms: 0,
+            query_results: HashMap::new(),
+            query_delays_ms: HashMap::new(),
         }
     }
 
@@ -104,6 +109,8 @@ impl MockStreamingService {
             polls_until_ready: polls_needed,
             poll_count: 0,
             search_delay_ms: 0,
+            query_results: HashMap::new(),
+            query_delays_ms: HashMap::new(),
         }
     }
 
@@ -115,7 +122,62 @@ impl MockStreamingService {
             polls_until_ready: 0,
             poll_count: 0,
             search_delay_ms: delay_ms,
+            query_results: HashMap::new(),
+            query_delays_ms: HashMap::new(),
         }
+    }
+
+    fn with_query_behavior(
+        mut self,
+        query_results: HashMap<String, Vec<StreamTrack>>,
+        query_delays_ms: HashMap<String, u64>,
+    ) -> Self {
+        self.query_results = query_results;
+        self.query_delays_ms = query_delays_ms;
+        self
+    }
+
+    fn search_results_for_query(query: &str) -> Vec<StreamTrack> {
+        vec![StreamTrack {
+            id: format!("{}-id", query),
+            title: format!("{} Track", query),
+            artist: "Artist".to_string(),
+            album: "Album".to_string(),
+        }]
+    }
+
+    fn delay_for_query(&self, query: &str) -> u64 {
+        self.query_delays_ms
+            .get(query)
+            .copied()
+            .unwrap_or(self.search_delay_ms)
+    }
+
+    fn results_for_query(&self, query: &str) -> Vec<StreamTrack> {
+        self.query_results
+            .get(query)
+            .cloned()
+            .unwrap_or_else(|| self.search_results.clone())
+    }
+}
+
+impl MockStreamingService {
+    fn new_timeout_then_fast(name: &str) -> Self {
+        let mut query_results = HashMap::new();
+        query_results.insert(
+            "slow".to_string(),
+            Self::search_results_for_query("slow"),
+        );
+        query_results.insert(
+            "fast".to_string(),
+            Self::search_results_for_query("fast"),
+        );
+
+        let mut query_delays_ms = HashMap::new();
+        query_delays_ms.insert("slow".to_string(), 300);
+        query_delays_ms.insert("fast".to_string(), 10);
+
+        Self::new_authenticated(name, Vec::new()).with_query_behavior(query_results, query_delays_ms)
     }
 }
 
@@ -150,13 +212,14 @@ impl StreamingService for MockStreamingService {
 
     fn search(
         &mut self,
-        _query: &str,
+        query: &str,
         _limit: u32,
     ) -> Result<Vec<StreamTrack>, Box<dyn std::error::Error>> {
-        if self.search_delay_ms > 0 {
-            std::thread::sleep(Duration::from_millis(self.search_delay_ms));
+        let delay_ms = self.delay_for_query(query);
+        if delay_ms > 0 {
+            std::thread::sleep(Duration::from_millis(delay_ms));
         }
-        Ok(self.search_results.clone())
+        Ok(self.results_for_query(query))
     }
 
     fn get_stream_url(
@@ -643,7 +706,7 @@ fn test_keybind_tab_shows_generic_search_text() {
 
 #[test]
 fn test_search_status_visible_while_background_query_runs() {
-    let mock = MockStreamingService::new_authenticated_slow("Qobuz", mock_tracks(), 120);
+    let mock = MockStreamingService::new_authenticated_slow("Qobuz", mock_tracks(), 80);
     let mut app = make_app(Some(Box::new(mock)), None);
 
     switch_to_tab(&mut app, "Qobuz");
@@ -665,12 +728,67 @@ fn test_search_status_visible_while_background_query_runs() {
     );
 
     // Let background worker complete and flush results.
-    std::thread::sleep(Duration::from_millis(140));
+    std::thread::sleep(Duration::from_millis(120));
     app.tick();
     let frame = terminal.draw(|f| app.render(f)).unwrap();
     let text = extract_buffer_text(frame.buffer);
     assert!(
         text.contains("Search Results (2)"),
         "Should show results after background search completes"
+    );
+}
+
+#[test]
+fn test_timeout_cancels_stale_search_and_replacement_wins() {
+    let mock = MockStreamingService::new_timeout_then_fast("Qobuz");
+    let mut app = make_app(Some(Box::new(mock)), None);
+    app.set_streaming_timeouts(
+        Duration::from_millis(120),
+        Duration::from_millis(120),
+        Duration::from_millis(120),
+    );
+
+    switch_to_tab(&mut app, "Qobuz");
+    app.execute(Action::OpenSearch);
+    for c in "slow".chars() {
+        app.delegate_key_to_panel(make_key(KeyCode::Char(c)));
+    }
+    app.delegate_key_to_panel(make_key(KeyCode::Enter));
+    app.tick();
+
+    // Wait past the test timeout so the slow request is canceled.
+    std::thread::sleep(Duration::from_millis(180));
+    app.tick();
+
+    let backend = TestBackend::new(100, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let frame = terminal.draw(|f| app.render(f)).unwrap();
+    let text = extract_buffer_text(frame.buffer);
+    assert!(
+        text.contains("timed out"),
+        "Should show timeout status after in-flight request exceeds timeout"
+    );
+
+    // Trigger a replacement search that should complete quickly.
+    app.execute(Action::OpenSearch);
+    for c in "fast".chars() {
+        app.delegate_key_to_panel(make_key(KeyCode::Char(c)));
+    }
+    app.delegate_key_to_panel(make_key(KeyCode::Enter));
+    app.tick();
+
+    // Let stale slow result arrive, then process again; it must be ignored.
+    std::thread::sleep(Duration::from_millis(220));
+    app.tick();
+
+    let frame = terminal.draw(|f| app.render(f)).unwrap();
+    let text = extract_buffer_text(frame.buffer);
+    assert!(
+        text.contains("Artist - fast Track"),
+        "Replacement query results should be rendered"
+    );
+    assert!(
+        !text.contains("Artist - slow Track"),
+        "Stale canceled query results must be ignored"
     );
 }

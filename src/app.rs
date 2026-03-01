@@ -77,6 +77,10 @@ pub struct App {
     next_task_id: u64,
     active_task: Option<ActiveStreamingTask>,
     canceled_task_ids: std::collections::HashSet<u64>,
+    queued_search: Option<(StreamingServiceId, String)>,
+    search_task_timeout: Duration,
+    auth_task_timeout: Duration,
+    stream_url_task_timeout: Duration,
 }
 
 enum StreamingTask {
@@ -170,6 +174,10 @@ impl App {
             next_task_id: 1,
             active_task: None,
             canceled_task_ids: std::collections::HashSet::new(),
+            queued_search: None,
+            search_task_timeout: Duration::from_secs(20),
+            auth_task_timeout: Duration::from_secs(10),
+            stream_url_task_timeout: Duration::from_secs(20),
         }
     }
 
@@ -210,7 +218,22 @@ impl App {
             next_task_id: 1,
             active_task: None,
             canceled_task_ids: std::collections::HashSet::new(),
+            queued_search: None,
+            search_task_timeout: Duration::from_secs(20),
+            auth_task_timeout: Duration::from_secs(10),
+            stream_url_task_timeout: Duration::from_secs(20),
         }
+    }
+
+    pub fn set_streaming_timeouts(
+        &mut self,
+        search_timeout: Duration,
+        auth_timeout: Duration,
+        stream_url_timeout: Duration,
+    ) {
+        self.search_task_timeout = search_timeout;
+        self.auth_task_timeout = auth_timeout;
+        self.stream_url_task_timeout = stream_url_timeout;
     }
 
     /// Process one "tick" of the app loop: sync config, poll auth, handle pending searches.
@@ -462,6 +485,10 @@ impl App {
                     limit: 20,
                 },
             );
+        } else {
+            self.queued_search = Some((service_id, query.to_string()));
+            self.center_panel
+                .set_status(Some("Waiting for previous request cleanup...".to_string()));
         }
     }
 
@@ -548,17 +575,17 @@ impl App {
         let (kind, timeout, status) = match &task {
             StreamingTask::Search { .. } => (
                 StreamingTaskKind::Search,
-                Duration::from_secs(20),
+                self.search_task_timeout,
                 format!("Searching {}...", service_id.as_str()),
             ),
             StreamingTask::PollAuth => (
                 StreamingTaskKind::PollAuth,
-                Duration::from_secs(10),
+                self.auth_task_timeout,
                 format!("Authenticating {}...", service_id.as_str()),
             ),
             StreamingTask::GetStreamUrl { .. } => (
                 StreamingTaskKind::GetStreamUrl,
-                Duration::from_secs(20),
+                self.stream_url_task_timeout,
                 "Loading stream...".to_string(),
             ),
         };
@@ -641,15 +668,16 @@ impl App {
             .map(|a| a.id == result.task_id)
             .unwrap_or(false);
         let is_canceled = self.canceled_task_ids.remove(&result.task_id);
-        if is_canceled {
-            return;
-        }
         if was_active {
             self.active_task = None;
             self.busy_service = None;
             self.center_panel.set_status(None);
         }
         self.put_service(result.service_name, result.service);
+        if is_canceled {
+            self.maybe_start_queued_search_for(result.service_name);
+            return;
+        }
 
         match result.output {
             StreamingTaskOutput::SearchResults(tracks) => {
@@ -703,6 +731,7 @@ impl App {
             }
         }
 
+        self.maybe_start_queued_search_for(result.service_name);
     }
 
     fn check_active_streaming_task_timeout(&mut self) {
@@ -739,10 +768,9 @@ impl App {
 
         // Recreate the service immediately so a new request can start without
         // waiting for the canceled task thread to return.
-        if self.take_service(active.service).is_none() {
-            if let Some(service) = self.recreate_service(active.service) {
-                self.put_service(active.service, service);
-            }
+        let _ = self.take_service(active.service);
+        if let Some(service) = self.recreate_service(active.service) {
+            self.put_service(active.service, service);
         }
     }
 
@@ -759,6 +787,18 @@ impl App {
             StreamingServiceId::Tidal => Some(Box::new(TidalSource::new(
                 self.config.tidal.clone().unwrap_or_default(),
             )) as Box<dyn StreamingService>),
+        }
+    }
+
+    fn maybe_start_queued_search_for(&mut self, service_id: StreamingServiceId) {
+        if self.busy_service.is_some() {
+            return;
+        }
+        let queued = self.queued_search.take();
+        match queued {
+            Some((queued_service, query)) if queued_service == service_id => self.perform_search(&query),
+            Some(other) => self.queued_search = Some(other),
+            None => {}
         }
     }
 }
