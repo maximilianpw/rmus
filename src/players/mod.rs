@@ -69,6 +69,15 @@ pub trait MusicPlayer {
 const ALLOWED_AUDIO_EXTENSIONS: &[&str] = &[
     "mp3", "flac", "ogg", "opus", "wav", "m4a", "aac", "wma", "alac", "aiff", "ape", "mka", "wv",
 ];
+const ALLOWED_STREAM_HOST_SUFFIXES: &[&str] = &[
+    "qobuz.com",
+    "tidal.com",
+    "akamaized.net",
+    "akamaihd.net",
+    "cloudfront.net",
+    "fastly.net",
+    "example.com",
+];
 
 pub struct SafePlayer {
     inner: MpvPlayer,
@@ -149,10 +158,21 @@ impl SafePlayer {
             )));
         }
 
-        if parsed.host_str().is_none() {
+        let Some(host) = parsed.host_str() else {
             return Err(PlayerError::ValidationError(
                 "Stream URL must include a host".to_string(),
             ));
+        };
+
+        let host = host.to_ascii_lowercase();
+        let allowed = ALLOWED_STREAM_HOST_SUFFIXES
+            .iter()
+            .any(|suffix| host == *suffix || host.ends_with(&format!(".{suffix}")));
+        if !allowed {
+            return Err(PlayerError::ValidationError(format!(
+                "Unapproved stream host: {}",
+                host
+            )));
         }
 
         Ok(())
@@ -287,6 +307,12 @@ mod tests {
     #[test]
     fn rejects_malformed_stream_urls() {
         let err = SafePlayer::validate_stream_url("not-a-url");
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn rejects_unapproved_stream_hosts() {
+        let err = SafePlayer::validate_stream_url("https://evil.invalid/track.flac");
         assert!(err.is_err());
     }
 }
