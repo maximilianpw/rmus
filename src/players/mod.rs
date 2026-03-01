@@ -6,6 +6,7 @@ use std::fs;
 use std::path::Path;
 
 use directories::BaseDirs;
+use reqwest::Url;
 
 use crate::players::mpv::MpvPlayer;
 use crate::sources::song::Song;
@@ -135,6 +136,27 @@ impl SafePlayer {
             ))),
         }
     }
+
+    fn validate_stream_url(url: &str) -> PlayerResult<()> {
+        let parsed = Url::parse(url).map_err(|e| {
+            PlayerError::ValidationError(format!("Invalid stream URL '{}': {}", url, e))
+        })?;
+
+        if parsed.scheme() != "https" {
+            return Err(PlayerError::ValidationError(format!(
+                "Unsupported stream URL scheme '{}'; expected https",
+                parsed.scheme()
+            )));
+        }
+
+        if parsed.host_str().is_none() {
+            return Err(PlayerError::ValidationError(
+                "Stream URL must include a host".to_string(),
+            ));
+        }
+
+        Ok(())
+    }
 }
 
 fn dirs_fallback() -> std::path::PathBuf {
@@ -147,7 +169,11 @@ fn dirs_fallback() -> std::path::PathBuf {
 
 impl MusicPlayer for SafePlayer {
     fn play(&mut self, song: &Song) -> PlayerResult<()> {
-        if !song.is_stream() {
+        if song.is_stream() {
+            if let Some(url) = song.url.as_deref() {
+                Self::validate_stream_url(url)?;
+            }
+        } else {
             Self::validate_song_path(&song.path)?;
         }
         self.inner.play(song)
@@ -167,7 +193,11 @@ impl MusicPlayer for SafePlayer {
         }
 
         for song in &songs {
-            if !song.is_stream() {
+            if song.is_stream() {
+                if let Some(url) = song.url.as_deref() {
+                    Self::validate_stream_url(url)?;
+                }
+            } else {
                 Self::validate_song_path(&song.path)?;
             }
         }
@@ -236,5 +266,27 @@ impl fmt::Debug for SafePlayer {
         f.debug_struct("SafePlayer")
             .field("inner", &self.inner)
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SafePlayer;
+
+    #[test]
+    fn validates_https_stream_urls() {
+        assert!(SafePlayer::validate_stream_url("https://example.com/track.flac").is_ok());
+    }
+
+    #[test]
+    fn rejects_non_https_stream_urls() {
+        let err = SafePlayer::validate_stream_url("http://example.com/track.flac");
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn rejects_malformed_stream_urls() {
+        let err = SafePlayer::validate_stream_url("not-a-url");
+        assert!(err.is_err());
     }
 }
