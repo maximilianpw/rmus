@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{backend::TestBackend, buffer::Buffer, style::Color, Terminal};
@@ -80,6 +81,7 @@ struct MockStreamingService {
     search_results: Vec<StreamTrack>,
     polls_until_ready: usize,
     poll_count: usize,
+    search_delay_ms: u64,
 }
 
 impl MockStreamingService {
@@ -90,6 +92,7 @@ impl MockStreamingService {
             search_results: results,
             polls_until_ready: 0,
             poll_count: 0,
+            search_delay_ms: 0,
         }
     }
 
@@ -100,6 +103,18 @@ impl MockStreamingService {
             search_results: results,
             polls_until_ready: polls_needed,
             poll_count: 0,
+            search_delay_ms: 0,
+        }
+    }
+
+    fn new_authenticated_slow(name: &str, results: Vec<StreamTrack>, delay_ms: u64) -> Self {
+        Self {
+            service_name: name.to_string(),
+            authenticated: true,
+            search_results: results,
+            polls_until_ready: 0,
+            poll_count: 0,
+            search_delay_ms: delay_ms,
         }
     }
 }
@@ -138,6 +153,9 @@ impl StreamingService for MockStreamingService {
         _query: &str,
         _limit: u32,
     ) -> Result<Vec<StreamTrack>, Box<dyn std::error::Error>> {
+        if self.search_delay_ms > 0 {
+            std::thread::sleep(Duration::from_millis(self.search_delay_ms));
+        }
         Ok(self.search_results.clone())
     }
 
@@ -620,5 +638,39 @@ fn test_keybind_tab_shows_generic_search_text() {
     assert!(
         !text.contains("Open search (Tidal)"),
         "Should NOT show service-specific search text"
+    );
+}
+
+#[test]
+fn test_search_status_visible_while_background_query_runs() {
+    let mock = MockStreamingService::new_authenticated_slow("Qobuz", mock_tracks(), 120);
+    let mut app = make_app(Some(Box::new(mock)), None);
+
+    switch_to_tab(&mut app, "Qobuz");
+    app.execute(Action::OpenSearch);
+    for c in "slow".chars() {
+        app.delegate_key_to_panel(make_key(KeyCode::Char(c)));
+    }
+    app.delegate_key_to_panel(make_key(KeyCode::Enter));
+
+    // Starts async search, but query is still running.
+    app.tick();
+    let backend = TestBackend::new(100, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let frame = terminal.draw(|f| app.render(f)).unwrap();
+    let text = extract_buffer_text(frame.buffer);
+    assert!(
+        text.contains("Searching Qobuz"),
+        "Should show background search status while request is in-flight"
+    );
+
+    // Let background worker complete and flush results.
+    std::thread::sleep(Duration::from_millis(140));
+    app.tick();
+    let frame = terminal.draw(|f| app.render(f)).unwrap();
+    let text = extract_buffer_text(frame.buffer);
+    assert!(
+        text.contains("Search Results (2)"),
+        "Should show results after background search completes"
     );
 }
