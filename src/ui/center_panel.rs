@@ -11,7 +11,7 @@ use ratatui::{
 
 use crate::{
     sources::song::Song,
-    ui::{input_line::InputLine, log_panel::Logger},
+    ui::input_line::InputLine,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -28,24 +28,28 @@ pub struct CenterPanel {
     /// Unfiltered album songs, used to restore after local search filtering.
     album_songs: Vec<Song>,
     list_state: ListState,
-    logger: Logger,
     mode: CenterPanelMode,
     search_input: InputLine,
     pending_query: Option<String>,
+    status_message: Option<String>,
 }
 
 impl CenterPanel {
-    pub fn new(logger: Logger) -> Self {
+    pub fn new() -> Self {
         Self {
             selected_album: None,
             songs: Vec::new(),
             album_songs: Vec::new(),
             list_state: ListState::default(),
-            logger,
             mode: CenterPanelMode::Album,
             search_input: InputLine::new(),
             pending_query: None,
+            status_message: None,
         }
+    }
+
+    pub fn set_status(&mut self, message: Option<String>) {
+        self.status_message = message;
     }
 
     pub fn set_album(&mut self, path: PathBuf, songs: Vec<Song>) {
@@ -210,7 +214,10 @@ impl CenterPanel {
         let list = List::new(list_items)
             .block(
                 Block::bordered()
-                    .title("Results")
+                    .title(match &self.status_message {
+                        Some(msg) => format!("Results ({})", msg),
+                        None => "Results".to_string(),
+                    })
                     .borders(Borders::ALL)
                     .border_style(border_style),
             )
@@ -233,7 +240,10 @@ impl CenterPanel {
             .collect();
 
         let result_count = self.songs.len();
-        let title = format!("Search Results ({})", result_count);
+        let title = match &self.status_message {
+            Some(msg) => format!("Search Results ({}) - {}", result_count, msg),
+            None => format!("Search Results ({})", result_count),
+        };
 
         let list = List::new(list_items)
             .block(

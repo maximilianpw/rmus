@@ -214,3 +214,89 @@ impl SourceSettings {
         self.sources = self.config.get_local_sources();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{AudioConfig, LocalConfig};
+    use crossterm::event::{KeyEvent, KeyModifiers};
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn default_config() -> Config {
+        Config {
+            local: LocalConfig {
+                sources: Vec::new(),
+            },
+            qobuz: None,
+            tidal: None,
+            audio: AudioConfig { default_volume: 50 },
+        }
+    }
+
+    fn unique_temp_dir() -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("rmus-source-settings-{}", nonce));
+        let _ = fs::create_dir_all(&dir);
+        dir
+    }
+
+    #[test]
+    fn adds_and_persists_source_on_enter() {
+        let mut settings = SourceSettings::new(default_config());
+        let dir = unique_temp_dir();
+        let dir_str = dir.to_string_lossy().to_string();
+
+        assert!(settings.handle_events(key(KeyCode::Char('a'))));
+        for c in "Test Album".chars() {
+            settings.handle_events(key(KeyCode::Char(c)));
+        }
+        settings.handle_events(key(KeyCode::Tab));
+        for c in dir_str.chars() {
+            settings.handle_events(key(KeyCode::Char(c)));
+        }
+        settings.handle_events(key(KeyCode::Enter));
+
+        let updated = settings
+            .take_config_update()
+            .expect("source should produce config update");
+        assert_eq!(updated.local.sources.len(), 1);
+        assert_eq!(updated.local.sources[0].name, "Test Album");
+        assert_eq!(updated.local.sources[0].path, dir);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rejects_invalid_source_path() {
+        let mut settings = SourceSettings::new(default_config());
+        let invalid = std::env::temp_dir()
+            .join("rmus-source-settings-does-not-exist")
+            .to_string_lossy()
+            .to_string();
+
+        assert!(settings.handle_events(key(KeyCode::Char('a'))));
+        for c in "Broken".chars() {
+            settings.handle_events(key(KeyCode::Char(c)));
+        }
+        settings.handle_events(key(KeyCode::Tab));
+        for c in invalid.chars() {
+            settings.handle_events(key(KeyCode::Char(c)));
+        }
+        settings.handle_events(key(KeyCode::Enter));
+
+        assert!(
+            settings.take_config_update().is_none(),
+            "invalid source should not be persisted"
+        );
+        assert_eq!(settings.sources.len(), 0);
+        assert!(settings.input_mode, "should stay in input mode on invalid path");
+    }
+}

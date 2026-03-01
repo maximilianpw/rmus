@@ -131,7 +131,7 @@ impl App {
             running: false,
             focused_window: FocusedWindow::default(),
             left_panel: LeftPanel::new(sources, logger.clone()),
-            center_panel: CenterPanel::new(logger.clone()),
+            center_panel: CenterPanel::new(),
             right_panel: RightPanel::new(log_panel),
             settings_panel: SettingsPanel::new(config.clone()),
             player: SafePlayer::new(),
@@ -168,7 +168,7 @@ impl App {
             running: false,
             focused_window: FocusedWindow::default(),
             left_panel: LeftPanel::new(sources, logger.clone()),
-            center_panel: CenterPanel::new(logger.clone()),
+            center_panel: CenterPanel::new(),
             right_panel: RightPanel::new(log_panel),
             settings_panel: SettingsPanel::new(config.clone()),
             player: SafePlayer::new(),
@@ -513,6 +513,12 @@ impl App {
         mut service: Box<dyn StreamingService>,
         task: StreamingTask,
     ) {
+        let status = match &task {
+            StreamingTask::Search { .. } => format!("Searching {}...", service_name),
+            StreamingTask::PollAuth => format!("Authenticating {}...", service_name),
+            StreamingTask::GetStreamUrl { .. } => "Loading stream...".to_string(),
+        };
+        self.center_panel.set_status(Some(status));
         self.busy_service = Some(service_name.clone());
         let tx = self.streaming_task_tx.clone();
         thread::spawn(move || {
@@ -577,6 +583,7 @@ impl App {
 
     fn handle_streaming_task_result(&mut self, result: StreamingTaskResult) {
         self.busy_service = None;
+        self.center_panel.set_status(None);
         self.put_service(&result.service_name, result.service);
 
         match result.output {
