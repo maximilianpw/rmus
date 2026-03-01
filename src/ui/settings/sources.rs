@@ -24,6 +24,7 @@ pub struct SourceSettings {
     path_input: InputLine,
     active_field: usize, // 0 = name, 1 = path
     config_dirty: bool,
+    status_message: Option<String>,
 }
 
 impl SourceSettings {
@@ -38,6 +39,7 @@ impl SourceSettings {
             path_input: InputLine::new(),
             active_field: 0,
             config_dirty: false,
+            status_message: None,
         }
     }
 
@@ -68,8 +70,12 @@ impl SourceSettings {
             self.list_state.select(Some(list_items.len() - 1));
         }
 
+        let title = match &self.status_message {
+            Some(msg) => format!("Library ({})", msg),
+            None => "Library".to_string(),
+        };
         let widget = List::new(list_items)
-            .block(Block::bordered().title("Library").borders(Borders::ALL))
+            .block(Block::bordered().title(title).borders(Borders::ALL))
             .highlight_style(Style::default().bg(Color::DarkGray));
 
         frame.render_stateful_widget(widget, area, &mut self.list_state);
@@ -88,6 +94,7 @@ impl SourceSettings {
                     self.name_input.exit_input_mode();
                     self.path_input.exit_input_mode();
                     self.input_mode = false;
+                    self.status_message = None;
                 }
                 KeyCode::Enter => {
                     if self.save_new_source() {
@@ -124,6 +131,7 @@ impl SourceSettings {
                     self.name_input.enter_input_mode();
                     self.path_input.enter_input_mode();
                     self.active_field = 0;
+                    self.status_message = None;
                     true
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
@@ -173,11 +181,13 @@ impl SourceSettings {
         let name = self.name_input.value.trim().to_string();
         let raw_path = self.path_input.value.trim();
         if name.is_empty() || raw_path.is_empty() {
+            self.status_message = Some("Name/path required".to_string());
             return false;
         }
 
         let path = PathBuf::from(raw_path);
         if !path.is_dir() {
+            self.status_message = Some("Path must be an existing directory".to_string());
             return false;
         }
 
@@ -194,8 +204,10 @@ impl SourceSettings {
             self.path_input.value.clear();
             self.list_state
                 .select(Some(self.sources.len().saturating_sub(1)));
+            self.status_message = Some("Saved".to_string());
             true
         } else {
+            self.status_message = Some("Failed to save config".to_string());
             false
         }
     }
