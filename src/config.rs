@@ -1,10 +1,10 @@
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
-use std::fmt::{Debug, Display};
+use std::fmt::Display;
 use std::fs;
 use std::path::PathBuf;
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
 pub struct Config {
     pub local: LocalConfig,
     #[serde(default)]
@@ -14,18 +14,18 @@ pub struct Config {
     pub audio: AudioConfig,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct LocalSource {
     pub name: String,
     pub path: PathBuf,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct LocalConfig {
     pub sources: Vec<LocalSource>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
 pub struct QobuzConfig {
     pub email: String,
     pub password: String,
@@ -35,7 +35,7 @@ pub struct QobuzConfig {
     pub app_secret: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Clone, Default, PartialEq)]
 pub struct TidalConfig {
     #[serde(default)]
     pub access_token: String,
@@ -47,7 +47,7 @@ pub struct TidalConfig {
     pub token_expiry: u64,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct AudioConfig {
     pub default_volume: u16,
 }
@@ -69,10 +69,39 @@ impl Display for Config {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Config")
             .field("local", &self.local)
-            .field("qobuz", &self.qobuz)
-            .field("tidal", &self.tidal)
+            .field("qobuz", &self.qobuz.as_ref().map(QobuzConfig::redacted))
+            .field("tidal", &self.tidal.as_ref().map(TidalConfig::redacted))
             .field("audio", &self.audio)
             .finish()
+    }
+}
+
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Config")
+            .field("local", &self.local)
+            .field("qobuz", &self.qobuz.as_ref().map(QobuzConfig::redacted))
+            .field("tidal", &self.tidal.as_ref().map(TidalConfig::redacted))
+            .field("audio", &self.audio)
+            .finish()
+    }
+}
+
+impl QobuzConfig {
+    fn redacted(&self) -> String {
+        format!(
+            "QobuzConfig {{ email: {}, password: <redacted>, app_id: {}, app_secret: <redacted> }}",
+            self.email, self.app_id
+        )
+    }
+}
+
+impl TidalConfig {
+    fn redacted(&self) -> String {
+        format!(
+            "TidalConfig {{ access_token: <redacted>, refresh_token: <redacted>, country_code: {}, token_expiry: {} }}",
+            self.country_code, self.token_expiry
+        )
     }
 }
 

@@ -67,11 +67,14 @@ impl SettingsPanel {
 
     /// Returns the updated config if account settings changed it.
     pub fn take_config_update(&mut self) -> Option<Config> {
-        self.account_settings.take_config_update()
+        self.source_settings
+            .take_config_update()
+            .or_else(|| self.account_settings.take_config_update())
     }
 
     /// Push an updated config into the settings panel so its copy stays current.
     pub fn update_config(&mut self, config: &Config) {
+        self.source_settings.update_config(config);
         self.account_settings.update_config(config);
     }
 

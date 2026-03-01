@@ -28,7 +28,7 @@ pub enum AuthStatus {
 ///
 /// All methods are blocking - implementations handle their own async
 /// runtimes internally. This keeps the synchronous TUI loop simple.
-pub trait StreamingService: Debug {
+pub trait StreamingService: Debug + Send {
     fn name(&self) -> &str;
     fn is_authenticated(&self) -> bool;
 

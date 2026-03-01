@@ -23,6 +23,7 @@ pub struct SourceSettings {
     name_input: InputLine,
     path_input: InputLine,
     active_field: usize, // 0 = name, 1 = path
+    config_dirty: bool,
 }
 
 impl SourceSettings {
@@ -36,6 +37,7 @@ impl SourceSettings {
             name_input: InputLine::new(),
             path_input: InputLine::new(),
             active_field: 0,
+            config_dirty: false,
         }
     }
 
@@ -88,9 +90,11 @@ impl SourceSettings {
                     self.input_mode = false;
                 }
                 KeyCode::Enter => {
-                    self.name_input.confirm_input();
-                    self.path_input.confirm_input();
-                    self.input_mode = false;
+                    if self.save_new_source() {
+                        self.name_input.confirm_input();
+                        self.path_input.confirm_input();
+                        self.input_mode = false;
+                    }
                 }
                 KeyCode::Tab | KeyCode::Down => {
                     self.active_field = (self.active_field + 1) % 2;
@@ -163,5 +167,50 @@ impl SourceSettings {
         };
         self.list_state.select(Some(i));
         self.h_scroll = 0;
+    }
+
+    fn save_new_source(&mut self) -> bool {
+        let name = self.name_input.value.trim().to_string();
+        let raw_path = self.path_input.value.trim();
+        if name.is_empty() || raw_path.is_empty() {
+            return false;
+        }
+
+        let path = PathBuf::from(raw_path);
+        if !path.is_dir() {
+            return false;
+        }
+
+        let source = LocalSource {
+            name: name.clone(),
+            path: path.clone(),
+        };
+        self.sources.push(source.clone());
+        self.config.add_local_source(name, path);
+        self.config_dirty = true;
+
+        if self.config.save().is_ok() {
+            self.name_input.value.clear();
+            self.path_input.value.clear();
+            self.list_state
+                .select(Some(self.sources.len().saturating_sub(1)));
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn take_config_update(&mut self) -> Option<Config> {
+        if self.config_dirty {
+            self.config_dirty = false;
+            Some(self.config.clone())
+        } else {
+            None
+        }
+    }
+
+    pub fn update_config(&mut self, config: &Config) {
+        self.config = config.clone();
+        self.sources = self.config.get_local_sources();
     }
 }
