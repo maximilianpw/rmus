@@ -143,12 +143,16 @@ impl App {
                 q.app_secret.clone(),
                 q.email.clone(),
                 q.password.clone(),
+                config.audio.max_stream_quality,
             )) as Box<dyn StreamingService>
         });
 
         let tidal: Option<Box<dyn StreamingService>> = {
             let tidal_cfg = config.tidal.clone().unwrap_or_default();
-            Some(Box::new(TidalSource::new(tidal_cfg)) as Box<dyn StreamingService>)
+            Some(Box::new(TidalSource::new(
+                tidal_cfg,
+                config.audio.max_stream_quality,
+            )) as Box<dyn StreamingService>)
         };
         let (streaming_task_tx, streaming_task_rx) = mpsc::channel();
 
@@ -378,17 +382,26 @@ impl App {
     fn sync_config_from_settings(&mut self) {
         if let Some(new_config) = self.settings_panel.take_config_update() {
             let local_changed = self.config.local != new_config.local;
+            let audio_changed = self.config.audio != new_config.audio;
             // Recreate Qobuz if credentials changed
             let qobuz_changed = self.config.qobuz != new_config.qobuz;
-            if qobuz_changed {
+            if qobuz_changed || audio_changed {
                 self.qobuz = new_config.qobuz.as_ref().map(|q| {
                     Box::new(QobuzSource::with_credentials(
                         q.app_id.clone(),
                         q.app_secret.clone(),
                         q.email.clone(),
                         q.password.clone(),
+                        new_config.audio.max_stream_quality,
                     )) as Box<dyn StreamingService>
                 });
+            }
+            if audio_changed {
+                let tidal_cfg = new_config.tidal.clone().unwrap_or_default();
+                self.tidal = Some(Box::new(TidalSource::new(
+                    tidal_cfg,
+                    new_config.audio.max_stream_quality,
+                )) as Box<dyn StreamingService>);
             }
             if local_changed {
                 let local_sources: Vec<LocalSource> = new_config.get_local_sources();
@@ -782,10 +795,12 @@ impl App {
                     q.app_secret.clone(),
                     q.email.clone(),
                     q.password.clone(),
+                    self.config.audio.max_stream_quality,
                 )) as Box<dyn StreamingService>
             }),
             StreamingServiceId::Tidal => Some(Box::new(TidalSource::new(
                 self.config.tidal.clone().unwrap_or_default(),
+                self.config.audio.max_stream_quality,
             )) as Box<dyn StreamingService>),
         }
     }

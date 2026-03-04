@@ -50,6 +50,35 @@ pub struct TidalConfig {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct AudioConfig {
     pub default_volume: u16,
+    #[serde(default)]
+    pub max_stream_quality: MaxStreamQuality,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum MaxStreamQuality {
+    Mp3,
+    Cd,
+    #[default]
+    HiRes,
+}
+
+impl MaxStreamQuality {
+    pub fn qobuz_format_id(self) -> u32 {
+        match self {
+            Self::Mp3 => 5,
+            Self::Cd => 6,
+            Self::HiRes => 27,
+        }
+    }
+
+    pub fn tidal_audioquality(self) -> &'static str {
+        match self {
+            Self::Mp3 => "HIGH",
+            Self::Cd => "LOSSLESS",
+            Self::HiRes => "HI_RES_LOSSLESS",
+        }
+    }
 }
 
 impl Default for Config {
@@ -60,7 +89,10 @@ impl Default for Config {
             },
             qobuz: None,
             tidal: None,
-            audio: AudioConfig { default_volume: 50 },
+            audio: AudioConfig {
+                default_volume: 50,
+                max_stream_quality: MaxStreamQuality::default(),
+            },
         }
     }
 }
@@ -182,6 +214,7 @@ mod tests {
         assert!(config.qobuz.is_none());
         assert!(config.tidal.is_none());
         assert_eq!(config.audio.default_volume, 75);
+        assert_eq!(config.audio.max_stream_quality, MaxStreamQuality::HiRes);
         assert_eq!(config.local.sources.len(), 1);
         assert_eq!(config.local.sources[0].name, "Test Album");
     }
@@ -236,6 +269,22 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_config_with_max_stream_quality() {
+        let toml = r#"
+            [[local.sources]]
+            name = "Test"
+            path = "/music"
+
+            [audio]
+            default_volume = 50
+            max_stream_quality = "cd"
+        "#;
+
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.audio.max_stream_quality, MaxStreamQuality::Cd);
+    }
+
+    #[test]
     fn test_parse_multiple_sources() {
         let toml = r#"
             [[local.sources]]
@@ -263,6 +312,7 @@ mod tests {
         assert!(config.qobuz.is_none());
         assert!(config.tidal.is_none());
         assert_eq!(config.audio.default_volume, 50);
+        assert_eq!(config.audio.max_stream_quality, MaxStreamQuality::HiRes);
     }
 
     #[test]
@@ -276,7 +326,10 @@ mod tests {
             },
             qobuz: None,
             tidal: None,
-            audio: AudioConfig { default_volume: 50 },
+            audio: AudioConfig {
+                default_volume: 50,
+                max_stream_quality: MaxStreamQuality::HiRes,
+            },
         };
 
         let sources = config.get_local_sources();
@@ -297,7 +350,10 @@ mod tests {
                 country_code: "US".to_string(),
                 token_expiry: 1700000000,
             }),
-            audio: AudioConfig { default_volume: 50 },
+            audio: AudioConfig {
+                default_volume: 50,
+                max_stream_quality: MaxStreamQuality::HiRes,
+            },
         };
 
         // Verify TOML serialization includes [tidal] section

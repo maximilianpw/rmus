@@ -9,7 +9,7 @@ use ratatui::{
 };
 
 use crate::{
-    config::{Config, LocalSource},
+    config::{Config, LocalSource, MaxStreamQuality},
     ui::input_line::InputLine,
 };
 
@@ -44,6 +44,7 @@ impl SourceSettings {
     }
 
     pub fn render_sources(&mut self, frame: &mut ratatui::Frame, area: Rect) {
+        let quality = self.config.audio.max_stream_quality;
         let mut list_items: Vec<ListItem> = self
             .sources
             .iter()
@@ -71,8 +72,12 @@ impl SourceSettings {
         }
 
         let title = match &self.status_message {
-            Some(msg) => format!("Library ({})", msg),
-            None => "Library".to_string(),
+            Some(msg) => format!(
+                "General | Stream Quality: {} ({})",
+                Self::quality_label(quality),
+                msg
+            ),
+            None => format!("General | Stream Quality: {}", Self::quality_label(quality)),
         };
         let widget = List::new(list_items)
             .block(Block::bordered().title(title).borders(Borders::ALL))
@@ -132,6 +137,10 @@ impl SourceSettings {
                     self.path_input.enter_input_mode();
                     self.active_field = 0;
                     self.status_message = None;
+                    true
+                }
+                KeyCode::Char('q') => {
+                    self.cycle_stream_quality();
                     true
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
@@ -212,6 +221,31 @@ impl SourceSettings {
         }
     }
 
+    fn quality_label(quality: MaxStreamQuality) -> &'static str {
+        match quality {
+            MaxStreamQuality::Mp3 => "MP3",
+            MaxStreamQuality::Cd => "CD",
+            MaxStreamQuality::HiRes => "Hi-Res",
+        }
+    }
+
+    fn cycle_stream_quality(&mut self) {
+        let current = self.config.audio.max_stream_quality;
+        self.config.audio.max_stream_quality = match current {
+            MaxStreamQuality::Mp3 => MaxStreamQuality::Cd,
+            MaxStreamQuality::Cd => MaxStreamQuality::HiRes,
+            MaxStreamQuality::HiRes => MaxStreamQuality::Mp3,
+        };
+        self.config_dirty = true;
+        self.status_message = match self.config.save() {
+            Ok(()) => Some(format!(
+                "Quality set to {}",
+                Self::quality_label(self.config.audio.max_stream_quality)
+            )),
+            Err(_) => Some("Failed to save config".to_string()),
+        };
+    }
+
     pub fn take_config_update(&mut self) -> Option<Config> {
         if self.config_dirty {
             self.config_dirty = false;
@@ -230,7 +264,7 @@ impl SourceSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{AudioConfig, LocalConfig};
+    use crate::config::{AudioConfig, LocalConfig, MaxStreamQuality};
     use crossterm::event::{KeyEvent, KeyModifiers};
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -246,7 +280,10 @@ mod tests {
             },
             qobuz: None,
             tidal: None,
-            audio: AudioConfig { default_volume: 50 },
+            audio: AudioConfig {
+                default_volume: 50,
+                max_stream_quality: MaxStreamQuality::HiRes,
+            },
         }
     }
 
@@ -310,5 +347,17 @@ mod tests {
         );
         assert_eq!(settings.sources.len(), 0);
         assert!(settings.input_mode, "should stay in input mode on invalid path");
+    }
+
+    #[test]
+    fn cycles_stream_quality_and_marks_config_dirty() {
+        let mut settings = SourceSettings::new(default_config());
+        assert_eq!(settings.config.audio.max_stream_quality, MaxStreamQuality::HiRes);
+
+        assert!(settings.handle_events(key(KeyCode::Char('q'))));
+        assert_eq!(settings.config.audio.max_stream_quality, MaxStreamQuality::Mp3);
+
+        let updated = settings.take_config_update().expect("config update expected");
+        assert_eq!(updated.audio.max_stream_quality, MaxStreamQuality::Mp3);
     }
 }

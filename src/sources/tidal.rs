@@ -2,7 +2,7 @@ use base64::Engine;
 use serde::Deserialize;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crate::config::TidalConfig;
+use crate::config::{MaxStreamQuality, TidalConfig};
 
 use super::streaming::{AuthStatus, StreamTrack, StreamingService};
 
@@ -163,10 +163,49 @@ impl TidalClient {
         Ok(tracks)
     }
 
-    async fn get_stream_url(
+    fn first_https_url(input: &str) -> Option<String> {
+        let start = input.find("https://")?;
+        let tail = &input[start..];
+        let end = tail
+            .find(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == '<' || c == '>')
+            .unwrap_or(tail.len());
+        Some(tail[..end].to_string())
+    }
+
+    fn extract_url_from_manifest(
+        manifest_b64: &str,
+        manifest_mime_type: Option<&str>,
+    ) -> Option<String> {
+        if manifest_b64.starts_with("https://") {
+            return Some(manifest_b64.to_string());
+        }
+
+        let manifest_bytes = base64::engine::general_purpose::STANDARD
+            .decode(manifest_b64)
+            .ok()?;
+
+        // JSON manifest (application/vnd.tidal.bts) includes direct URL list.
+        let is_json_manifest = manifest_mime_type
+            .map(|m| m.contains("vnd.tidal.bts"))
+            .unwrap_or(true);
+        if is_json_manifest {
+            if let Ok(manifest) = serde_json::from_slice::<ManifestJson>(&manifest_bytes) {
+                if let Some(url) = manifest.urls.and_then(|u| u.into_iter().next()) {
+                    return Some(url);
+                }
+            }
+        }
+
+        // DASH/XML manifests are decoded text; extract first stream URL.
+        let text = String::from_utf8(manifest_bytes).ok()?;
+        Self::first_https_url(&text)
+    }
+
+    async fn request_playback_info(
         &self,
         track_id: &str,
-    ) -> Result<Option<String>, Box<dyn std::error::Error>> {
+        audioquality: &str,
+    ) -> Result<Option<PlaybackInfoResponse>, Box<dyn std::error::Error>> {
         let country = if self.country_code.is_empty() {
             "US"
         } else {
@@ -180,7 +219,7 @@ impl TidalClient {
             ))
             .bearer_auth(&self.access_token)
             .query(&[
-                ("audioquality", "LOSSLESS"),
+                ("audioquality", audioquality),
                 ("playbackmode", "STREAM"),
                 ("assetpresentation", "FULL"),
                 ("countryCode", country),
@@ -193,27 +232,42 @@ impl TidalClient {
         }
 
         let info: PlaybackInfoResponse = resp.json().await?;
+        Ok(Some(info))
+    }
 
-        let manifest_b64 = match info.manifest {
-            Some(m) => m,
-            None => return Ok(None),
-        };
-
-        // Check if it's a JSON manifest (application/vnd.tidal.bts)
-        let is_json_manifest = info
-            .manifest_mime_type
-            .as_deref()
-            .map(|m| m.contains("vnd.tidal.bts"))
-            .unwrap_or(true);
-
-        if is_json_manifest {
-            let manifest_bytes = base64::engine::general_purpose::STANDARD.decode(&manifest_b64)?;
-            let manifest: ManifestJson = serde_json::from_slice(&manifest_bytes)?;
-            Ok(manifest.urls.and_then(|u| u.into_iter().next()))
-        } else {
-            // For DASH or other formats, the manifest itself might be the URL
-            Ok(Some(manifest_b64))
+    async fn get_stream_url(
+        &self,
+        track_id: &str,
+        max_stream_quality: MaxStreamQuality,
+    ) -> Result<Option<String>, Box<dyn std::error::Error>> {
+        let desired_quality = max_stream_quality.tidal_audioquality();
+        if let Some(info) = self.request_playback_info(track_id, desired_quality).await? {
+            if let Some(manifest_b64) = info.manifest {
+                if let Some(url) = Self::extract_url_from_manifest(
+                    &manifest_b64,
+                    info.manifest_mime_type.as_deref(),
+                ) {
+                    return Ok(Some(url));
+                }
+            }
         }
+
+        // Some HI_RES responses provide manifests we can't directly play.
+        // Retry at LOSSLESS as a compatibility fallback.
+        if max_stream_quality == MaxStreamQuality::HiRes {
+            if let Some(info) = self.request_playback_info(track_id, "LOSSLESS").await? {
+                if let Some(manifest_b64) = info.manifest {
+                    if let Some(url) = Self::extract_url_from_manifest(
+                        &manifest_b64,
+                        info.manifest_mime_type.as_deref(),
+                    ) {
+                        return Ok(Some(url));
+                    }
+                }
+            }
+        }
+
+        Ok(None)
     }
 }
 
@@ -311,6 +365,7 @@ fn now_epoch() -> u64 {
 
 pub struct TidalSource {
     config: TidalConfig,
+    max_stream_quality: MaxStreamQuality,
     api_client: Option<TidalClient>,
     http_client: reqwest::Client,
     pending_device_code: Option<String>,
@@ -319,9 +374,10 @@ pub struct TidalSource {
 }
 
 impl TidalSource {
-    pub fn new(config: TidalConfig) -> Self {
+    pub fn new(config: TidalConfig, max_stream_quality: MaxStreamQuality) -> Self {
         Self {
             config,
+            max_stream_quality,
             api_client: None,
             http_client: reqwest::Client::new(),
             pending_device_code: None,
@@ -491,7 +547,7 @@ impl StreamingService for TidalSource {
             .as_ref()
             .ok_or("Not authenticated with Tidal")?;
         let rt = make_runtime();
-        let url = rt.block_on(client.get_stream_url(track_id))?;
+        let url = rt.block_on(client.get_stream_url(track_id, self.max_stream_quality))?;
         Ok(url)
     }
 }

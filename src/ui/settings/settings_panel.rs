@@ -215,6 +215,8 @@ impl SettingsPanel {
             keybind("Esc", "Close settings"),
             keybind("Tab / l", "Next tab"),
             keybind("Shift+Tab / h", "Previous tab"),
+            keybind("General: q", "Cycle max stream quality"),
+            keybind("General: a", "Add local source"),
         ];
 
         let paragraph = Paragraph::new(text);

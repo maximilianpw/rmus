@@ -4,10 +4,11 @@ use regex::Regex;
 use serde::Deserialize;
 use std::collections::HashMap;
 
+use crate::config::MaxStreamQuality;
+
 use super::streaming::{AuthStatus, StreamTrack, StreamingService};
 
 const BASE_URL: &str = "https://www.qobuz.com/api.json/0.2";
-const QUALITY: u32 = 27; // 24-bit/192kHz FLAC
 
 // --- API response types ---
 
@@ -128,10 +129,14 @@ impl QobuzClient {
         Ok(tracks)
     }
 
-    async fn get_stream_url(&self, track_id: &str) -> Result<Option<String>, reqwest::Error> {
+    async fn get_stream_url(
+        &self,
+        track_id: &str,
+        format_id: u32,
+    ) -> Result<Option<String>, reqwest::Error> {
         let ts = chrono::Utc::now().timestamp();
         let sig_input = format!(
-            "trackgetFileUrlformat_id{QUALITY}intentstreamtrack_id{track_id}{ts}{}",
+            "trackgetFileUrlformat_id{format_id}intentstreamtrack_id{track_id}{ts}{}",
             self.app_secret
         );
         let sig = format!("{:x}", md5_compute(sig_input.as_bytes()));
@@ -142,7 +147,7 @@ impl QobuzClient {
             .get(format!("{BASE_URL}/track/getFileUrl"))
             .query(&[
                 ("track_id", track_id),
-                ("format_id", &QUALITY.to_string()),
+                ("format_id", &format_id.to_string()),
                 ("intent", "stream"),
                 ("request_ts", &ts.to_string()),
                 ("request_sig", &sig),
@@ -282,6 +287,7 @@ pub struct QobuzSource {
     app_secret: Option<String>,
     email: String,
     password: String,
+    max_stream_quality: MaxStreamQuality,
 }
 
 impl QobuzSource {
@@ -292,6 +298,7 @@ impl QobuzSource {
             app_secret: None,
             email: String::new(),
             password: String::new(),
+            max_stream_quality: MaxStreamQuality::default(),
         }
     }
 
@@ -301,6 +308,7 @@ impl QobuzSource {
         app_secret: String,
         email: String,
         password: String,
+        max_stream_quality: MaxStreamQuality,
     ) -> Self {
         Self {
             client: None,
@@ -316,6 +324,7 @@ impl QobuzSource {
             },
             email,
             password,
+            max_stream_quality,
         }
     }
 }
@@ -377,7 +386,9 @@ impl StreamingService for QobuzSource {
     ) -> Result<Option<String>, Box<dyn std::error::Error>> {
         let client = self.client.as_ref().ok_or("Not authenticated with Qobuz")?;
         let rt = make_runtime();
-        let url = rt.block_on(client.get_stream_url(track_id))?;
+        let url = rt.block_on(
+            client.get_stream_url(track_id, self.max_stream_quality.qobuz_format_id()),
+        )?;
         Ok(url)
     }
 

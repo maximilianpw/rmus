@@ -8,7 +8,7 @@ use ratatui::{backend::TestBackend, buffer::Buffer, style::Color, Terminal};
 use rmus::{
     action::Action,
     app::{App, FocusedWindow},
-    config::{AudioConfig, Config, LocalConfig, TidalConfig},
+    config::{AudioConfig, Config, LocalConfig, MaxStreamQuality, TidalConfig},
     sources::{
         song::Song,
         streaming::{AuthStatus, StreamTrack, StreamingService},
@@ -43,7 +43,10 @@ fn default_config() -> Config {
         },
         qobuz: None,
         tidal: None,
-        audio: AudioConfig { default_volume: 50 },
+        audio: AudioConfig {
+            default_volume: 50,
+            max_stream_quality: MaxStreamQuality::HiRes,
+        },
     }
 }
 
@@ -650,7 +653,10 @@ fn test_account_settings_tidal_status() {
             country_code: "US".to_string(),
             token_expiry: 1700000000,
         }),
-        audio: AudioConfig { default_volume: 50 },
+        audio: AudioConfig {
+            default_volume: 50,
+            max_stream_quality: MaxStreamQuality::HiRes,
+        },
     };
     let mut app = App::new_for_test(config, None, None);
     let backend = TestBackend::new(80, 40);
