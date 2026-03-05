@@ -1,56 +1,15 @@
 use base64::Engine;
 use md5::compute as md5_compute;
 use regex::Regex;
-use serde::Deserialize;
 use std::collections::HashMap;
 
 use crate::config::MaxStreamQuality;
-
-use super::streaming::{
+use crate::sources::qobuz::types::{LoginResponse, SearchResponse, StreamUrlResponse};
+use crate::sources::streaming::{
     AuthStatus, ResolvedStream, ResolvedStreamSource, StreamTrack, StreamingService,
 };
 
 const BASE_URL: &str = "https://www.qobuz.com/api.json/0.2";
-
-// --- API response types ---
-
-#[derive(Debug, Deserialize)]
-struct LoginResponse {
-    user_auth_token: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct SearchResponse {
-    tracks: Option<TracksContainer>,
-}
-
-#[derive(Debug, Deserialize)]
-struct TracksContainer {
-    items: Option<Vec<TrackResponse>>,
-}
-
-#[derive(Debug, Deserialize, Clone)]
-struct TrackResponse {
-    id: u64,
-    title: Option<String>,
-    performer: Option<Performer>,
-    album: Option<AlbumInfo>,
-}
-
-#[derive(Debug, Deserialize, Clone)]
-struct Performer {
-    name: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Clone)]
-struct AlbumInfo {
-    title: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct StreamUrlResponse {
-    url: Option<String>,
-}
 
 // --- Async API client ---
 
@@ -350,7 +309,6 @@ impl StreamingService for QobuzSource {
 
         let rt = make_runtime();
 
-        // Fetch app credentials if we don't have them
         if self.app_id.is_none() || self.app_secret.is_none() {
             let (id, secret) = rt.block_on(get_app_id_and_secret())?;
             self.app_id = Some(id);

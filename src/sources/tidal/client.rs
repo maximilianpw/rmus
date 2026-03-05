@@ -1,11 +1,13 @@
 use base64::Engine;
-use serde::Deserialize;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::config::{MaxStreamQuality, TidalConfig};
-
-use super::streaming::{
+use crate::sources::streaming::{
     AuthStatus, ResolvedStream, ResolvedStreamSource, StreamTrack, StreamingService,
+};
+use crate::sources::tidal::types::{
+    DeviceAuthResponse, ManifestJson, PlaybackInfoResponse, TidalSearchResponse,
+    TokenErrorResponse, TokenResponse,
 };
 
 const AUTH_URL: &str = "https://auth.tidal.com/v1/oauth2";
@@ -13,82 +15,6 @@ const API_URL: &str = "https://api.tidal.com/v1";
 const CLIENT_ID: &str = "fX2JxdmntZWK0ixT";
 const CLIENT_SECRET: &str = "1Nn9AfDAjxrgJFJbKNWLeAyKGVGmINuXPPLHVXAvxAg=";
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
-
-// --- API response types ---
-
-#[derive(Debug, Deserialize)]
-struct DeviceAuthResponse {
-    #[serde(rename = "deviceCode")]
-    device_code: String,
-    #[serde(rename = "userCode")]
-    user_code: String,
-    #[serde(rename = "verificationUri")]
-    verification_uri: String,
-    #[serde(rename = "expiresIn")]
-    _expires_in: u64,
-    interval: u64,
-}
-
-#[derive(Debug, Deserialize)]
-struct TokenResponse {
-    access_token: String,
-    refresh_token: Option<String>,
-    expires_in: u64,
-    user: Option<TokenUser>,
-}
-
-#[derive(Debug, Deserialize)]
-struct TokenUser {
-    #[serde(rename = "countryCode")]
-    country_code: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct TokenErrorResponse {
-    #[serde(rename = "sub_status")]
-    sub_status: Option<u32>,
-}
-
-#[derive(Debug, Deserialize)]
-struct TidalSearchResponse {
-    tracks: Option<TidalTracksContainer>,
-}
-
-#[derive(Debug, Deserialize)]
-struct TidalTracksContainer {
-    items: Option<Vec<TidalTrackResponse>>,
-}
-
-#[derive(Debug, Deserialize)]
-struct TidalTrackResponse {
-    id: u64,
-    title: Option<String>,
-    artist: Option<TidalArtist>,
-    artists: Option<Vec<TidalArtist>>,
-    album: Option<TidalAlbum>,
-}
-
-#[derive(Debug, Deserialize)]
-struct TidalArtist {
-    name: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct TidalAlbum {
-    title: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct PlaybackInfoResponse {
-    manifest: Option<String>,
-    #[serde(rename = "manifestMimeType")]
-    manifest_mime_type: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ManifestJson {
-    urls: Option<Vec<String>>,
-}
 
 // --- Async API client ---
 
