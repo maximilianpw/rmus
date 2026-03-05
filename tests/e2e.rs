@@ -1,6 +1,6 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
-use std::collections::HashMap;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{backend::TestBackend, buffer::Buffer, style::Color, Terminal};
@@ -11,7 +11,7 @@ use rmus::{
     config::{AudioConfig, Config, LocalConfig, MaxStreamQuality, TidalConfig},
     sources::{
         song::Song,
-        streaming::{AuthStatus, StreamTrack, StreamingService},
+        streaming::{AuthStatus, ResolvedStream, StreamTrack, StreamingService},
     },
 };
 
@@ -167,20 +167,15 @@ impl MockStreamingService {
 impl MockStreamingService {
     fn new_timeout_then_fast(name: &str) -> Self {
         let mut query_results = HashMap::new();
-        query_results.insert(
-            "slow".to_string(),
-            Self::search_results_for_query("slow"),
-        );
-        query_results.insert(
-            "fast".to_string(),
-            Self::search_results_for_query("fast"),
-        );
+        query_results.insert("slow".to_string(), Self::search_results_for_query("slow"));
+        query_results.insert("fast".to_string(), Self::search_results_for_query("fast"));
 
         let mut query_delays_ms = HashMap::new();
         query_delays_ms.insert("slow".to_string(), 300);
         query_delays_ms.insert("fast".to_string(), 10);
 
-        Self::new_authenticated(name, Vec::new()).with_query_behavior(query_results, query_delays_ms)
+        Self::new_authenticated(name, Vec::new())
+            .with_query_behavior(query_results, query_delays_ms)
     }
 }
 
@@ -228,8 +223,11 @@ impl StreamingService for MockStreamingService {
     fn get_stream_url(
         &mut self,
         _track_id: &str,
-    ) -> Result<Option<String>, Box<dyn std::error::Error>> {
-        Ok(Some("https://example.com/stream.flac".to_string()))
+    ) -> Result<Option<ResolvedStream>, Box<dyn std::error::Error>> {
+        Ok(Some(ResolvedStream {
+            url: "https://example.com/stream.flac".to_string(),
+            quality_label: Some("Hi-Res".to_string()),
+        }))
     }
 }
 
@@ -317,16 +315,19 @@ fn test_local_search_filters_album_songs() {
             title: "01 - Love Will Tear Us Apart.flac".to_string(),
             path: PathBuf::from("/music/album/01.flac"),
             url: None,
+            stream_quality: None,
         },
         Song {
             title: "02 - Disorder.flac".to_string(),
             path: PathBuf::from("/music/album/02.flac"),
             url: None,
+            stream_quality: None,
         },
         Song {
             title: "03 - She Lost Control.flac".to_string(),
             path: PathBuf::from("/music/album/03.flac"),
             url: None,
+            stream_quality: None,
         },
     ];
     app.center_panel
@@ -407,16 +408,19 @@ fn test_search_results_render() {
             title: "Artist - Song A".to_string(),
             path: PathBuf::new(),
             url: None,
+            stream_quality: None,
         },
         Song {
             title: "Artist - Song B".to_string(),
             path: PathBuf::new(),
             url: None,
+            stream_quality: None,
         },
         Song {
             title: "Artist - Song C".to_string(),
             path: PathBuf::new(),
             url: None,
+            stream_quality: None,
         },
     ];
     app.center_panel.set_search_results(songs);
@@ -492,11 +496,13 @@ fn test_search_after_album_select_clears_local_songs() {
             title: "LocalSong1".to_string(),
             path: PathBuf::new(),
             url: None,
+            stream_quality: None,
         },
         Song {
             title: "LocalSong2".to_string(),
             path: PathBuf::new(),
             url: None,
+            stream_quality: None,
         },
     ];
     app.center_panel

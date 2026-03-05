@@ -16,7 +16,9 @@ use crate::{
         local::LocalFiles,
         qobuz::QobuzSource,
         song::Song,
-        streaming::{AuthStatus, StreamTrack, StreamingService, StreamingServiceId},
+        streaming::{
+            AuthStatus, ResolvedStream, StreamTrack, StreamingService, StreamingServiceId,
+        },
         tidal::TidalSource,
         MusicSource, StreamingTab,
     },
@@ -113,7 +115,10 @@ enum StreamingTaskOutput {
     },
     AuthCompleted,
     PollPending,
-    StreamUrlResult { title: String, url: Option<String> },
+    StreamUrlResult {
+        title: String,
+        stream: Option<ResolvedStream>,
+    },
     Error(String),
 }
 
@@ -149,10 +154,10 @@ impl App {
 
         let tidal: Option<Box<dyn StreamingService>> = {
             let tidal_cfg = config.tidal.clone().unwrap_or_default();
-            Some(Box::new(TidalSource::new(
-                tidal_cfg,
-                config.audio.max_stream_quality,
-            )) as Box<dyn StreamingService>)
+            Some(
+                Box::new(TidalSource::new(tidal_cfg, config.audio.max_stream_quality))
+                    as Box<dyn StreamingService>,
+            )
         };
         let (streaming_task_tx, streaming_task_rx) = mpsc::channel();
 
@@ -365,7 +370,10 @@ impl App {
         }
     }
 
-    fn take_service(&mut self, service_id: StreamingServiceId) -> Option<Box<dyn StreamingService>> {
+    fn take_service(
+        &mut self,
+        service_id: StreamingServiceId,
+    ) -> Option<Box<dyn StreamingService>> {
         match service_id {
             StreamingServiceId::Qobuz => self.qobuz.take(),
             StreamingServiceId::Tidal => self.tidal.take(),
@@ -380,11 +388,22 @@ impl App {
     }
 
     fn sync_config_from_settings(&mut self) {
-        if let Some(new_config) = self.settings_panel.take_config_update() {
+        if let Some(mut new_config) = self.settings_panel.take_config_update() {
+            // The settings UI does not own Tidal auth state. Preserve the live
+            // credentials even if a stale settings copy emits a config update.
+            new_config.tidal = self.config.tidal.clone();
+            if let (Some(new_qobuz), Some(current_qobuz)) =
+                (new_config.qobuz.as_mut(), self.config.qobuz.as_ref())
+            {
+                new_qobuz.app_id = current_qobuz.app_id.clone();
+                new_qobuz.app_secret = current_qobuz.app_secret.clone();
+            }
+
             let local_changed = self.config.local != new_config.local;
             let audio_changed = self.config.audio != new_config.audio;
             // Recreate Qobuz if credentials changed
             let qobuz_changed = self.config.qobuz != new_config.qobuz;
+            let tidal_changed = self.config.tidal != new_config.tidal;
             if qobuz_changed || audio_changed {
                 self.qobuz = new_config.qobuz.as_ref().map(|q| {
                     Box::new(QobuzSource::with_credentials(
@@ -396,7 +415,7 @@ impl App {
                     )) as Box<dyn StreamingService>
                 });
             }
-            if audio_changed {
+            if tidal_changed || audio_changed {
                 let tidal_cfg = new_config.tidal.clone().unwrap_or_default();
                 self.tidal = Some(Box::new(TidalSource::new(
                     tidal_cfg,
@@ -479,16 +498,21 @@ impl App {
             if let Some(active) = self.active_task {
                 if active.service == service_id && active.kind == StreamingTaskKind::Search {
                     self.cancel_active_streaming_task("Cancelling previous search...");
-                    self.logger.info("Replacing in-flight search...".to_string());
+                    self.logger
+                        .info("Replacing in-flight search...".to_string());
                 } else {
-                    self.logger.info("Streaming request already in progress...".to_string());
+                    self.logger
+                        .info("Streaming request already in progress...".to_string());
                     return;
                 }
             }
         }
 
-        self.logger
-            .info(format!("Searching {} for '{}'...", service_id.as_str(), query));
+        self.logger.info(format!(
+            "Searching {} for '{}'...",
+            service_id.as_str(),
+            query
+        ));
         if let Some(service) = self.take_service(service_id) {
             self.spawn_streaming_task(
                 service_id,
@@ -527,7 +551,8 @@ impl App {
         };
 
         if self.busy_service == Some(service_id) {
-            self.logger.info("Streaming request already in progress...".to_string());
+            self.logger
+                .info("Streaming request already in progress...".to_string());
             return;
         }
         if let Some(service) = self.take_service(service_id) {
@@ -621,7 +646,9 @@ impl App {
                         match service.authenticate() {
                             Ok(AuthStatus::Authenticated) => match service.search(&query, limit) {
                                 Ok(tracks) => StreamingTaskOutput::SearchResults(tracks),
-                                Err(e) => StreamingTaskOutput::Error(format!("Search failed: {}", e)),
+                                Err(e) => {
+                                    StreamingTaskOutput::Error(format!("Search failed: {}", e))
+                                }
                             },
                             Ok(AuthStatus::PendingUserAction(msg)) => {
                                 StreamingTaskOutput::AuthPending {
@@ -645,7 +672,7 @@ impl App {
                 },
                 StreamingTask::GetStreamUrl { track_id, title } => {
                     match service.get_stream_url(&track_id) {
-                        Ok(url) => StreamingTaskOutput::StreamUrlResult { title, url },
+                        Ok(stream) => StreamingTaskOutput::StreamUrlResult { title, stream },
                         Err(e) => StreamingTaskOutput::Error(format!("Stream URL error: {}", e)),
                     }
                 }
@@ -701,6 +728,7 @@ impl App {
                         title: t.display_title(),
                         path: std::path::PathBuf::new(),
                         url: None,
+                        stream_quality: None,
                     })
                     .collect();
                 self.search_results = tracks;
@@ -716,8 +744,10 @@ impl App {
                 self.logger.info(message);
             }
             StreamingTaskOutput::AuthCompleted => {
-                self.logger
-                    .info(format!("Authenticated with {}", result.service_name.as_str()));
+                self.logger.info(format!(
+                    "Authenticated with {}",
+                    result.service_name.as_str()
+                ));
                 self.pending_auth_service = None;
                 self.persist_streaming_credentials(result.service_name);
                 if let Some(query) = self.deferred_search.take() {
@@ -725,9 +755,9 @@ impl App {
                 }
             }
             StreamingTaskOutput::PollPending => {}
-            StreamingTaskOutput::StreamUrlResult { title, url } => match url {
-                Some(url) => {
-                    let song = Song::from_url(title, url);
+            StreamingTaskOutput::StreamUrlResult { title, stream } => match stream {
+                Some(stream) => {
+                    let song = Song::from_url(title, stream.url, stream.quality_label);
                     if let Err(e) = self.player.play(&song) {
                         self.logger.error(format!("Playback error: {}", e));
                     }
@@ -787,7 +817,10 @@ impl App {
         }
     }
 
-    fn recreate_service(&self, service_id: StreamingServiceId) -> Option<Box<dyn StreamingService>> {
+    fn recreate_service(
+        &self,
+        service_id: StreamingServiceId,
+    ) -> Option<Box<dyn StreamingService>> {
         match service_id {
             StreamingServiceId::Qobuz => self.config.qobuz.as_ref().map(|q| {
                 Box::new(QobuzSource::with_credentials(
@@ -811,7 +844,9 @@ impl App {
         }
         let queued = self.queued_search.take();
         match queued {
-            Some((queued_service, query)) if queued_service == service_id => self.perform_search(&query),
+            Some((queued_service, query)) if queued_service == service_id => {
+                self.perform_search(&query)
+            }
             Some(other) => self.queued_search = Some(other),
             None => {}
         }
@@ -824,5 +859,57 @@ impl std::fmt::Debug for App {
             .field("running", &self.running)
             .field("focused_window", &self.focused_window)
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    use crate::config::{AudioConfig, Config, LocalConfig, MaxStreamQuality, TidalConfig};
+
+    use super::App;
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn default_config() -> Config {
+        Config {
+            local: LocalConfig {
+                sources: Vec::new(),
+            },
+            qobuz: None,
+            tidal: None,
+            audio: AudioConfig {
+                default_volume: 50,
+                max_stream_quality: MaxStreamQuality::HiRes,
+            },
+        }
+    }
+
+    #[test]
+    fn stale_settings_update_does_not_clear_tidal_credentials() {
+        let mut app = App::new_for_test(default_config(), None, None);
+        app.config.tidal = Some(TidalConfig {
+            access_token: "access".to_string(),
+            refresh_token: "refresh".to_string(),
+            country_code: "US".to_string(),
+            token_expiry: 1_900_000_000,
+        });
+
+        app.settings_panel.toggle_open();
+        app.settings_panel.handle_events(key(KeyCode::Char('q')));
+        app.sync_config_from_settings();
+
+        let tidal = app
+            .config
+            .tidal
+            .as_ref()
+            .expect("tidal credentials should be preserved");
+        assert_eq!(tidal.access_token, "access");
+        assert_eq!(tidal.refresh_token, "refresh");
+        assert_eq!(tidal.country_code, "US");
+        assert_eq!(tidal.token_expiry, 1_900_000_000);
     }
 }

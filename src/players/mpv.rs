@@ -30,16 +30,22 @@ impl MpvPlayer {
         }
     }
 
+    fn build_mpv_args(socket_path: &std::path::Path) -> Vec<String> {
+        vec![
+            "--idle=yes".to_string(),
+            "--no-video".to_string(),
+            "--audio-display=no".to_string(),
+            "--cover-art-auto=no".to_string(),
+            "--no-terminal".to_string(),
+            format!("--input-ipc-server={}", socket_path.display()),
+        ]
+    }
+
     fn spawn_mpv(&mut self) -> PlayerResult<()> {
         let _ = std::fs::remove_file(&self.socket_path);
 
         let child = Command::new("mpv")
-            .args([
-                "--idle=yes",
-                "--no-video",
-                "--no-terminal",
-                &format!("--input-ipc-server={}", self.socket_path.display()),
-            ])
+            .args(Self::build_mpv_args(&self.socket_path))
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -168,6 +174,34 @@ impl MpvPlayer {
             Err(_) => return,
         };
 
+        match json.get("event").and_then(|e| e.as_str()) {
+            Some("file-loaded" | "playback-restart") => {
+                if self.playback_info.current_song.is_some() {
+                    self.playback_info.state = PlaybackState::Playing;
+                }
+            }
+            Some("end-file") => {
+                let reason = json.get("reason").and_then(|r| r.as_str()).unwrap_or("");
+                match reason {
+                    "eof" => {
+                        if self.playlist_index + 1 < self.playlist.len() {
+                            self.playlist_index += 1;
+                            let song = self.playlist[self.playlist_index].clone();
+                            self.playback_info.current_song = Some(song.clone());
+                            let _ = self.load_song(&song);
+                        } else {
+                            self.reset_playback_state();
+                        }
+                    }
+                    "stop" | "quit" | "error" => {
+                        self.reset_playback_state();
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+
         // Handle property change events
         if json.get("event").and_then(|e| e.as_str()) == Some("property-change") {
             let name = json.get("name").and_then(|n| n.as_str()).unwrap_or("");
@@ -208,26 +242,6 @@ impl MpvPlayer {
                 _ => {}
             }
         }
-
-        // Handle end-file event for track completion
-        if json.get("event").and_then(|e| e.as_str()) == Some("end-file") {
-            let reason = json.get("reason").and_then(|r| r.as_str()).unwrap_or("");
-            if reason == "eof" {
-                // Auto-advance to next track
-                if self.playlist_index + 1 < self.playlist.len() {
-                    self.playlist_index += 1;
-                    let song = self.playlist[self.playlist_index].clone();
-                    self.playback_info.current_song = Some(song.clone());
-                    let _ = self.load_song(&song);
-                    self.playback_info.state = PlaybackState::Playing;
-                } else {
-                    self.playback_info.state = PlaybackState::Stopped;
-                    self.playback_info.current_song = None;
-                    self.playback_info.position = 0.0;
-                    self.playback_info.duration = 0.0;
-                }
-            }
-        }
     }
 
     fn load_song(&mut self, song: &Song) -> PlayerResult<()> {
@@ -237,6 +251,13 @@ impl MpvPlayer {
             song.path.to_string_lossy().into_owned()
         };
         self.send_command(&["loadfile", &source, "replace"])
+    }
+
+    fn reset_playback_state(&mut self) {
+        self.playback_info.state = PlaybackState::Stopped;
+        self.playback_info.current_song = None;
+        self.playback_info.position = 0.0;
+        self.playback_info.duration = 0.0;
     }
 
     fn ensure_running(&mut self) -> PlayerResult<()> {
@@ -266,7 +287,7 @@ impl MusicPlayer for MpvPlayer {
         self.playback_info.position = 0.0;
         self.playback_info.duration = 0.0;
         self.load_song(song)?;
-        self.playback_info.state = PlaybackState::Playing;
+        self.playback_info.state = PlaybackState::Stopped;
         Ok(())
     }
 
@@ -282,7 +303,7 @@ impl MusicPlayer for MpvPlayer {
         self.playback_info.position = 0.0;
         self.playback_info.duration = 0.0;
         self.load_song(&song)?;
-        self.playback_info.state = PlaybackState::Playing;
+        self.playback_info.state = PlaybackState::Stopped;
         Ok(())
     }
 
@@ -309,7 +330,7 @@ impl MusicPlayer for MpvPlayer {
             self.playback_info.current_song = Some(song.clone());
             self.playback_info.position = 0.0;
             self.load_song(&song)?;
-            self.playback_info.state = PlaybackState::Playing;
+            self.playback_info.state = PlaybackState::Stopped;
         }
         Ok(())
     }
@@ -324,7 +345,7 @@ impl MusicPlayer for MpvPlayer {
             self.playback_info.current_song = Some(song.clone());
             self.playback_info.position = 0.0;
             self.load_song(&song)?;
-            self.playback_info.state = PlaybackState::Playing;
+            self.playback_info.state = PlaybackState::Stopped;
         } else {
             // At first track, just restart it
             self.seek(0.0)?;
@@ -392,5 +413,62 @@ impl std::fmt::Debug for MpvPlayer {
             .field("playlist_index", &self.playlist_index)
             .field("is_connected", &self.socket.is_some())
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use crate::{players::PlaybackState, sources::song::Song};
+
+    use super::MpvPlayer;
+
+    #[test]
+    fn mpv_is_launched_in_audio_only_mode() {
+        let args = MpvPlayer::build_mpv_args(Path::new("/tmp/rmus-mpv.sock"));
+
+        assert!(args.iter().any(|arg| arg == "--no-video"));
+        assert!(args.iter().any(|arg| arg == "--audio-display=no"));
+        assert!(args.iter().any(|arg| arg == "--cover-art-auto=no"));
+        assert!(args
+            .iter()
+            .any(|arg| arg == "--input-ipc-server=/tmp/rmus-mpv.sock"));
+    }
+
+    #[test]
+    fn file_loaded_event_marks_playback_as_playing() {
+        let mut player = MpvPlayer::new("/tmp/rmus.sock".into());
+        player.playback_info.current_song = Some(Song::from_url(
+            "Track".to_string(),
+            "https://example.com/track.flac".to_string(),
+            Some("Hi-Res".to_string()),
+        ));
+
+        player.handle_message(r#"{"event":"file-loaded"}"#);
+
+        assert_eq!(player.playback_info.state, PlaybackState::Playing);
+    }
+
+    #[test]
+    fn end_file_error_clears_false_playing_state() {
+        let mut player = MpvPlayer::new("/tmp/rmus.sock".into());
+        player.playback_info.current_song = Some(Song::from_url(
+            "Track".to_string(),
+            "https://example.com/track.flac".to_string(),
+            Some("Hi-Res".to_string()),
+        ));
+        player.playback_info.state = PlaybackState::Playing;
+        player.playback_info.position = 12.0;
+        player.playback_info.duration = 99.0;
+
+        player.handle_message(
+            r#"{"event":"end-file","reason":"error","file_error":"loading failed"}"#,
+        );
+
+        assert_eq!(player.playback_info.state, PlaybackState::Stopped);
+        assert!(player.playback_info.current_song.is_none());
+        assert_eq!(player.playback_info.position, 0.0);
+        assert_eq!(player.playback_info.duration, 0.0);
     }
 }

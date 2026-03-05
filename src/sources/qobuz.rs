@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use crate::config::MaxStreamQuality;
 
-use super::streaming::{AuthStatus, StreamTrack, StreamingService};
+use super::streaming::{AuthStatus, ResolvedStream, StreamTrack, StreamingService};
 
 const BASE_URL: &str = "https://www.qobuz.com/api.json/0.2";
 
@@ -383,13 +383,15 @@ impl StreamingService for QobuzSource {
     fn get_stream_url(
         &mut self,
         track_id: &str,
-    ) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    ) -> Result<Option<ResolvedStream>, Box<dyn std::error::Error>> {
         let client = self.client.as_ref().ok_or("Not authenticated with Qobuz")?;
         let rt = make_runtime();
-        let url = rt.block_on(
-            client.get_stream_url(track_id, self.max_stream_quality.qobuz_format_id()),
-        )?;
-        Ok(url)
+        let url = rt
+            .block_on(client.get_stream_url(track_id, self.max_stream_quality.qobuz_format_id()))?;
+        Ok(url.map(|url| ResolvedStream {
+            url,
+            quality_label: Some(self.max_stream_quality.qobuz_quality_label().to_string()),
+        }))
     }
 
     fn app_credentials(&self) -> Option<(String, String)> {

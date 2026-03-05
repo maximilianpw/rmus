@@ -79,6 +79,22 @@ impl MaxStreamQuality {
             Self::HiRes => "HI_RES_LOSSLESS",
         }
     }
+
+    pub fn qobuz_quality_label(self) -> &'static str {
+        match self {
+            Self::Mp3 => "MP3",
+            Self::Cd => "Lossless",
+            Self::HiRes => "Hi-Res",
+        }
+    }
+
+    pub fn tidal_quality_label(self) -> &'static str {
+        match self {
+            Self::Mp3 => "High",
+            Self::Cd => "Lossless",
+            Self::HiRes => "Hi-Res",
+        }
+    }
 }
 
 impl Default for Config {

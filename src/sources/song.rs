@@ -5,6 +5,7 @@ pub struct Song {
     pub path: PathBuf,
     pub title: String,
     pub url: Option<String>,
+    pub stream_quality: Option<String>,
 }
 
 impl Song {
@@ -13,14 +14,16 @@ impl Song {
             title: f.file_name().to_string_lossy().into_owned(),
             path: f.path(),
             url: None,
+            stream_quality: None,
         }
     }
 
-    pub fn from_url(title: String, url: String) -> Self {
+    pub fn from_url(title: String, url: String, stream_quality: Option<String>) -> Self {
         Song {
             title,
             path: PathBuf::new(),
             url: Some(url),
+            stream_quality,
         }
     }
 

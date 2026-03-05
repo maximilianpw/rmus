@@ -14,6 +14,12 @@ impl StreamTrack {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedStream {
+    pub url: String,
+    pub quality_label: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StreamingServiceId {
     Qobuz,
@@ -82,7 +88,7 @@ pub trait StreamingService: Debug + Send {
     fn get_stream_url(
         &mut self,
         track_id: &str,
-    ) -> Result<Option<String>, Box<dyn std::error::Error>>;
+    ) -> Result<Option<ResolvedStream>, Box<dyn std::error::Error>>;
 
     /// Returns service-specific app credentials (id, secret) for caching in config.
     /// Services that don't need credential caching can leave the default (None).

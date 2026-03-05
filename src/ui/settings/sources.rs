@@ -346,18 +346,29 @@ mod tests {
             "invalid source should not be persisted"
         );
         assert_eq!(settings.sources.len(), 0);
-        assert!(settings.input_mode, "should stay in input mode on invalid path");
+        assert!(
+            settings.input_mode,
+            "should stay in input mode on invalid path"
+        );
     }
 
     #[test]
     fn cycles_stream_quality_and_marks_config_dirty() {
         let mut settings = SourceSettings::new(default_config());
-        assert_eq!(settings.config.audio.max_stream_quality, MaxStreamQuality::HiRes);
+        assert_eq!(
+            settings.config.audio.max_stream_quality,
+            MaxStreamQuality::HiRes
+        );
 
         assert!(settings.handle_events(key(KeyCode::Char('q'))));
-        assert_eq!(settings.config.audio.max_stream_quality, MaxStreamQuality::Mp3);
+        assert_eq!(
+            settings.config.audio.max_stream_quality,
+            MaxStreamQuality::Mp3
+        );
 
-        let updated = settings.take_config_update().expect("config update expected");
+        let updated = settings
+            .take_config_update()
+            .expect("config update expected");
         assert_eq!(updated.audio.max_stream_quality, MaxStreamQuality::Mp3);
     }
 }

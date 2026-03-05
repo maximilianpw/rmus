@@ -9,10 +9,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::{
-    sources::song::Song,
-    ui::input_line::InputLine,
-};
+use crate::{sources::song::Song, ui::input_line::InputLine};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CenterPanelMode {

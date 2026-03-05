@@ -4,7 +4,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::config::{MaxStreamQuality, TidalConfig};
 
-use super::streaming::{AuthStatus, StreamTrack, StreamingService};
+use super::streaming::{AuthStatus, ResolvedStream, StreamTrack, StreamingService};
 
 const AUTH_URL: &str = "https://auth.tidal.com/v1/oauth2";
 const API_URL: &str = "https://api.tidal.com/v1";
@@ -175,6 +175,7 @@ impl TidalClient {
     fn extract_url_from_manifest(
         manifest_b64: &str,
         manifest_mime_type: Option<&str>,
+        allow_text_manifest: bool,
     ) -> Option<String> {
         if manifest_b64.starts_with("https://") {
             return Some(manifest_b64.to_string());
@@ -194,6 +195,10 @@ impl TidalClient {
                     return Some(url);
                 }
             }
+        }
+
+        if !allow_text_manifest {
+            return None;
         }
 
         // DASH/XML manifests are decoded text; extract first stream URL.
@@ -239,15 +244,22 @@ impl TidalClient {
         &self,
         track_id: &str,
         max_stream_quality: MaxStreamQuality,
-    ) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    ) -> Result<Option<ResolvedStream>, Box<dyn std::error::Error>> {
         let desired_quality = max_stream_quality.tidal_audioquality();
-        if let Some(info) = self.request_playback_info(track_id, desired_quality).await? {
+        if let Some(info) = self
+            .request_playback_info(track_id, desired_quality)
+            .await?
+        {
             if let Some(manifest_b64) = info.manifest {
                 if let Some(url) = Self::extract_url_from_manifest(
                     &manifest_b64,
                     info.manifest_mime_type.as_deref(),
+                    max_stream_quality != MaxStreamQuality::HiRes,
                 ) {
-                    return Ok(Some(url));
+                    return Ok(Some(ResolvedStream {
+                        url,
+                        quality_label: Some(max_stream_quality.tidal_quality_label().to_string()),
+                    }));
                 }
             }
         }
@@ -260,8 +272,14 @@ impl TidalClient {
                     if let Some(url) = Self::extract_url_from_manifest(
                         &manifest_b64,
                         info.manifest_mime_type.as_deref(),
+                        true,
                     ) {
-                        return Ok(Some(url));
+                        return Ok(Some(ResolvedStream {
+                            url,
+                            quality_label: Some(
+                                MaxStreamQuality::Cd.tidal_quality_label().to_string(),
+                            ),
+                        }));
                     }
                 }
             }
@@ -539,7 +557,7 @@ impl StreamingService for TidalSource {
     fn get_stream_url(
         &mut self,
         track_id: &str,
-    ) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    ) -> Result<Option<ResolvedStream>, Box<dyn std::error::Error>> {
         self.ensure_valid_token()?;
 
         let client = self
@@ -558,5 +576,37 @@ impl std::fmt::Debug for TidalSource {
             .field("authenticated", &self.is_authenticated())
             .field("has_pending_auth", &self.pending_device_code.is_some())
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use base64::Engine;
+
+    use super::TidalClient;
+
+    #[test]
+    fn hi_res_text_manifests_do_not_produce_direct_urls() {
+        let manifest = base64::engine::general_purpose::STANDARD
+            .encode(r#"<MPD><BaseURL>https://audio.tidal.com/manifest.mpd</BaseURL></MPD>"#);
+
+        let url =
+            TidalClient::extract_url_from_manifest(&manifest, Some("application/dash+xml"), false);
+
+        assert!(url.is_none());
+    }
+
+    #[test]
+    fn lossless_text_manifests_can_still_extract_a_url() {
+        let manifest = base64::engine::general_purpose::STANDARD
+            .encode(r#"<MPD><BaseURL>https://audio.tidal.com/lossless.flac</BaseURL></MPD>"#);
+
+        let url =
+            TidalClient::extract_url_from_manifest(&manifest, Some("application/dash+xml"), true);
+
+        assert_eq!(
+            url.as_deref(),
+            Some("https://audio.tidal.com/lossless.flac")
+        );
     }
 }
