@@ -11,7 +11,9 @@ use rmus::{
     config::{AudioConfig, Config, LocalConfig, MaxStreamQuality, TidalConfig},
     sources::{
         song::Song,
-        streaming::{AuthStatus, ResolvedStream, StreamTrack, StreamingService},
+        streaming::{
+            AuthStatus, ResolvedStream, ResolvedStreamSource, StreamTrack, StreamingService,
+        },
     },
 };
 
@@ -225,7 +227,7 @@ impl StreamingService for MockStreamingService {
         _track_id: &str,
     ) -> Result<Option<ResolvedStream>, Box<dyn std::error::Error>> {
         Ok(Some(ResolvedStream {
-            url: "https://example.com/stream.flac".to_string(),
+            source: ResolvedStreamSource::Url("https://example.com/stream.flac".to_string()),
             quality_label: Some("Hi-Res".to_string()),
         }))
     }
@@ -315,18 +317,21 @@ fn test_local_search_filters_album_songs() {
             title: "01 - Love Will Tear Us Apart.flac".to_string(),
             path: PathBuf::from("/music/album/01.flac"),
             url: None,
+            stream_manifest: None,
             stream_quality: None,
         },
         Song {
             title: "02 - Disorder.flac".to_string(),
             path: PathBuf::from("/music/album/02.flac"),
             url: None,
+            stream_manifest: None,
             stream_quality: None,
         },
         Song {
             title: "03 - She Lost Control.flac".to_string(),
             path: PathBuf::from("/music/album/03.flac"),
             url: None,
+            stream_manifest: None,
             stream_quality: None,
         },
     ];
@@ -408,18 +413,21 @@ fn test_search_results_render() {
             title: "Artist - Song A".to_string(),
             path: PathBuf::new(),
             url: None,
+            stream_manifest: None,
             stream_quality: None,
         },
         Song {
             title: "Artist - Song B".to_string(),
             path: PathBuf::new(),
             url: None,
+            stream_manifest: None,
             stream_quality: None,
         },
         Song {
             title: "Artist - Song C".to_string(),
             path: PathBuf::new(),
             url: None,
+            stream_manifest: None,
             stream_quality: None,
         },
     ];
@@ -496,12 +504,14 @@ fn test_search_after_album_select_clears_local_songs() {
             title: "LocalSong1".to_string(),
             path: PathBuf::new(),
             url: None,
+            stream_manifest: None,
             stream_quality: None,
         },
         Song {
             title: "LocalSong2".to_string(),
             path: PathBuf::new(),
             url: None,
+            stream_manifest: None,
             stream_quality: None,
         },
     ];

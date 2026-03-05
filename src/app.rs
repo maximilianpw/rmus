@@ -17,7 +17,8 @@ use crate::{
         qobuz::QobuzSource,
         song::Song,
         streaming::{
-            AuthStatus, ResolvedStream, StreamTrack, StreamingService, StreamingServiceId,
+            AuthStatus, ResolvedStream, ResolvedStreamSource, StreamTrack, StreamingService,
+            StreamingServiceId,
         },
         tidal::TidalSource,
         MusicSource, StreamingTab,
@@ -83,6 +84,8 @@ pub struct App {
     search_task_timeout: Duration,
     auth_task_timeout: Duration,
     stream_url_task_timeout: Duration,
+    last_player_poll_error: Option<String>,
+    last_player_runtime_error: Option<String>,
 }
 
 enum StreamingTask {
@@ -187,6 +190,8 @@ impl App {
             search_task_timeout: Duration::from_secs(20),
             auth_task_timeout: Duration::from_secs(10),
             stream_url_task_timeout: Duration::from_secs(20),
+            last_player_poll_error: None,
+            last_player_runtime_error: None,
         }
     }
 
@@ -231,6 +236,8 @@ impl App {
             search_task_timeout: Duration::from_secs(20),
             auth_task_timeout: Duration::from_secs(10),
             stream_url_task_timeout: Duration::from_secs(20),
+            last_player_poll_error: None,
+            last_player_runtime_error: None,
         }
     }
 
@@ -261,10 +268,7 @@ impl App {
     pub fn run(mut self, mut terminal: DefaultTerminal) -> color_eyre::Result<()> {
         self.running = true;
         while self.running {
-            // Poll player for updates
-            if let Ok(info) = self.player.poll() {
-                self.right_panel.update_playback_info(info);
-            }
+            self.poll_player_state();
 
             // Sync config changes from settings panel
             self.sync_config_from_settings();
@@ -312,32 +316,40 @@ impl App {
                 }
             }
             Action::TogglePause => {
-                let _ = self.player.toggle_pause();
+                let result = self.player.toggle_pause();
+                self.log_player_action_error("toggle pause", result);
             }
             Action::NextTrack => {
-                let _ = self.player.next();
+                let result = self.player.next();
+                self.log_player_action_error("next track", result);
             }
             Action::PreviousTrack => {
-                let _ = self.player.previous();
+                let result = self.player.previous();
+                self.log_player_action_error("previous track", result);
             }
             Action::StopPlayback => {
-                let _ = self.player.stop();
+                let result = self.player.stop();
+                self.log_player_action_error("stop playback", result);
             }
             Action::SeekForward(secs) => {
                 let info = self.player.get_playback_info();
-                let _ = self.player.seek(info.position + secs);
+                let result = self.player.seek(info.position + secs);
+                self.log_player_action_error("seek forward", result);
             }
             Action::SeekBackward(secs) => {
                 let info = self.player.get_playback_info();
-                let _ = self.player.seek((info.position - secs).max(0.0));
+                let result = self.player.seek((info.position - secs).max(0.0));
+                self.log_player_action_error("seek backward", result);
             }
             Action::VolumeUp(amount) => {
                 let info = self.player.get_playback_info();
-                let _ = self.player.set_volume(info.volume.saturating_add(amount));
+                let result = self.player.set_volume(info.volume.saturating_add(amount));
+                self.log_player_action_error("volume up", result);
             }
             Action::VolumeDown(amount) => {
                 let info = self.player.get_playback_info();
-                let _ = self.player.set_volume(info.volume.saturating_sub(amount));
+                let result = self.player.set_volume(info.volume.saturating_sub(amount));
+                self.log_player_action_error("volume down", result);
             }
             Action::OpenSearch => {
                 let tab = self.left_panel.active_tab_name();
@@ -569,7 +581,35 @@ impl App {
 
     fn play_album_from(&mut self, songs: Vec<Song>, index: usize) {
         if let Err(e) = self.player.play_album(songs, index) {
-            let _ = e;
+            self.logger.error(format!("Playback error: {}", e));
+        }
+    }
+
+    fn poll_player_state(&mut self) {
+        match self.player.poll() {
+            Ok(info) => {
+                self.last_player_poll_error = None;
+                if info.last_error != self.last_player_runtime_error {
+                    if let Some(err) = &info.last_error {
+                        self.logger.error(format!("Player error: {}", err));
+                    }
+                    self.last_player_runtime_error = info.last_error.clone();
+                }
+                self.right_panel.update_playback_info(info);
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                if self.last_player_poll_error.as_deref() != Some(msg.as_str()) {
+                    self.logger.error(format!("Player poll error: {}", msg));
+                    self.last_player_poll_error = Some(msg);
+                }
+            }
+        }
+    }
+
+    fn log_player_action_error(&mut self, action: &str, result: crate::players::PlayerResult<()>) {
+        if let Err(e) = result {
+            self.logger.error(format!("Could not {}: {}", action, e));
         }
     }
 
@@ -728,6 +768,7 @@ impl App {
                         title: t.display_title(),
                         path: std::path::PathBuf::new(),
                         url: None,
+                        stream_manifest: None,
                         stream_quality: None,
                     })
                     .collect();
@@ -757,7 +798,17 @@ impl App {
             StreamingTaskOutput::PollPending => {}
             StreamingTaskOutput::StreamUrlResult { title, stream } => match stream {
                 Some(stream) => {
-                    let song = Song::from_url(title, stream.url, stream.quality_label);
+                    let ResolvedStream {
+                        source,
+                        quality_label,
+                    } = stream;
+                    let song = match source {
+                        ResolvedStreamSource::Url(url) => Song::from_url(title, url, quality_label),
+                        ResolvedStreamSource::Manifest {
+                            contents,
+                            file_extension,
+                        } => Song::from_manifest(title, contents, file_extension, quality_label),
+                    };
                     if let Err(e) = self.player.play(&song) {
                         self.logger.error(format!("Playback error: {}", e));
                     }

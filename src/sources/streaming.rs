@@ -15,8 +15,17 @@ impl StreamTrack {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResolvedStreamSource {
+    Url(String),
+    Manifest {
+        contents: String,
+        file_extension: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedStream {
-    pub url: String,
+    pub source: ResolvedStreamSource,
     pub quality_label: Option<String>,
 }
 

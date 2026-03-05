@@ -6,7 +6,9 @@ use std::collections::HashMap;
 
 use crate::config::MaxStreamQuality;
 
-use super::streaming::{AuthStatus, ResolvedStream, StreamTrack, StreamingService};
+use super::streaming::{
+    AuthStatus, ResolvedStream, ResolvedStreamSource, StreamTrack, StreamingService,
+};
 
 const BASE_URL: &str = "https://www.qobuz.com/api.json/0.2";
 
@@ -389,7 +391,7 @@ impl StreamingService for QobuzSource {
         let url = rt
             .block_on(client.get_stream_url(track_id, self.max_stream_quality.qobuz_format_id()))?;
         Ok(url.map(|url| ResolvedStream {
-            url,
+            source: ResolvedStreamSource::Url(url),
             quality_label: Some(self.max_stream_quality.qobuz_quality_label().to_string()),
         }))
     }

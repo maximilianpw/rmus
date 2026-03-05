@@ -160,6 +160,7 @@ mod tests {
             position: 30.0,
             duration: 120.0,
             volume: 50,
+            last_error: None,
         };
 
         let frame = terminal

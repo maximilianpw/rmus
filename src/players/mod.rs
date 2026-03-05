@@ -26,6 +26,7 @@ pub struct PlaybackInfo {
     pub position: f64,
     pub duration: f64,
     pub volume: u8,
+    pub last_error: Option<String>,
 }
 
 #[derive(Debug)]
@@ -177,6 +178,16 @@ impl SafePlayer {
 
         Ok(())
     }
+
+    fn validate_stream_manifest(file_extension: &str) -> PlayerResult<()> {
+        match file_extension {
+            "mpd" | "m3u8" => Ok(()),
+            other => Err(PlayerError::ValidationError(format!(
+                "Unsupported stream manifest type: .{}",
+                other
+            ))),
+        }
+    }
 }
 
 fn dirs_fallback() -> std::path::PathBuf {
@@ -192,6 +203,8 @@ impl MusicPlayer for SafePlayer {
         if song.is_stream() {
             if let Some(url) = song.url.as_deref() {
                 Self::validate_stream_url(url)?;
+            } else if let Some(manifest) = song.stream_manifest.as_ref() {
+                Self::validate_stream_manifest(&manifest.file_extension)?;
             }
         } else {
             Self::validate_song_path(&song.path)?;
@@ -216,6 +229,8 @@ impl MusicPlayer for SafePlayer {
             if song.is_stream() {
                 if let Some(url) = song.url.as_deref() {
                     Self::validate_stream_url(url)?;
+                } else if let Some(manifest) = song.stream_manifest.as_ref() {
+                    Self::validate_stream_manifest(&manifest.file_extension)?;
                 }
             } else {
                 Self::validate_song_path(&song.path)?;

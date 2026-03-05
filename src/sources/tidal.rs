@@ -4,7 +4,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::config::{MaxStreamQuality, TidalConfig};
 
-use super::streaming::{AuthStatus, ResolvedStream, StreamTrack, StreamingService};
+use super::streaming::{
+    AuthStatus, ResolvedStream, ResolvedStreamSource, StreamTrack, StreamingService,
+};
 
 const AUTH_URL: &str = "https://auth.tidal.com/v1/oauth2";
 const API_URL: &str = "https://api.tidal.com/v1";
@@ -163,22 +165,13 @@ impl TidalClient {
         Ok(tracks)
     }
 
-    fn first_https_url(input: &str) -> Option<String> {
-        let start = input.find("https://")?;
-        let tail = &input[start..];
-        let end = tail
-            .find(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == '<' || c == '>')
-            .unwrap_or(tail.len());
-        Some(tail[..end].to_string())
-    }
-
-    fn extract_url_from_manifest(
+    fn extract_stream_source_from_manifest(
         manifest_b64: &str,
         manifest_mime_type: Option<&str>,
-        allow_text_manifest: bool,
-    ) -> Option<String> {
+        preserve_text_manifest: bool,
+    ) -> Option<ResolvedStreamSource> {
         if manifest_b64.starts_with("https://") {
-            return Some(manifest_b64.to_string());
+            return Some(ResolvedStreamSource::Url(manifest_b64.to_string()));
         }
 
         let manifest_bytes = base64::engine::general_purpose::STANDARD
@@ -192,18 +185,25 @@ impl TidalClient {
         if is_json_manifest {
             if let Ok(manifest) = serde_json::from_slice::<ManifestJson>(&manifest_bytes) {
                 if let Some(url) = manifest.urls.and_then(|u| u.into_iter().next()) {
-                    return Some(url);
+                    return Some(ResolvedStreamSource::Url(url));
                 }
             }
         }
 
-        if !allow_text_manifest {
+        if !preserve_text_manifest {
             return None;
         }
 
-        // DASH/XML manifests are decoded text; extract first stream URL.
         let text = String::from_utf8(manifest_bytes).ok()?;
-        Self::first_https_url(&text)
+        let file_extension = match manifest_mime_type.unwrap_or_default() {
+            mime if mime.contains("dash+xml") => "mpd",
+            mime if mime.contains("mpegurl") || mime.contains("x-mpegurl") => "m3u8",
+            _ => "mpd",
+        };
+        Some(ResolvedStreamSource::Manifest {
+            contents: text,
+            file_extension: file_extension.to_string(),
+        })
     }
 
     async fn request_playback_info(
@@ -251,13 +251,13 @@ impl TidalClient {
             .await?
         {
             if let Some(manifest_b64) = info.manifest {
-                if let Some(url) = Self::extract_url_from_manifest(
+                if let Some(source) = Self::extract_stream_source_from_manifest(
                     &manifest_b64,
                     info.manifest_mime_type.as_deref(),
-                    max_stream_quality != MaxStreamQuality::HiRes,
+                    max_stream_quality == MaxStreamQuality::HiRes,
                 ) {
                     return Ok(Some(ResolvedStream {
-                        url,
+                        source,
                         quality_label: Some(max_stream_quality.tidal_quality_label().to_string()),
                     }));
                 }
@@ -269,13 +269,13 @@ impl TidalClient {
         if max_stream_quality == MaxStreamQuality::HiRes {
             if let Some(info) = self.request_playback_info(track_id, "LOSSLESS").await? {
                 if let Some(manifest_b64) = info.manifest {
-                    if let Some(url) = Self::extract_url_from_manifest(
+                    if let Some(source) = Self::extract_stream_source_from_manifest(
                         &manifest_b64,
                         info.manifest_mime_type.as_deref(),
-                        true,
+                        false,
                     ) {
                         return Ok(Some(ResolvedStream {
-                            url,
+                            source,
                             quality_label: Some(
                                 MaxStreamQuality::Cd.tidal_quality_label().to_string(),
                             ),
@@ -584,29 +584,39 @@ mod tests {
     use base64::Engine;
 
     use super::TidalClient;
+    use crate::sources::streaming::ResolvedStreamSource;
 
     #[test]
-    fn hi_res_text_manifests_do_not_produce_direct_urls() {
+    fn hi_res_text_manifests_are_preserved_for_mpv() {
         let manifest = base64::engine::general_purpose::STANDARD
             .encode(r#"<MPD><BaseURL>https://audio.tidal.com/manifest.mpd</BaseURL></MPD>"#);
 
-        let url =
-            TidalClient::extract_url_from_manifest(&manifest, Some("application/dash+xml"), false);
+        let source = TidalClient::extract_stream_source_from_manifest(
+            &manifest,
+            Some("application/dash+xml"),
+            true,
+        );
 
-        assert!(url.is_none());
+        assert!(matches!(
+            source,
+            Some(ResolvedStreamSource::Manifest {
+                file_extension,
+                ..
+            }) if file_extension == "mpd"
+        ));
     }
 
     #[test]
-    fn lossless_text_manifests_can_still_extract_a_url() {
+    fn lossless_text_manifests_without_direct_urls_are_rejected() {
         let manifest = base64::engine::general_purpose::STANDARD
             .encode(r#"<MPD><BaseURL>https://audio.tidal.com/lossless.flac</BaseURL></MPD>"#);
 
-        let url =
-            TidalClient::extract_url_from_manifest(&manifest, Some("application/dash+xml"), true);
-
-        assert_eq!(
-            url.as_deref(),
-            Some("https://audio.tidal.com/lossless.flac")
+        let source = TidalClient::extract_stream_source_from_manifest(
+            &manifest,
+            Some("application/dash+xml"),
+            false,
         );
+
+        assert!(source.is_none());
     }
 }
