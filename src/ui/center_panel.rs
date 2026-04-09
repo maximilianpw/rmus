@@ -342,11 +342,13 @@ impl CenterPanel {
         let list_items: Vec<ListItem> = self
             .songs
             .iter()
-            .map(|s| {
+            .enumerate()
+            .map(|(i, s)| {
+                let num = s.track_number.unwrap_or((i + 1) as u32);
                 let display = if !s.artist.is_empty() {
-                    format!("{} - {}", s.artist, s.title)
+                    format!("{:>2}. {} - {}", num, s.artist, s.title)
                 } else {
-                    s.title.clone()
+                    format!("{:>2}. {}", num, s.title)
                 };
                 ListItem::new(display)
             })
