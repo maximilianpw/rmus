@@ -818,3 +818,79 @@ fn test_timeout_cancels_stale_search_and_replacement_wins() {
         "Stale canceled query results must be ignored"
     );
 }
+
+#[test]
+fn test_album_selection_loads_tracks() {
+    let mock = MockStreamingService::new_authenticated("Qobuz", mock_albums());
+    let mut app = make_app(Some(Box::new(mock)), None);
+
+    // Search for albums
+    switch_to_tab(&mut app, "Qobuz");
+    app.execute(Action::OpenSearch);
+    for c in "test".chars() {
+        app.delegate_key_to_panel(make_key(KeyCode::Char(c)));
+    }
+    app.delegate_key_to_panel(make_key(KeyCode::Enter));
+    app.tick();
+
+    // Verify we're in AlbumResults mode
+    let backend = TestBackend::new(100, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let frame = terminal.draw(|f| app.render(f)).unwrap();
+    let text = extract_buffer_text(frame.buffer);
+    assert!(text.contains("Albums (2)"));
+
+    // Select first album (press Enter on it)
+    app.focused_window = FocusedWindow::Center;
+    app.delegate_key_to_panel(make_key(KeyCode::Enter));
+    app.tick();
+
+    // Verify we're now showing album tracks
+    let frame = terminal.draw(|f| app.render(f)).unwrap();
+    let text = extract_buffer_text(frame.buffer);
+    assert!(
+        text.contains("Artist1 - Album1"),
+        "Should show album title in header"
+    );
+    assert!(
+        text.contains("2 tracks"),
+        "Should show track count in header"
+    );
+    assert!(text.contains("Track1"), "Should show first track");
+    assert!(text.contains("Track2"), "Should show second track");
+}
+
+#[test]
+fn test_album_tracks_esc_returns_to_albums() {
+    let mock = MockStreamingService::new_authenticated("Qobuz", mock_albums());
+    let mut app = make_app(Some(Box::new(mock)), None);
+
+    // Search → albums → select album → tracks
+    switch_to_tab(&mut app, "Qobuz");
+    app.execute(Action::OpenSearch);
+    for c in "test".chars() {
+        app.delegate_key_to_panel(make_key(KeyCode::Char(c)));
+    }
+    app.delegate_key_to_panel(make_key(KeyCode::Enter));
+    app.tick();
+
+    app.focused_window = FocusedWindow::Center;
+    app.delegate_key_to_panel(make_key(KeyCode::Enter));
+    app.tick();
+
+    // Now press Esc to go back to album results
+    app.delegate_key_to_panel(make_key(KeyCode::Esc));
+
+    let backend = TestBackend::new(100, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let frame = terminal.draw(|f| app.render(f)).unwrap();
+    let text = extract_buffer_text(frame.buffer);
+    assert!(
+        text.contains("Albums (2)"),
+        "Should return to album results after Esc"
+    );
+    assert!(
+        text.contains("Artist1 - Album1"),
+        "Album results should still be there"
+    );
+}
