@@ -316,23 +316,17 @@ fn test_local_search_filters_album_songs() {
         Song {
             title: "01 - Love Will Tear Us Apart.flac".to_string(),
             path: PathBuf::from("/music/album/01.flac"),
-            url: None,
-            stream_manifest: None,
-            stream_quality: None,
+            ..Default::default()
         },
         Song {
             title: "02 - Disorder.flac".to_string(),
             path: PathBuf::from("/music/album/02.flac"),
-            url: None,
-            stream_manifest: None,
-            stream_quality: None,
+            ..Default::default()
         },
         Song {
             title: "03 - She Lost Control.flac".to_string(),
             path: PathBuf::from("/music/album/03.flac"),
-            url: None,
-            stream_manifest: None,
-            stream_quality: None,
+            ..Default::default()
         },
     ];
     app.center_panel
@@ -411,24 +405,15 @@ fn test_search_results_render() {
     let songs = vec![
         Song {
             title: "Artist - Song A".to_string(),
-            path: PathBuf::new(),
-            url: None,
-            stream_manifest: None,
-            stream_quality: None,
+            ..Default::default()
         },
         Song {
             title: "Artist - Song B".to_string(),
-            path: PathBuf::new(),
-            url: None,
-            stream_manifest: None,
-            stream_quality: None,
+            ..Default::default()
         },
         Song {
             title: "Artist - Song C".to_string(),
-            path: PathBuf::new(),
-            url: None,
-            stream_manifest: None,
-            stream_quality: None,
+            ..Default::default()
         },
     ];
     app.center_panel.set_search_results(songs);
@@ -502,17 +487,11 @@ fn test_search_after_album_select_clears_local_songs() {
     let local_songs = vec![
         Song {
             title: "LocalSong1".to_string(),
-            path: PathBuf::new(),
-            url: None,
-            stream_manifest: None,
-            stream_quality: None,
+            ..Default::default()
         },
         Song {
             title: "LocalSong2".to_string(),
-            path: PathBuf::new(),
-            url: None,
-            stream_manifest: None,
-            stream_quality: None,
+            ..Default::default()
         },
     ];
     app.center_panel

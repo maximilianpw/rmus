@@ -766,10 +766,9 @@ impl App {
                     .iter()
                     .map(|t| Song {
                         title: t.display_title(),
-                        path: std::path::PathBuf::new(),
-                        url: None,
-                        stream_manifest: None,
-                        stream_quality: None,
+                        artist: t.artist.clone(),
+                        album_name: t.album.clone(),
+                        ..Default::default()
                     })
                     .collect();
                 self.search_results = tracks;

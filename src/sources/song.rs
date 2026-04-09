@@ -4,6 +4,10 @@ use std::{fmt::Display, fs::DirEntry, path::PathBuf};
 pub struct Song {
     pub path: PathBuf,
     pub title: String,
+    pub artist: String,
+    pub album_name: String,
+    pub track_number: Option<u32>,
+    pub duration_secs: Option<f64>,
     pub url: Option<String>,
     pub stream_manifest: Option<StreamManifest>,
     pub stream_quality: Option<String>,
@@ -20,19 +24,16 @@ impl Song {
         Song {
             title: f.file_name().to_string_lossy().into_owned(),
             path: f.path(),
-            url: None,
-            stream_manifest: None,
-            stream_quality: None,
+            ..Default::default()
         }
     }
 
     pub fn from_url(title: String, url: String, stream_quality: Option<String>) -> Self {
         Song {
             title,
-            path: PathBuf::new(),
             url: Some(url),
-            stream_manifest: None,
             stream_quality,
+            ..Default::default()
         }
     }
 
@@ -44,13 +45,12 @@ impl Song {
     ) -> Self {
         Song {
             title,
-            path: PathBuf::new(),
-            url: None,
             stream_manifest: Some(StreamManifest {
                 contents,
                 file_extension,
             }),
             stream_quality,
+            ..Default::default()
         }
     }
 
