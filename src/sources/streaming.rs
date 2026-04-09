@@ -22,6 +22,15 @@ pub struct StreamAlbum {
     pub track_count: Option<u32>,
 }
 
+impl StreamAlbum {
+    pub fn display_title(&self) -> String {
+        match self.track_count {
+            Some(n) => format!("{} - {} ({} tracks)", self.artist, self.title, n),
+            None => format!("{} - {}", self.artist, self.title),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResolvedStreamSource {
     Url(String),

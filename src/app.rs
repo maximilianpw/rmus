@@ -17,8 +17,8 @@ use crate::{
         qobuz::QobuzSource,
         song::Song,
         streaming::{
-            AuthStatus, ResolvedStream, ResolvedStreamSource, StreamTrack, StreamingService,
-            StreamingServiceId,
+            AuthStatus, ResolvedStream, ResolvedStreamSource, StreamAlbum, StreamTrack,
+            StreamingService, StreamingServiceId,
         },
         tidal::TidalSource,
         MusicSource, StreamingTab,
@@ -67,6 +67,7 @@ pub struct App {
     qobuz: Option<Box<dyn StreamingService>>,
     tidal: Option<Box<dyn StreamingService>>,
     search_results: Vec<StreamTrack>,
+    album_results: Vec<StreamAlbum>,
     /// Which service produced the current search results (needed for playback).
     search_source: Option<StreamingServiceId>,
     config: Config,
@@ -89,14 +90,25 @@ pub struct App {
 }
 
 enum StreamingTask {
-    Search { query: String, limit: u32 },
+    SearchAlbums {
+        query: String,
+        limit: u32,
+    },
+    GetAlbumTracks {
+        album_id: String,
+        album_title: String,
+    },
     PollAuth,
-    GetStreamUrl { track_id: String, title: String },
+    GetStreamUrl {
+        track_id: String,
+        title: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StreamingTaskKind {
     Search,
+    GetAlbumTracks,
     PollAuth,
     GetStreamUrl,
 }
@@ -111,7 +123,11 @@ struct ActiveStreamingTask {
 }
 
 enum StreamingTaskOutput {
-    SearchResults(Vec<StreamTrack>),
+    AlbumSearchResults(Vec<StreamAlbum>),
+    AlbumTracks {
+        album_title: String,
+        tracks: Vec<StreamTrack>,
+    },
     AuthPending {
         message: String,
         deferred_query: Option<String>,
@@ -175,6 +191,7 @@ impl App {
             qobuz,
             tidal,
             search_results: Vec::new(),
+            album_results: Vec::new(),
             search_source: None,
             config,
             logger,
@@ -221,6 +238,7 @@ impl App {
             qobuz,
             tidal,
             search_results: Vec::new(),
+            album_results: Vec::new(),
             search_source: None,
             config,
             logger,
@@ -263,6 +281,10 @@ impl App {
             self.perform_search(&query);
             self.poll_streaming_task_results();
         }
+        if let Some(index) = self.center_panel.take_pending_album_selection() {
+            self.fetch_album_tracks(index);
+            self.poll_streaming_task_results();
+        }
     }
 
     pub fn run(mut self, mut terminal: DefaultTerminal) -> color_eyre::Result<()> {
@@ -287,6 +309,12 @@ impl App {
                 self.poll_streaming_task_results();
             }
 
+            // Check for pending album selections
+            if let Some(index) = self.center_panel.take_pending_album_selection() {
+                self.fetch_album_tracks(index);
+                self.poll_streaming_task_results();
+            }
+
             terminal.draw(|frame| self.render(frame))?;
             handle_crossterm_events(&mut self)?;
         }
@@ -307,8 +335,13 @@ impl App {
                 }
             }
             Action::PlaySelected => {
-                if self.center_panel.is_showing_search_results() && self.search_source.is_some() {
-                    // Streaming search results — need stream URL
+                if self.center_panel.is_showing_album_tracks() && self.search_source.is_some() {
+                    // Album track selected — need stream URL
+                    self.play_search_result();
+                } else if self.center_panel.is_showing_search_results()
+                    && self.search_source.is_some()
+                {
+                    // Legacy track search results — need stream URL
                     self.play_search_result();
                 } else if let Some(index) = self.center_panel.get_selected_index() {
                     let songs = self.center_panel.get_songs();
@@ -529,7 +562,7 @@ impl App {
             self.spawn_streaming_task(
                 service_id,
                 service,
-                StreamingTask::Search {
+                StreamingTask::SearchAlbums {
                     query: query.to_string(),
                     limit: 20,
                 },
@@ -538,6 +571,38 @@ impl App {
             self.queued_search = Some((service_id, query.to_string()));
             self.center_panel
                 .set_status(Some("Waiting for previous request cleanup...".to_string()));
+        }
+    }
+
+    fn fetch_album_tracks(&mut self, index: usize) {
+        let album = match self.album_results.get(index) {
+            Some(a) => a.clone(),
+            None => return,
+        };
+
+        let service_id = match self.search_source {
+            Some(id) => id,
+            None => return,
+        };
+
+        if self.busy_service == Some(service_id) {
+            self.logger
+                .info("Streaming request already in progress...".to_string());
+            return;
+        }
+
+        self.logger
+            .info(format!("Loading tracks for '{}'...", album.title));
+
+        if let Some(service) = self.take_service(service_id) {
+            self.spawn_streaming_task(
+                service_id,
+                service,
+                StreamingTask::GetAlbumTracks {
+                    album_id: album.id,
+                    album_title: format!("{} - {}", album.artist, album.title),
+                },
+            );
         }
     }
 
@@ -651,10 +716,15 @@ impl App {
         task: StreamingTask,
     ) {
         let (kind, timeout, status) = match &task {
-            StreamingTask::Search { .. } => (
+            StreamingTask::SearchAlbums { .. } => (
                 StreamingTaskKind::Search,
                 self.search_task_timeout,
                 format!("Searching {}...", service_id.as_str()),
+            ),
+            StreamingTask::GetAlbumTracks { .. } => (
+                StreamingTaskKind::GetAlbumTracks,
+                self.search_task_timeout,
+                "Loading album tracks...".to_string(),
             ),
             StreamingTask::PollAuth => (
                 StreamingTaskKind::PollAuth,
@@ -681,15 +751,17 @@ impl App {
         let tx = self.streaming_task_tx.clone();
         thread::spawn(move || {
             let output = match task {
-                StreamingTask::Search { query, limit } => {
+                StreamingTask::SearchAlbums { query, limit } => {
                     if !service.is_authenticated() {
                         match service.authenticate() {
-                            Ok(AuthStatus::Authenticated) => match service.search(&query, limit) {
-                                Ok(tracks) => StreamingTaskOutput::SearchResults(tracks),
-                                Err(e) => {
-                                    StreamingTaskOutput::Error(format!("Search failed: {}", e))
+                            Ok(AuthStatus::Authenticated) => {
+                                match service.search_albums(&query, limit) {
+                                    Ok(albums) => StreamingTaskOutput::AlbumSearchResults(albums),
+                                    Err(e) => {
+                                        StreamingTaskOutput::Error(format!("Search failed: {}", e))
+                                    }
                                 }
-                            },
+                            }
                             Ok(AuthStatus::PendingUserAction(msg)) => {
                                 StreamingTaskOutput::AuthPending {
                                     message: msg,
@@ -699,12 +771,22 @@ impl App {
                             Err(e) => StreamingTaskOutput::Error(format!("Auth failed: {}", e)),
                         }
                     } else {
-                        match service.search(&query, limit) {
-                            Ok(tracks) => StreamingTaskOutput::SearchResults(tracks),
+                        match service.search_albums(&query, limit) {
+                            Ok(albums) => StreamingTaskOutput::AlbumSearchResults(albums),
                             Err(e) => StreamingTaskOutput::Error(format!("Search failed: {}", e)),
                         }
                     }
                 }
+                StreamingTask::GetAlbumTracks {
+                    album_id,
+                    album_title,
+                } => match service.get_album_tracks(&album_id) {
+                    Ok(tracks) => StreamingTaskOutput::AlbumTracks {
+                        album_title,
+                        tracks,
+                    },
+                    Err(e) => StreamingTaskOutput::Error(format!("Failed to load album: {}", e)),
+                },
                 StreamingTask::PollAuth => match service.poll_auth() {
                     Ok(true) => StreamingTaskOutput::AuthCompleted,
                     Ok(false) => StreamingTaskOutput::PollPending,
@@ -760,20 +842,29 @@ impl App {
         }
 
         match result.output {
-            StreamingTaskOutput::SearchResults(tracks) => {
-                self.logger.info(format!("Found {} results", tracks.len()));
+            StreamingTaskOutput::AlbumSearchResults(albums) => {
+                self.logger.info(format!("Found {} albums", albums.len()));
+                let display_titles: Vec<String> =
+                    albums.iter().map(|a| a.display_title()).collect();
+                self.album_results = albums;
+                self.search_source = Some(result.service_name);
+                self.center_panel.set_album_results(display_titles);
+            }
+            StreamingTaskOutput::AlbumTracks {
+                album_title,
+                tracks,
+            } => {
+                self.logger.info(format!("Loaded {} tracks", tracks.len()));
                 let songs: Vec<Song> = tracks
                     .iter()
                     .map(|t| Song {
-                        title: t.display_title(),
+                        title: t.title.clone(),
                         artist: t.artist.clone(),
-                        album_name: t.album.clone(),
                         ..Default::default()
                     })
                     .collect();
                 self.search_results = tracks;
-                self.search_source = Some(result.service_name);
-                self.center_panel.set_search_results(songs);
+                self.center_panel.set_album_tracks(album_title, songs);
             }
             StreamingTaskOutput::AuthPending {
                 message,

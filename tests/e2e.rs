@@ -60,7 +60,24 @@ fn make_app(
     App::new_for_test(default_config(), qobuz, tidal)
 }
 
-fn mock_tracks() -> Vec<StreamTrack> {
+fn mock_albums() -> Vec<StreamAlbum> {
+    vec![
+        StreamAlbum {
+            id: "album1".to_string(),
+            title: "Album1".to_string(),
+            artist: "Artist1".to_string(),
+            track_count: Some(2),
+        },
+        StreamAlbum {
+            id: "album2".to_string(),
+            title: "Album2".to_string(),
+            artist: "Artist2".to_string(),
+            track_count: Some(3),
+        },
+    ]
+}
+
+fn mock_album_tracks() -> Vec<StreamTrack> {
     vec![
         StreamTrack {
             id: "1".to_string(),
@@ -71,8 +88,8 @@ fn mock_tracks() -> Vec<StreamTrack> {
         StreamTrack {
             id: "2".to_string(),
             title: "Track2".to_string(),
-            artist: "Artist2".to_string(),
-            album: "Album2".to_string(),
+            artist: "Artist1".to_string(),
+            album: "Album1".to_string(),
         },
     ]
 }
@@ -85,70 +102,74 @@ fn mock_tracks() -> Vec<StreamTrack> {
 struct MockStreamingService {
     service_name: String,
     authenticated: bool,
-    search_results: Vec<StreamTrack>,
+    album_results: Vec<StreamAlbum>,
+    album_tracks: Vec<StreamTrack>,
     polls_until_ready: usize,
     poll_count: usize,
     search_delay_ms: u64,
-    query_results: HashMap<String, Vec<StreamTrack>>,
+    query_album_results: HashMap<String, Vec<StreamAlbum>>,
     query_delays_ms: HashMap<String, u64>,
 }
 
 impl MockStreamingService {
-    fn new_authenticated(name: &str, results: Vec<StreamTrack>) -> Self {
+    fn new_authenticated(name: &str, albums: Vec<StreamAlbum>) -> Self {
         Self {
             service_name: name.to_string(),
             authenticated: true,
-            search_results: results,
+            album_results: albums,
+            album_tracks: mock_album_tracks(),
             polls_until_ready: 0,
             poll_count: 0,
             search_delay_ms: 0,
-            query_results: HashMap::new(),
+            query_album_results: HashMap::new(),
             query_delays_ms: HashMap::new(),
         }
     }
 
-    fn new_pending(name: &str, polls_needed: usize, results: Vec<StreamTrack>) -> Self {
+    fn new_pending(name: &str, polls_needed: usize, albums: Vec<StreamAlbum>) -> Self {
         Self {
             service_name: name.to_string(),
             authenticated: false,
-            search_results: results,
+            album_results: albums,
+            album_tracks: mock_album_tracks(),
             polls_until_ready: polls_needed,
             poll_count: 0,
             search_delay_ms: 0,
-            query_results: HashMap::new(),
+            query_album_results: HashMap::new(),
             query_delays_ms: HashMap::new(),
         }
     }
 
-    fn new_authenticated_slow(name: &str, results: Vec<StreamTrack>, delay_ms: u64) -> Self {
+    fn new_authenticated_slow(name: &str, albums: Vec<StreamAlbum>, delay_ms: u64) -> Self {
         Self {
             service_name: name.to_string(),
             authenticated: true,
-            search_results: results,
+            album_results: albums,
+            album_tracks: mock_album_tracks(),
             polls_until_ready: 0,
             poll_count: 0,
             search_delay_ms: delay_ms,
-            query_results: HashMap::new(),
+            query_album_results: HashMap::new(),
             query_delays_ms: HashMap::new(),
         }
     }
 
     fn with_query_behavior(
         mut self,
-        query_results: HashMap<String, Vec<StreamTrack>>,
+        query_album_results: HashMap<String, Vec<StreamAlbum>>,
         query_delays_ms: HashMap<String, u64>,
     ) -> Self {
-        self.query_results = query_results;
+        self.query_album_results = query_album_results;
         self.query_delays_ms = query_delays_ms;
         self
     }
 
-    fn search_results_for_query(query: &str) -> Vec<StreamTrack> {
-        vec![StreamTrack {
+    fn album_results_for_query(query: &str) -> Vec<StreamAlbum> {
+        vec![StreamAlbum {
             id: format!("{}-id", query),
-            title: format!("{} Track", query),
+            title: format!("{} Album", query),
             artist: "Artist".to_string(),
-            album: "Album".to_string(),
+            track_count: Some(1),
         }]
     }
 
@@ -159,26 +180,26 @@ impl MockStreamingService {
             .unwrap_or(self.search_delay_ms)
     }
 
-    fn results_for_query(&self, query: &str) -> Vec<StreamTrack> {
-        self.query_results
+    fn albums_for_query(&self, query: &str) -> Vec<StreamAlbum> {
+        self.query_album_results
             .get(query)
             .cloned()
-            .unwrap_or_else(|| self.search_results.clone())
+            .unwrap_or_else(|| self.album_results.clone())
     }
 }
 
 impl MockStreamingService {
     fn new_timeout_then_fast(name: &str) -> Self {
-        let mut query_results = HashMap::new();
-        query_results.insert("slow".to_string(), Self::search_results_for_query("slow"));
-        query_results.insert("fast".to_string(), Self::search_results_for_query("fast"));
+        let mut query_album_results = HashMap::new();
+        query_album_results.insert("slow".to_string(), Self::album_results_for_query("slow"));
+        query_album_results.insert("fast".to_string(), Self::album_results_for_query("fast"));
 
         let mut query_delays_ms = HashMap::new();
         query_delays_ms.insert("slow".to_string(), 300);
         query_delays_ms.insert("fast".to_string(), 10);
 
         Self::new_authenticated(name, Vec::new())
-            .with_query_behavior(query_results, query_delays_ms)
+            .with_query_behavior(query_album_results, query_delays_ms)
     }
 }
 
@@ -213,29 +234,29 @@ impl StreamingService for MockStreamingService {
 
     fn search(
         &mut self,
-        query: &str,
+        _query: &str,
         _limit: u32,
     ) -> Result<Vec<StreamTrack>, Box<dyn std::error::Error>> {
-        let delay_ms = self.delay_for_query(query);
-        if delay_ms > 0 {
-            std::thread::sleep(Duration::from_millis(delay_ms));
-        }
-        Ok(self.results_for_query(query))
+        Ok(vec![])
     }
 
     fn search_albums(
         &mut self,
-        _query: &str,
+        query: &str,
         _limit: u32,
     ) -> Result<Vec<StreamAlbum>, Box<dyn std::error::Error>> {
-        Ok(vec![])
+        let delay_ms = self.delay_for_query(query);
+        if delay_ms > 0 {
+            std::thread::sleep(Duration::from_millis(delay_ms));
+        }
+        Ok(self.albums_for_query(query))
     }
 
     fn get_album_tracks(
         &mut self,
         _album_id: &str,
     ) -> Result<Vec<StreamTrack>, Box<dyn std::error::Error>> {
-        Ok(vec![])
+        Ok(self.album_tracks.clone())
     }
 
     fn get_stream_url(
@@ -286,7 +307,7 @@ fn test_left_panel_has_three_tabs() {
 
 #[test]
 fn test_search_flow_with_qobuz_tab() {
-    let mock = MockStreamingService::new_authenticated("Qobuz", mock_tracks());
+    let mock = MockStreamingService::new_authenticated("Qobuz", mock_albums());
     let mut app = make_app(Some(Box::new(mock)), None);
 
     // Switch to Qobuz tab so search targets it
@@ -306,20 +327,20 @@ fn test_search_flow_with_qobuz_tab() {
     // Process the pending query
     app.tick();
 
-    // Render and verify results
+    // Render and verify album results
     let backend = TestBackend::new(80, 24);
     let mut terminal = Terminal::new(backend).unwrap();
     let frame = terminal.draw(|frame| app.render(frame)).unwrap();
     let text = extract_buffer_text(frame.buffer);
 
     assert!(
-        text.contains("Search Results"),
-        "Should show 'Search Results' title"
+        text.contains("Albums (2)"),
+        "Should show 'Albums' title with count"
     );
-    assert!(text.contains("Artist1 - Track1"), "Should show first track");
+    assert!(text.contains("Artist1 - Album1"), "Should show first album");
     assert!(
-        text.contains("Artist2 - Track2"),
-        "Should show second track"
+        text.contains("Artist2 - Album2"),
+        "Should show second album"
     );
 }
 
@@ -414,43 +435,31 @@ fn test_search_on_local_tab_shows_hint() {
 }
 
 #[test]
-fn test_search_results_render() {
+fn test_album_results_render() {
     let mut app = make_app(None, None);
 
-    // Inject search results directly
-    let songs = vec![
-        Song {
-            title: "Artist - Song A".to_string(),
-            ..Default::default()
-        },
-        Song {
-            title: "Artist - Song B".to_string(),
-            ..Default::default()
-        },
-        Song {
-            title: "Artist - Song C".to_string(),
-            ..Default::default()
-        },
+    // Inject album results directly
+    let titles = vec![
+        "Artist - Album A (10 tracks)".to_string(),
+        "Artist - Album B (8 tracks)".to_string(),
+        "Artist - Album C (12 tracks)".to_string(),
     ];
-    app.center_panel.set_search_results(songs);
+    app.center_panel.set_album_results(titles);
 
     let backend = TestBackend::new(80, 24);
     let mut terminal = Terminal::new(backend).unwrap();
     let frame = terminal.draw(|frame| app.render(frame)).unwrap();
     let text = extract_buffer_text(frame.buffer);
 
-    assert!(
-        text.contains("Search Results (3)"),
-        "Title should show result count"
-    );
-    assert!(text.contains("Artist - Song A"));
-    assert!(text.contains("Artist - Song B"));
-    assert!(text.contains("Artist - Song C"));
+    assert!(text.contains("Albums (3)"), "Title should show album count");
+    assert!(text.contains("Artist - Album A"));
+    assert!(text.contains("Artist - Album B"));
+    assert!(text.contains("Artist - Album C"));
 }
 
 #[test]
 fn test_pending_auth_deferred_search() {
-    let mock = MockStreamingService::new_pending("Tidal", 2, mock_tracks());
+    let mock = MockStreamingService::new_pending("Tidal", 2, mock_albums());
     let mut app = make_app(None, Some(Box::new(mock)));
 
     // Switch to Tidal tab
@@ -466,13 +475,13 @@ fn test_pending_auth_deferred_search() {
     // First tick: perform_search → auth pending → search deferred
     app.tick();
 
-    // Render: in SearchResults mode but with 0 results (search was deferred)
+    // Render: in AlbumResults mode but with 0 results (search was deferred)
     let backend = TestBackend::new(80, 24);
     let mut terminal = Terminal::new(backend).unwrap();
     let frame = terminal.draw(|frame| app.render(frame)).unwrap();
     let text = extract_buffer_text(frame.buffer);
     assert!(
-        text.contains("Search Results (0)"),
+        text.contains("Albums (0)"),
         "No results yet while auth is pending"
     );
 
@@ -486,17 +495,17 @@ fn test_pending_auth_deferred_search() {
     let frame = terminal.draw(|frame| app.render(frame)).unwrap();
     let text = extract_buffer_text(frame.buffer);
     assert!(
-        text.contains("Search Results (2)"),
-        "Should show 2 results after auth completes"
+        text.contains("Albums (2)"),
+        "Should show 2 albums after auth completes"
     );
-    assert!(text.contains("Artist1 - Track1"));
+    assert!(text.contains("Artist1 - Album1"));
 }
 
 #[test]
 fn test_search_after_album_select_clears_local_songs() {
     // Regression: selecting a local album then searching on a streaming tab
     // should NOT show the local songs in the search results area.
-    let mock = MockStreamingService::new_pending("Tidal", 2, mock_tracks());
+    let mock = MockStreamingService::new_pending("Tidal", 2, mock_albums());
     let mut app = make_app(None, Some(Box::new(mock)));
 
     // 1. Set an album on the center panel (simulating Local tab selection)
@@ -533,23 +542,23 @@ fn test_search_after_album_select_clears_local_songs() {
     let text = extract_buffer_text(frame.buffer);
     assert!(
         !text.contains("LocalSong1"),
-        "Local songs should NOT appear in search results area"
+        "Local songs should NOT appear in album results area"
     );
     assert!(
-        text.contains("Search Results (0)"),
-        "Should show 0 results while auth is pending"
+        text.contains("Albums (0)"),
+        "Should show 0 albums while auth is pending"
     );
 
     // 5. Auth completes after 2 polls, deferred search runs
     app.tick();
     app.tick();
 
-    // Render: Tidal search results should appear
+    // Render: Tidal album results should appear
     let frame = terminal.draw(|frame| app.render(frame)).unwrap();
     let text = extract_buffer_text(frame.buffer);
     assert!(
-        text.contains("Artist1 - Track1"),
-        "Should show Tidal search results"
+        text.contains("Artist1 - Album1"),
+        "Should show Tidal album results"
     );
     assert!(
         !text.contains("LocalSong1"),
@@ -723,7 +732,7 @@ fn test_keybind_tab_shows_generic_search_text() {
 
 #[test]
 fn test_search_status_visible_while_background_query_runs() {
-    let mock = MockStreamingService::new_authenticated_slow("Qobuz", mock_tracks(), 80);
+    let mock = MockStreamingService::new_authenticated_slow("Qobuz", mock_albums(), 80);
     let mut app = make_app(Some(Box::new(mock)), None);
 
     switch_to_tab(&mut app, "Qobuz");
@@ -750,8 +759,8 @@ fn test_search_status_visible_while_background_query_runs() {
     let frame = terminal.draw(|f| app.render(f)).unwrap();
     let text = extract_buffer_text(frame.buffer);
     assert!(
-        text.contains("Search Results (2)"),
-        "Should show results after background search completes"
+        text.contains("Albums (2)"),
+        "Should show albums after background search completes"
     );
 }
 
@@ -801,11 +810,11 @@ fn test_timeout_cancels_stale_search_and_replacement_wins() {
     let frame = terminal.draw(|f| app.render(f)).unwrap();
     let text = extract_buffer_text(frame.buffer);
     assert!(
-        text.contains("Artist - fast Track"),
+        text.contains("Artist - fast Album"),
         "Replacement query results should be rendered"
     );
     assert!(
-        !text.contains("Artist - slow Track"),
+        !text.contains("Artist - slow Album"),
         "Stale canceled query results must be ignored"
     );
 }
