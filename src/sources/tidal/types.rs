@@ -63,6 +63,31 @@ pub struct TidalAlbum {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct TidalAlbumSearchResponse {
+    pub(crate) albums: Option<TidalAlbumsContainer>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TidalAlbumsContainer {
+    pub(crate) items: Option<Vec<TidalAlbumResponse>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TidalAlbumResponse {
+    pub(crate) id: u64,
+    pub(crate) title: Option<String>,
+    pub(crate) artist: Option<TidalArtist>,
+    pub(crate) artists: Option<Vec<TidalArtist>>,
+    #[serde(rename = "numberOfTracks")]
+    pub(crate) number_of_tracks: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TidalAlbumTracksResponse {
+    pub(crate) items: Option<Vec<TidalTrackResponse>>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct PlaybackInfoResponse {
     pub(crate) manifest: Option<String>,
     #[serde(rename = "manifestMimeType")]

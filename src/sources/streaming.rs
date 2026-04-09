@@ -14,6 +14,14 @@ impl StreamTrack {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct StreamAlbum {
+    pub id: String,
+    pub title: String,
+    pub artist: String,
+    pub track_count: Option<u32>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResolvedStreamSource {
     Url(String),
@@ -91,6 +99,19 @@ pub trait StreamingService: Debug + Send {
         &mut self,
         query: &str,
         limit: u32,
+    ) -> Result<Vec<StreamTrack>, Box<dyn std::error::Error>>;
+
+    /// Search for albums by query string.
+    fn search_albums(
+        &mut self,
+        query: &str,
+        limit: u32,
+    ) -> Result<Vec<StreamAlbum>, Box<dyn std::error::Error>>;
+
+    /// Get all tracks for an album by its ID.
+    fn get_album_tracks(
+        &mut self,
+        album_id: &str,
     ) -> Result<Vec<StreamTrack>, Box<dyn std::error::Error>>;
 
     /// Get a playable stream URL for a track by its ID.

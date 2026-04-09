@@ -12,7 +12,8 @@ use rmus::{
     sources::{
         song::Song,
         streaming::{
-            AuthStatus, ResolvedStream, ResolvedStreamSource, StreamTrack, StreamingService,
+            AuthStatus, ResolvedStream, ResolvedStreamSource, StreamAlbum, StreamTrack,
+            StreamingService,
         },
     },
 };
@@ -220,6 +221,21 @@ impl StreamingService for MockStreamingService {
             std::thread::sleep(Duration::from_millis(delay_ms));
         }
         Ok(self.results_for_query(query))
+    }
+
+    fn search_albums(
+        &mut self,
+        _query: &str,
+        _limit: u32,
+    ) -> Result<Vec<StreamAlbum>, Box<dyn std::error::Error>> {
+        Ok(vec![])
+    }
+
+    fn get_album_tracks(
+        &mut self,
+        _album_id: &str,
+    ) -> Result<Vec<StreamTrack>, Box<dyn std::error::Error>> {
+        Ok(vec![])
     }
 
     fn get_stream_url(

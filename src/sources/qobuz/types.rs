@@ -34,6 +34,25 @@ pub(crate) struct AlbumInfo {
 }
 
 #[derive(Debug, Deserialize)]
+pub(crate) struct AlbumSearchResponse {
+    pub(crate) albums: Option<AlbumsContainer>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct AlbumsContainer {
+    pub(crate) items: Option<Vec<AlbumResponse>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct AlbumResponse {
+    pub(crate) id: String,
+    pub(crate) title: Option<String>,
+    pub(crate) artist: Option<Performer>,
+    pub(crate) tracks_count: Option<u32>,
+    pub(crate) tracks: Option<TracksContainer>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(crate) struct StreamUrlResponse {
     pub(crate) url: Option<String>,
 }
