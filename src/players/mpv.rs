@@ -5,7 +5,9 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
-use crate::players::{MusicPlayer, PlaybackInfo, PlaybackState, PlayerError, PlayerResult};
+use crate::players::{
+    MusicPlayer, PlaybackInfo, PlaybackState, PlayerError, PlayerResult, RepeatMode, ShuffleMode,
+};
 use crate::sources::song::Song;
 
 pub struct MpvPlayer {
@@ -17,6 +19,12 @@ pub struct MpvPlayer {
     request_id: u64,
     socket_path: PathBuf,
     active_temp_stream_path: Option<PathBuf>,
+    shuffle: ShuffleMode,
+    repeat: RepeatMode,
+    /// Mapping from shuffle position → playlist index.
+    shuffle_order: Vec<usize>,
+    /// Current position within shuffle_order.
+    shuffle_position: usize,
 }
 
 impl MpvPlayer {
@@ -30,6 +38,10 @@ impl MpvPlayer {
             request_id: 0,
             socket_path,
             active_temp_stream_path: None,
+            shuffle: ShuffleMode::Off,
+            repeat: RepeatMode::Off,
+            shuffle_order: Vec::new(),
+            shuffle_position: 0,
         }
     }
 
@@ -190,12 +202,7 @@ impl MpvPlayer {
                 let reason = json.get("reason").and_then(|r| r.as_str()).unwrap_or("");
                 match reason {
                     "eof" => {
-                        if self.playlist_index + 1 < self.playlist.len() {
-                            self.playlist_index += 1;
-                            let song = self.playlist[self.playlist_index].clone();
-                            self.playback_info.current_song = Some(song.clone());
-                            let _ = self.load_song(&song);
-                        } else {
+                        if !self.advance_to_next_track() {
                             self.reset_playback_state();
                         }
                     }
@@ -255,6 +262,124 @@ impl MpvPlayer {
                 _ => {}
             }
         }
+    }
+
+    fn generate_shuffle_order(&mut self, current_first: bool) {
+        use rand::seq::SliceRandom;
+        let len = self.playlist.len();
+        if len == 0 {
+            self.shuffle_order.clear();
+            self.shuffle_position = 0;
+            return;
+        }
+        let mut indices: Vec<usize> = (0..len).collect();
+        let mut rng = rand::rng();
+        indices.shuffle(&mut rng);
+
+        if current_first {
+            // Put the current playlist_index at position 0 so the current song stays put.
+            if let Some(pos) = indices.iter().position(|&i| i == self.playlist_index) {
+                indices.swap(0, pos);
+            }
+            self.shuffle_position = 0;
+        } else {
+            self.shuffle_position = 0;
+        }
+        self.shuffle_order = indices;
+    }
+
+    /// Advance to the next track respecting shuffle/repeat. Returns true if a new track started.
+    fn advance_to_next_track(&mut self) -> bool {
+        if self.playlist.is_empty() {
+            return false;
+        }
+
+        if self.repeat == RepeatMode::One {
+            // Reload the current song
+            let song = self.playlist[self.playlist_index].clone();
+            self.playback_info.current_song = Some(song.clone());
+            self.playback_info.position = 0.0;
+            self.playback_info.last_error = None;
+            let _ = self.load_song(&song);
+            return true;
+        }
+
+        let next = if self.shuffle == ShuffleMode::On {
+            if self.shuffle_position + 1 < self.shuffle_order.len() {
+                self.shuffle_position += 1;
+                Some(self.shuffle_order[self.shuffle_position])
+            } else if self.repeat == RepeatMode::All {
+                self.generate_shuffle_order(false);
+                Some(self.shuffle_order[0])
+            } else {
+                None
+            }
+        } else if self.playlist_index + 1 < self.playlist.len() {
+            Some(self.playlist_index + 1)
+        } else if self.repeat == RepeatMode::All {
+            Some(0)
+        } else {
+            None
+        };
+
+        match next {
+            Some(idx) => {
+                self.playlist_index = idx;
+                let song = self.playlist[idx].clone();
+                self.playback_info.current_song = Some(song.clone());
+                self.playback_info.position = 0.0;
+                self.playback_info.last_error = None;
+                let _ = self.load_song(&song);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Go to the previous track respecting shuffle/repeat.
+    fn go_to_previous_track(&mut self) -> bool {
+        if self.playlist.is_empty() {
+            return false;
+        }
+
+        let prev = if self.shuffle == ShuffleMode::On {
+            if self.shuffle_position > 0 {
+                self.shuffle_position -= 1;
+                Some(self.shuffle_order[self.shuffle_position])
+            } else if self.repeat == RepeatMode::All {
+                self.shuffle_position = self.shuffle_order.len().saturating_sub(1);
+                Some(self.shuffle_order[self.shuffle_position])
+            } else {
+                None // At start, will just restart current
+            }
+        } else if self.playlist_index > 0 {
+            Some(self.playlist_index - 1)
+        } else if self.repeat == RepeatMode::All {
+            Some(self.playlist.len() - 1)
+        } else {
+            None
+        };
+
+        match prev {
+            Some(idx) => {
+                self.playlist_index = idx;
+                let song = self.playlist[idx].clone();
+                self.playback_info.current_song = Some(song.clone());
+                self.playback_info.position = 0.0;
+                self.playback_info.last_error = None;
+                let _ = self.load_song(&song);
+                true
+            }
+            None => {
+                // At start, just restart current track
+                let _ = self.seek_internal(0.0);
+                false
+            }
+        }
+    }
+
+    fn seek_internal(&mut self, position: f64) -> PlayerResult<()> {
+        self.send_command(&["seek", &position.to_string(), "absolute"])
     }
 
     fn load_song(&mut self, song: &Song) -> PlayerResult<()> {
@@ -347,6 +472,9 @@ impl MusicPlayer for MpvPlayer {
         self.ensure_running()?;
         self.playlist = songs;
         self.playlist_index = start_index.min(self.playlist.len() - 1);
+        if self.shuffle == ShuffleMode::On {
+            self.generate_shuffle_order(true);
+        }
         let song = self.playlist[self.playlist_index].clone();
         self.playback_info.current_song = Some(song.clone());
         self.playback_info.position = 0.0;
@@ -371,15 +499,7 @@ impl MusicPlayer for MpvPlayer {
     }
 
     fn next(&mut self) -> PlayerResult<()> {
-        if self.playlist_index + 1 < self.playlist.len() {
-            self.playlist_index += 1;
-            let song = self.playlist[self.playlist_index].clone();
-            self.playback_info.current_song = Some(song.clone());
-            self.playback_info.position = 0.0;
-            self.playback_info.last_error = None;
-            self.load_song(&song)?;
-            self.playback_info.state = PlaybackState::Stopped;
-        }
+        self.advance_to_next_track();
         Ok(())
     }
 
@@ -387,23 +507,14 @@ impl MusicPlayer for MpvPlayer {
         // If more than 3 seconds in, restart current track
         if self.playback_info.position > 3.0 {
             self.seek(0.0)?;
-        } else if self.playlist_index > 0 {
-            self.playlist_index -= 1;
-            let song = self.playlist[self.playlist_index].clone();
-            self.playback_info.current_song = Some(song.clone());
-            self.playback_info.position = 0.0;
-            self.playback_info.last_error = None;
-            self.load_song(&song)?;
-            self.playback_info.state = PlaybackState::Stopped;
         } else {
-            // At first track, just restart it
-            self.seek(0.0)?;
+            self.go_to_previous_track();
         }
         Ok(())
     }
 
     fn seek(&mut self, position: f64) -> PlayerResult<()> {
-        self.send_command(&["seek", &position.to_string(), "absolute"])
+        self.seek_internal(position)
     }
 
     fn set_volume(&mut self, volume: u8) -> PlayerResult<()> {
@@ -415,6 +526,8 @@ impl MusicPlayer for MpvPlayer {
         if self.socket.is_some() {
             self.process_messages()?;
         }
+        self.playback_info.shuffle = self.shuffle;
+        self.playback_info.repeat = self.repeat;
         Ok(self.playback_info.clone())
     }
 
@@ -427,6 +540,108 @@ impl MusicPlayer for MpvPlayer {
             Some(_) => self.socket.is_some(),
             None => false,
         }
+    }
+
+    fn enqueue(&mut self, songs: Vec<Song>) -> PlayerResult<()> {
+        if songs.is_empty() {
+            return Ok(());
+        }
+
+        let was_empty = self.playlist.is_empty();
+        let first_new_index = self.playlist.len();
+        self.playlist.extend(songs);
+
+        // If shuffle is on, insert new indices into remaining shuffle positions
+        if self.shuffle == ShuffleMode::On && !self.shuffle_order.is_empty() {
+            use rand::Rng;
+            let mut rng = rand::rng();
+            for idx in first_new_index..self.playlist.len() {
+                // Insert at a random position after the current shuffle_position
+                let insert_at = if self.shuffle_position + 1 < self.shuffle_order.len() {
+                    rng.random_range((self.shuffle_position + 1)..=self.shuffle_order.len())
+                } else {
+                    self.shuffle_order.len()
+                };
+                self.shuffle_order.insert(insert_at, idx);
+            }
+        }
+
+        // If nothing was playing, start playing the first enqueued song
+        if was_empty {
+            self.ensure_running()?;
+            self.playlist_index = first_new_index;
+            if self.shuffle == ShuffleMode::On {
+                self.generate_shuffle_order(true);
+            }
+            let song = self.playlist[self.playlist_index].clone();
+            self.playback_info.current_song = Some(song.clone());
+            self.playback_info.position = 0.0;
+            self.playback_info.duration = 0.0;
+            self.playback_info.last_error = None;
+            self.load_song(&song)?;
+            self.playback_info.state = PlaybackState::Stopped;
+        }
+
+        Ok(())
+    }
+
+    fn get_queue(&self) -> &[Song] {
+        &self.playlist
+    }
+
+    fn get_queue_position(&self) -> usize {
+        self.playlist_index
+    }
+
+    fn remove_from_queue(&mut self, index: usize) -> PlayerResult<()> {
+        if index >= self.playlist.len() {
+            return Err(PlayerError::ValidationError(format!(
+                "Queue index {} out of bounds for {} songs",
+                index,
+                self.playlist.len()
+            )));
+        }
+
+        // Don't allow removing the currently playing track
+        if index == self.playlist_index {
+            return Err(PlayerError::ValidationError(
+                "Cannot remove the currently playing track".to_string(),
+            ));
+        }
+
+        self.playlist.remove(index);
+
+        // Adjust playlist_index if the removed item was before the current
+        if index < self.playlist_index {
+            self.playlist_index -= 1;
+        }
+
+        // Rebuild shuffle order if shuffling
+        if self.shuffle == ShuffleMode::On {
+            self.generate_shuffle_order(true);
+        }
+
+        Ok(())
+    }
+
+    fn toggle_shuffle(&mut self) -> PlayerResult<()> {
+        self.shuffle = match self.shuffle {
+            ShuffleMode::Off => {
+                self.generate_shuffle_order(true);
+                ShuffleMode::On
+            }
+            ShuffleMode::On => {
+                self.shuffle_order.clear();
+                self.shuffle_position = 0;
+                ShuffleMode::Off
+            }
+        };
+        Ok(())
+    }
+
+    fn cycle_repeat(&mut self) -> PlayerResult<()> {
+        self.repeat = self.repeat.cycle();
+        Ok(())
     }
 
     fn shutdown(&mut self) -> PlayerResult<()> {

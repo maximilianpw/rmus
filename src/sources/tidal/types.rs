@@ -83,6 +83,22 @@ pub struct TidalAlbumResponse {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct TidalArtistSearchResponse {
+    pub(crate) artists: Option<TidalArtistsContainer>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TidalArtistsContainer {
+    pub(crate) items: Option<Vec<TidalArtistResponse>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TidalArtistResponse {
+    pub(crate) id: u64,
+    pub(crate) name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct TidalAlbumTracksResponse {
     pub(crate) items: Option<Vec<TidalTrackResponse>>,
 }

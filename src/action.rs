@@ -13,4 +13,11 @@ pub enum Action {
     VolumeUp(u8),
     VolumeDown(u8),
     OpenSearch,
+    ToggleShuffle,
+    CycleRepeat,
+    EnqueueSelected,
+    ShowQueue,
+    CreatePlaylist,
+    AddToPlaylist,
+    DeletePlaylist,
 }

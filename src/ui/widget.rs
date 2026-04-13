@@ -6,7 +6,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::players::{PlaybackInfo, PlaybackState};
+use crate::players::{PlaybackInfo, PlaybackState, RepeatMode, ShuffleMode};
 
 pub fn handle_focused_border_style(is_focused: bool) -> Style {
     if is_focused {
@@ -94,6 +94,18 @@ pub fn now_playing_widget(info: &PlaybackInfo, is_focused: bool, frame: &mut Fra
         status_parts.push(quality);
     }
     status_parts.push(volume);
+    if info.shuffle == ShuffleMode::On {
+        status_parts.push(Span::styled(
+            " | Shuffle",
+            Style::default().fg(Color::Magenta),
+        ));
+    }
+    if info.repeat != RepeatMode::Off {
+        status_parts.push(Span::styled(
+            format!(" | Repeat: {}", info.repeat.label()),
+            Style::default().fg(Color::Cyan),
+        ));
+    }
     frame.render_widget(Paragraph::new(Line::from(status_parts)), chunks[0]);
 
     // Progress bar
@@ -161,6 +173,7 @@ mod tests {
             duration: 120.0,
             volume: 50,
             last_error: None,
+            ..Default::default()
         };
 
         let frame = terminal

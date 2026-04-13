@@ -3,11 +3,13 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::config::{MaxStreamQuality, TidalConfig};
 use crate::sources::streaming::{
-    AuthStatus, ResolvedStream, ResolvedStreamSource, StreamAlbum, StreamTrack, StreamingService,
+    AuthStatus, ResolvedStream, ResolvedStreamSource, StreamAlbum, StreamArtist, StreamTrack,
+    StreamingService,
 };
 use crate::sources::tidal::types::{
     DeviceAuthResponse, ManifestJson, PlaybackInfoResponse, TidalAlbumSearchResponse,
-    TidalAlbumTracksResponse, TidalSearchResponse, TokenErrorResponse, TokenResponse,
+    TidalAlbumTracksResponse, TidalAlbumsContainer, TidalArtistSearchResponse, TidalSearchResponse,
+    TokenErrorResponse, TokenResponse,
 };
 
 const AUTH_URL: &str = "https://auth.tidal.com/v1/oauth2";
@@ -126,6 +128,101 @@ impl TidalClient {
         let albums = search_resp
             .albums
             .and_then(|a| a.items)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|a| {
+                let artist_name = a
+                    .artist
+                    .and_then(|ar| ar.name)
+                    .or_else(|| a.artists.and_then(|mut v| v.pop()).and_then(|ar| ar.name))
+                    .unwrap_or_else(|| "Unknown".to_string());
+                StreamAlbum {
+                    id: a.id.to_string(),
+                    title: a.title.unwrap_or_else(|| "Unknown".to_string()),
+                    artist: artist_name,
+                    track_count: a.number_of_tracks,
+                }
+            })
+            .collect();
+
+        Ok(albums)
+    }
+
+    async fn search_artists(
+        &self,
+        query: &str,
+        limit: u32,
+    ) -> Result<Vec<StreamArtist>, Box<dyn std::error::Error>> {
+        let country = if self.country_code.is_empty() {
+            "US"
+        } else {
+            &self.country_code
+        };
+
+        let resp = self
+            .client
+            .get(format!("{API_URL}/search"))
+            .bearer_auth(&self.access_token)
+            .query(&[
+                ("query", query),
+                ("limit", &limit.to_string()),
+                ("countryCode", country),
+                ("types", "ARTISTS"),
+            ])
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(format!("Tidal artist search failed ({}): {}", status, body).into());
+        }
+
+        let search_resp: TidalArtistSearchResponse = resp.json().await?;
+
+        let artists = search_resp
+            .artists
+            .and_then(|a| a.items)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|a| StreamArtist {
+                id: a.id.to_string(),
+                name: a.name.unwrap_or_else(|| "Unknown".to_string()),
+                album_count: None,
+            })
+            .collect();
+
+        Ok(artists)
+    }
+
+    async fn get_artist_albums(
+        &self,
+        artist_id: &str,
+    ) -> Result<Vec<StreamAlbum>, Box<dyn std::error::Error>> {
+        let country = if self.country_code.is_empty() {
+            "US"
+        } else {
+            &self.country_code
+        };
+
+        let resp = self
+            .client
+            .get(format!("{API_URL}/artists/{artist_id}/albums"))
+            .bearer_auth(&self.access_token)
+            .query(&[("countryCode", country), ("limit", "100")])
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(format!("Tidal artist albums failed ({}): {}", status, body).into());
+        }
+
+        let list_resp: TidalAlbumsContainer = resp.json().await?;
+
+        let albums = list_resp
+            .items
             .unwrap_or_default()
             .into_iter()
             .map(|a| {
@@ -596,6 +693,37 @@ impl StreamingService for TidalSource {
             .ok_or("Not authenticated with Tidal")?;
         let rt = make_runtime();
         let albums = rt.block_on(client.search_albums(query, limit))?;
+        Ok(albums)
+    }
+
+    fn search_artists(
+        &mut self,
+        query: &str,
+        limit: u32,
+    ) -> Result<Vec<StreamArtist>, Box<dyn std::error::Error>> {
+        self.ensure_valid_token()?;
+
+        let client = self
+            .api_client
+            .as_ref()
+            .ok_or("Not authenticated with Tidal")?;
+        let rt = make_runtime();
+        let artists = rt.block_on(client.search_artists(query, limit))?;
+        Ok(artists)
+    }
+
+    fn get_artist_albums(
+        &mut self,
+        artist_id: &str,
+    ) -> Result<Vec<StreamAlbum>, Box<dyn std::error::Error>> {
+        self.ensure_valid_token()?;
+
+        let client = self
+            .api_client
+            .as_ref()
+            .ok_or("Not authenticated with Tidal")?;
+        let rt = make_runtime();
+        let albums = rt.block_on(client.get_artist_albums(artist_id))?;
         Ok(albums)
     }
 

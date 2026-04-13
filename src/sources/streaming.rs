@@ -69,6 +69,22 @@ impl StreamingServiceId {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct StreamArtist {
+    pub id: String,
+    pub name: String,
+    pub album_count: Option<u32>,
+}
+
+impl StreamArtist {
+    pub fn display_title(&self) -> String {
+        match self.album_count {
+            Some(n) => format!("{} ({} albums)", self.name, n),
+            None => self.name.clone(),
+        }
+    }
+}
+
 /// Result of an authentication attempt.
 #[derive(Debug)]
 pub enum AuthStatus {
@@ -122,6 +138,23 @@ pub trait StreamingService: Debug + Send {
         &mut self,
         album_id: &str,
     ) -> Result<Vec<StreamTrack>, Box<dyn std::error::Error>>;
+
+    /// Search for artists by query string.
+    fn search_artists(
+        &mut self,
+        _query: &str,
+        _limit: u32,
+    ) -> Result<Vec<StreamArtist>, Box<dyn std::error::Error>> {
+        Ok(vec![])
+    }
+
+    /// Get all albums for an artist by their ID.
+    fn get_artist_albums(
+        &mut self,
+        _artist_id: &str,
+    ) -> Result<Vec<StreamAlbum>, Box<dyn std::error::Error>> {
+        Ok(vec![])
+    }
 
     /// Get a playable stream URL for a track by its ID.
     fn get_stream_url(

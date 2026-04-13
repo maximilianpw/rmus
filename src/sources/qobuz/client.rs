@@ -5,10 +5,12 @@ use std::collections::HashMap;
 
 use crate::config::MaxStreamQuality;
 use crate::sources::qobuz::types::{
-    AlbumSearchResponse, LoginResponse, SearchResponse, StreamUrlResponse,
+    AlbumSearchResponse, ArtistAlbumsResponse, ArtistSearchResponse, LoginResponse, SearchResponse,
+    StreamUrlResponse,
 };
 use crate::sources::streaming::{
-    AuthStatus, ResolvedStream, ResolvedStreamSource, StreamAlbum, StreamTrack, StreamingService,
+    AuthStatus, ResolvedStream, ResolvedStreamSource, StreamAlbum, StreamArtist, StreamTrack,
+    StreamingService,
 };
 
 const BASE_URL: &str = "https://www.qobuz.com/api.json/0.2";
@@ -104,6 +106,73 @@ impl QobuzClient {
                 ("query", query),
                 ("limit", &limit.to_string()),
                 ("app_id", &self.app_id),
+            ])
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        let albums = resp
+            .albums
+            .and_then(|a| a.items)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|a| StreamAlbum {
+                id: a.id.to_string(),
+                title: a.title.unwrap_or_else(|| "Unknown".to_string()),
+                artist: a
+                    .artist
+                    .and_then(|p| p.name)
+                    .unwrap_or_else(|| "Unknown".to_string()),
+                track_count: a.tracks_count,
+            })
+            .collect();
+
+        Ok(albums)
+    }
+
+    async fn search_artists(
+        &self,
+        query: &str,
+        limit: u32,
+    ) -> Result<Vec<StreamArtist>, reqwest::Error> {
+        let resp: ArtistSearchResponse = self
+            .client
+            .get(format!("{BASE_URL}/artist/search"))
+            .query(&[
+                ("query", query),
+                ("limit", &limit.to_string()),
+                ("app_id", &self.app_id),
+            ])
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        let artists = resp
+            .artists
+            .and_then(|a| a.items)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|a| StreamArtist {
+                id: a.id.to_string(),
+                name: a.name.unwrap_or_else(|| "Unknown".to_string()),
+                album_count: a.albums_count,
+            })
+            .collect();
+
+        Ok(artists)
+    }
+
+    async fn get_artist_albums(&self, artist_id: &str) -> Result<Vec<StreamAlbum>, reqwest::Error> {
+        let resp: ArtistAlbumsResponse = self
+            .client
+            .get(format!("{BASE_URL}/artist/get"))
+            .query(&[
+                ("artist_id", artist_id),
+                ("app_id", &self.app_id),
+                ("extra", "albums"),
+                ("limit", "100"),
             ])
             .send()
             .await?
@@ -416,6 +485,27 @@ impl StreamingService for QobuzSource {
         let client = self.client.as_ref().ok_or("Not authenticated with Qobuz")?;
         let rt = make_runtime();
         let albums = rt.block_on(client.search_albums(query, limit))?;
+        Ok(albums)
+    }
+
+    fn search_artists(
+        &mut self,
+        query: &str,
+        limit: u32,
+    ) -> Result<Vec<StreamArtist>, Box<dyn std::error::Error>> {
+        let client = self.client.as_ref().ok_or("Not authenticated with Qobuz")?;
+        let rt = make_runtime();
+        let artists = rt.block_on(client.search_artists(query, limit))?;
+        Ok(artists)
+    }
+
+    fn get_artist_albums(
+        &mut self,
+        artist_id: &str,
+    ) -> Result<Vec<StreamAlbum>, Box<dyn std::error::Error>> {
+        let client = self.client.as_ref().ok_or("Not authenticated with Qobuz")?;
+        let rt = make_runtime();
+        let albums = rt.block_on(client.get_artist_albums(artist_id))?;
         Ok(albums)
     }
 

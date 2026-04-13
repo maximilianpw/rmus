@@ -11,6 +11,39 @@ use reqwest::Url;
 use crate::players::mpv::MpvPlayer;
 use crate::sources::song::Song;
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ShuffleMode {
+    #[default]
+    Off,
+    On,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RepeatMode {
+    #[default]
+    Off,
+    One,
+    All,
+}
+
+impl RepeatMode {
+    pub fn cycle(self) -> Self {
+        match self {
+            Self::Off => Self::All,
+            Self::All => Self::One,
+            Self::One => Self::Off,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::One => "One",
+            Self::All => "All",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub enum PlaybackState {
     #[default]
@@ -27,6 +60,8 @@ pub struct PlaybackInfo {
     pub duration: f64,
     pub volume: u8,
     pub last_error: Option<String>,
+    pub shuffle: ShuffleMode,
+    pub repeat: RepeatMode,
 }
 
 #[derive(Debug)]
@@ -65,6 +100,12 @@ pub trait MusicPlayer {
     fn get_playback_info(&self) -> &PlaybackInfo;
     fn is_alive(&self) -> bool;
     fn shutdown(&mut self) -> PlayerResult<()>;
+    fn toggle_shuffle(&mut self) -> PlayerResult<()>;
+    fn cycle_repeat(&mut self) -> PlayerResult<()>;
+    fn enqueue(&mut self, songs: Vec<Song>) -> PlayerResult<()>;
+    fn get_queue(&self) -> &[Song];
+    fn get_queue_position(&self) -> usize;
+    fn remove_from_queue(&mut self, index: usize) -> PlayerResult<()>;
 }
 
 const ALLOWED_AUDIO_EXTENSIONS: &[&str] = &[
@@ -293,6 +334,41 @@ impl MusicPlayer for SafePlayer {
 
     fn shutdown(&mut self) -> PlayerResult<()> {
         self.inner.shutdown()
+    }
+
+    fn toggle_shuffle(&mut self) -> PlayerResult<()> {
+        self.inner.toggle_shuffle()
+    }
+
+    fn cycle_repeat(&mut self) -> PlayerResult<()> {
+        self.inner.cycle_repeat()
+    }
+
+    fn enqueue(&mut self, songs: Vec<Song>) -> PlayerResult<()> {
+        for song in &songs {
+            if song.is_stream() {
+                if let Some(url) = song.url.as_deref() {
+                    Self::validate_stream_url(url)?;
+                } else if let Some(manifest) = song.stream_manifest.as_ref() {
+                    Self::validate_stream_manifest(&manifest.file_extension)?;
+                }
+            } else {
+                Self::validate_song_path(&song.path)?;
+            }
+        }
+        self.inner.enqueue(songs)
+    }
+
+    fn get_queue(&self) -> &[Song] {
+        self.inner.get_queue()
+    }
+
+    fn get_queue_position(&self) -> usize {
+        self.inner.get_queue_position()
+    }
+
+    fn remove_from_queue(&mut self, index: usize) -> PlayerResult<()> {
+        self.inner.remove_from_queue(index)
     }
 }
 

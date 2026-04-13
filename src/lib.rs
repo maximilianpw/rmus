@@ -4,6 +4,7 @@ pub mod config;
 pub mod event;
 pub mod keymap;
 pub mod players;
+pub mod playlist;
 pub mod sources;
 pub mod ui;
 pub mod utils;

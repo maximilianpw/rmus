@@ -294,13 +294,14 @@ fn test_app_renders_without_panic() {
 }
 
 #[test]
-fn test_left_panel_has_three_tabs() {
+fn test_left_panel_has_four_tabs() {
     let mut app = make_app(None, None);
-    let backend = TestBackend::new(120, 30);
+    let backend = TestBackend::new(200, 30);
     let mut terminal = Terminal::new(backend).unwrap();
     let frame = terminal.draw(|frame| app.render(frame)).unwrap();
     let text = extract_buffer_text(frame.buffer);
     assert!(text.contains("Local"), "Should show Local tab");
+    assert!(text.contains("Playlists"), "Should show Playlists tab");
     assert!(text.contains("Qobuz"), "Should show Qobuz tab");
     assert!(text.contains("Tidal"), "Should show Tidal tab");
 }

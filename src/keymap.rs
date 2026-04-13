@@ -41,10 +41,14 @@ pub fn resolve_key(
     match focused_window {
         FocusedWindow::Left => match key.code {
             KeyCode::Char(' ') => KeyAction::Execute(Action::SelectAlbum),
+            KeyCode::Char('C') => KeyAction::Execute(Action::CreatePlaylist),
+            KeyCode::Char('D') => KeyAction::Execute(Action::DeletePlaylist),
             _ => KeyAction::DelegateToPanel,
         },
         FocusedWindow::Center => match key.code {
             KeyCode::Char(' ') => KeyAction::Execute(Action::PlaySelected),
+            KeyCode::Char('a') => KeyAction::Execute(Action::EnqueueSelected),
+            KeyCode::Char('A') => KeyAction::Execute(Action::AddToPlaylist),
             _ => KeyAction::DelegateToPanel,
         },
         FocusedWindow::Right => match key.code {
@@ -56,6 +60,9 @@ pub fn resolve_key(
             KeyCode::Char('-') => KeyAction::Execute(Action::VolumeDown(5)),
             KeyCode::Left => KeyAction::Execute(Action::SeekBackward(5.0)),
             KeyCode::Right => KeyAction::Execute(Action::SeekForward(5.0)),
+            KeyCode::Char('z') => KeyAction::Execute(Action::ToggleShuffle),
+            KeyCode::Char('r') => KeyAction::Execute(Action::CycleRepeat),
+            KeyCode::Char('Q') => KeyAction::Execute(Action::ShowQueue),
             _ => KeyAction::None,
         },
         FocusedWindow::Logs => KeyAction::DelegateToPanel,

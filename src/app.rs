@@ -12,19 +12,20 @@ use crate::{
     action::Action,
     config::{Config, LocalSource, TidalConfig},
     players::{MusicPlayer, SafePlayer},
+    playlist::{Playlist, PlaylistTrack},
     sources::{
         local::LocalFiles,
         qobuz::QobuzSource,
         song::Song,
         streaming::{
-            AuthStatus, ResolvedStream, ResolvedStreamSource, StreamAlbum, StreamTrack,
-            StreamingService, StreamingServiceId,
+            AuthStatus, ResolvedStream, ResolvedStreamSource, StreamAlbum, StreamArtist,
+            StreamTrack, StreamingService, StreamingServiceId,
         },
         tidal::TidalSource,
-        MusicSource, StreamingTab,
+        MusicSource, PlaylistSource, StreamingTab,
     },
     ui::{
-        center_panel::CenterPanel,
+        center_panel::{CenterPanel, SearchMode},
         left_panel::LeftPanel,
         log_panel::{LogPanel, Logger},
         right_panel::RightPanel,
@@ -68,6 +69,7 @@ pub struct App {
     tidal: Option<Box<dyn StreamingService>>,
     search_results: Vec<StreamTrack>,
     album_results: Vec<StreamAlbum>,
+    artist_results: Vec<StreamArtist>,
     /// Which service produced the current search results (needed for playback).
     search_source: Option<StreamingServiceId>,
     config: Config,
@@ -102,6 +104,25 @@ enum StreamingTask {
     GetStreamUrl {
         track_id: String,
         title: String,
+        enqueue: bool,
+    },
+    /// Resolve stream URLs for an entire album. Resolves the start track first
+    /// for immediate playback, then resolves the rest for enqueueing.
+    PlayAlbumStream {
+        tracks: Vec<StreamTrack>,
+        start_index: usize,
+    },
+    SearchArtists {
+        query: String,
+        limit: u32,
+    },
+    SearchTracks {
+        query: String,
+        limit: u32,
+    },
+    GetArtistAlbums {
+        artist_id: String,
+        artist_name: String,
     },
 }
 
@@ -111,6 +132,10 @@ enum StreamingTaskKind {
     GetAlbumTracks,
     PollAuth,
     GetStreamUrl,
+    PlayAlbumStream,
+    SearchArtists,
+    SearchTracks,
+    GetArtistAlbums,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -137,6 +162,20 @@ enum StreamingTaskOutput {
     StreamUrlResult {
         title: String,
         stream: Option<ResolvedStream>,
+        enqueue: bool,
+    },
+    AlbumStreamUrls {
+        /// The song at start_index, resolved and ready to play immediately.
+        first_song: Option<Song>,
+        /// All remaining songs resolved for enqueueing.
+        remaining_songs: Vec<Song>,
+        failed_count: usize,
+    },
+    ArtistSearchResults(Vec<StreamArtist>),
+    TrackSearchResults(Vec<StreamTrack>),
+    ArtistAlbums {
+        artist_name: String,
+        albums: Vec<StreamAlbum>,
     },
     Error(String),
 }
@@ -154,6 +193,7 @@ impl App {
         let local_sources: Vec<LocalSource> = config.get_local_sources();
         let sources: Vec<Box<dyn MusicSource>> = vec![
             LocalFiles::new("Local".to_string(), local_sources),
+            Box::new(PlaylistSource::new()),
             StreamingTab::boxed("Qobuz"),
             StreamingTab::boxed("Tidal"),
         ];
@@ -192,6 +232,7 @@ impl App {
             tidal,
             search_results: Vec::new(),
             album_results: Vec::new(),
+            artist_results: Vec::new(),
             search_source: None,
             config,
             logger,
@@ -221,6 +262,7 @@ impl App {
         let local_sources: Vec<LocalSource> = config.get_local_sources();
         let sources: Vec<Box<dyn MusicSource>> = vec![
             LocalFiles::new("Local".to_string(), local_sources),
+            Box::new(PlaylistSource::new()),
             StreamingTab::boxed("Qobuz"),
             StreamingTab::boxed("Tidal"),
         ];
@@ -239,6 +281,7 @@ impl App {
             tidal,
             search_results: Vec::new(),
             album_results: Vec::new(),
+            artist_results: Vec::new(),
             search_source: None,
             config,
             logger,
@@ -284,6 +327,82 @@ impl App {
         if let Some(index) = self.center_panel.take_pending_album_selection() {
             self.fetch_album_tracks(index);
             self.poll_streaming_task_results();
+        }
+        if let Some(index) = self.center_panel.take_pending_artist_selection() {
+            self.fetch_artist_albums(index);
+            self.poll_streaming_task_results();
+        }
+        if let Some(index) = self.center_panel.take_pending_queue_remove() {
+            match self.player.remove_from_queue(index) {
+                Ok(()) => {
+                    self.logger.info("Removed from queue".to_string());
+                    // Refresh queue view
+                    let queue = self.player.get_queue().to_vec();
+                    let pos = self.player.get_queue_position();
+                    self.center_panel.set_queue(queue, pos);
+                }
+                Err(e) => self.logger.error(format!("Cannot remove: {}", e)),
+            }
+        }
+        if let Some(index) = self.center_panel.take_pending_queue_jump() {
+            let queue = self.player.get_queue().to_vec();
+            if index < queue.len() {
+                if let Err(e) = self.player.play_album(queue, index) {
+                    self.logger.error(format!("Playback error: {}", e));
+                }
+            }
+        }
+        // Keep queue view in sync with player state
+        if self.center_panel.is_showing_queue() {
+            let queue = self.player.get_queue().to_vec();
+            let pos = self.player.get_queue_position();
+            self.center_panel.set_queue(queue, pos);
+        }
+        // Handle playlist creation
+        if let Some(name) = self.center_panel.take_pending_playlist_create() {
+            let playlist = Playlist::new(name.clone());
+            match playlist.save() {
+                Ok(()) => {
+                    self.logger.info(format!("Created playlist '{}'", name));
+                    self.rebuild_left_panel();
+                }
+                Err(e) => self
+                    .logger
+                    .error(format!("Failed to create playlist: {}", e)),
+            }
+        }
+        // Handle add-to-playlist
+        if let Some(index) = self.center_panel.take_pending_add_to_playlist() {
+            let mut playlists = Playlist::load_all();
+            if let Some(playlist) = playlists.get_mut(index) {
+                let songs = self.center_panel.get_songs();
+                for song in &songs {
+                    let track = PlaylistTrack {
+                        title: song.title.clone(),
+                        artist: song.artist.clone(),
+                        album_name: song.album_name.clone(),
+                        path: if song.path.as_os_str().is_empty() {
+                            None
+                        } else {
+                            Some(song.path.to_string_lossy().into_owned())
+                        },
+                        stream_service: None,
+                        stream_track_id: None,
+                    };
+                    playlist.tracks.push(track);
+                }
+                match playlist.save() {
+                    Ok(()) => {
+                        self.logger.info(format!(
+                            "Added {} song(s) to '{}'",
+                            songs.len(),
+                            playlist.name
+                        ));
+                        self.rebuild_left_panel();
+                    }
+                    Err(e) => self.logger.error(format!("Failed to save playlist: {}", e)),
+                }
+            }
         }
     }
 
@@ -384,6 +503,85 @@ impl App {
                 let result = self.player.set_volume(info.volume.saturating_sub(amount));
                 self.log_player_action_error("volume down", result);
             }
+            Action::ToggleShuffle => {
+                let result = self.player.toggle_shuffle();
+                self.log_player_action_error("toggle shuffle", result);
+            }
+            Action::CycleRepeat => {
+                let result = self.player.cycle_repeat();
+                self.log_player_action_error("cycle repeat", result);
+            }
+            Action::EnqueueSelected => {
+                if self.center_panel.is_showing_album_tracks() && self.search_source.is_some() {
+                    self.enqueue_search_result();
+                } else if self.center_panel.is_showing_search_results()
+                    && self.search_source.is_some()
+                {
+                    self.enqueue_search_result();
+                } else {
+                    let songs = self.center_panel.get_songs();
+                    if !songs.is_empty() {
+                        if let Err(e) = self.player.enqueue(songs) {
+                            self.logger.error(format!("Enqueue error: {}", e));
+                        } else {
+                            self.logger.info("Added to queue".to_string());
+                        }
+                    }
+                }
+            }
+            Action::ShowQueue => {
+                let queue = self.player.get_queue().to_vec();
+                let pos = self.player.get_queue_position();
+                self.center_panel.set_queue(queue, pos);
+                self.center_panel.show_queue();
+                self.focused_window = FocusedWindow::Center;
+            }
+            Action::CreatePlaylist => {
+                if self.left_panel.active_tab_name() == "Playlists" {
+                    self.focused_window = FocusedWindow::Center;
+                    self.center_panel.open_create_playlist();
+                } else {
+                    self.logger
+                        .info("Switch to the Playlists tab first".to_string());
+                }
+            }
+            Action::DeletePlaylist => {
+                if self.left_panel.active_tab_name() == "Playlists" {
+                    if let Some((path, _)) = self.left_panel.get_selected_album() {
+                        let path_str = path.to_string_lossy();
+                        if let Some(idx_str) = path_str.strip_prefix("playlist:") {
+                            if let Ok(idx) = idx_str.parse::<usize>() {
+                                let playlists = Playlist::load_all();
+                                if let Some(playlist) = playlists.get(idx) {
+                                    let name = playlist.name.clone();
+                                    match Playlist::delete(&name) {
+                                        Ok(()) => {
+                                            self.logger
+                                                .info(format!("Deleted playlist '{}'", name));
+                                            self.rebuild_left_panel();
+                                        }
+                                        Err(e) => {
+                                            self.logger.error(format!("Delete failed: {}", e));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Action::AddToPlaylist => {
+                let playlists = Playlist::load_all();
+                if playlists.is_empty() {
+                    self.logger.info(
+                        "No playlists yet. Create one first (C on Playlists tab).".to_string(),
+                    );
+                } else {
+                    let names: Vec<String> = playlists.iter().map(|p| p.name.clone()).collect();
+                    self.focused_window = FocusedWindow::Center;
+                    self.center_panel.open_playlist_picker(names);
+                }
+            }
             Action::OpenSearch => {
                 let tab = self.left_panel.active_tab_name();
                 if tab == "Qobuz" || tab == "Tidal" {
@@ -468,17 +666,22 @@ impl App {
                 )) as Box<dyn StreamingService>);
             }
             if local_changed {
-                let local_sources: Vec<LocalSource> = new_config.get_local_sources();
-                let sources: Vec<Box<dyn MusicSource>> = vec![
-                    LocalFiles::new("Local".to_string(), local_sources),
-                    StreamingTab::boxed("Qobuz"),
-                    StreamingTab::boxed("Tidal"),
-                ];
-                self.left_panel = LeftPanel::new(sources, self.logger.clone());
+                self.rebuild_left_panel();
             }
 
             self.config = new_config;
         }
+    }
+
+    fn rebuild_left_panel(&mut self) {
+        let local_sources: Vec<LocalSource> = self.config.get_local_sources();
+        let sources: Vec<Box<dyn MusicSource>> = vec![
+            LocalFiles::new("Local".to_string(), local_sources),
+            Box::new(PlaylistSource::new()),
+            StreamingTab::boxed("Qobuz"),
+            StreamingTab::boxed("Tidal"),
+        ];
+        self.left_panel = LeftPanel::new(sources, self.logger.clone());
     }
 
     fn poll_pending_auth(&mut self) {
@@ -493,6 +696,50 @@ impl App {
 
         if let Some(service) = self.take_service(service_id) {
             self.spawn_streaming_task(service_id, service, StreamingTask::PollAuth);
+        }
+    }
+
+    /// Check if a service's credentials have changed and persist them if so.
+    /// Called after every background task completes to catch token refreshes.
+    fn sync_service_credentials(&mut self, service_id: StreamingServiceId) {
+        match service_id {
+            StreamingServiceId::Tidal => {
+                if let Some(ref service) = self.tidal {
+                    if let Some(data) = service.persist_data() {
+                        if let Ok(tidal_cfg) = serde_json::from_str::<TidalConfig>(&data) {
+                            if self.config.tidal.as_ref() != Some(&tidal_cfg) {
+                                self.config.tidal = Some(tidal_cfg);
+                                if let Err(e) = self.config.save() {
+                                    self.logger
+                                        .error(format!("Failed to save refreshed token: {}", e));
+                                }
+                                self.settings_panel.update_config(&self.config);
+                            }
+                        }
+                    }
+                }
+            }
+            StreamingServiceId::Qobuz => {
+                if let Some(ref service) = self.qobuz {
+                    if let Some((app_id, app_secret)) = service.app_credentials() {
+                        if let Some(ref qobuz_config) = self.config.qobuz {
+                            if qobuz_config.app_id != app_id
+                                || qobuz_config.app_secret != app_secret
+                            {
+                                if let Some(ref mut qc) = self.config.qobuz {
+                                    qc.app_id = app_id;
+                                    qc.app_secret = app_secret;
+                                }
+                                if let Err(e) = self.config.save() {
+                                    self.logger
+                                        .error(format!("Failed to save Qobuz credentials: {}", e));
+                                }
+                                self.settings_panel.update_config(&self.config);
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -541,7 +788,13 @@ impl App {
         if self.busy_service == Some(service_id) {
             // Cancel only active searches so users can quickly replace queries.
             if let Some(active) = self.active_task {
-                if active.service == service_id && active.kind == StreamingTaskKind::Search {
+                let is_search = matches!(
+                    active.kind,
+                    StreamingTaskKind::Search
+                        | StreamingTaskKind::SearchArtists
+                        | StreamingTaskKind::SearchTracks
+                );
+                if active.service == service_id && is_search {
                     self.cancel_active_streaming_task("Cancelling previous search...");
                     self.logger
                         .info("Replacing in-flight search...".to_string());
@@ -553,20 +806,31 @@ impl App {
             }
         }
 
+        let search_mode = self.center_panel.search_mode();
         self.logger.info(format!(
-            "Searching {} for '{}'...",
+            "Searching {} {} for '{}'...",
             service_id.as_str(),
+            search_mode.label(),
             query
         ));
+
+        let task = match search_mode {
+            SearchMode::Albums => StreamingTask::SearchAlbums {
+                query: query.to_string(),
+                limit: 20,
+            },
+            SearchMode::Artists => StreamingTask::SearchArtists {
+                query: query.to_string(),
+                limit: 20,
+            },
+            SearchMode::Tracks => StreamingTask::SearchTracks {
+                query: query.to_string(),
+                limit: 20,
+            },
+        };
+
         if let Some(service) = self.take_service(service_id) {
-            self.spawn_streaming_task(
-                service_id,
-                service,
-                StreamingTask::SearchAlbums {
-                    query: query.to_string(),
-                    limit: 20,
-                },
-            );
+            self.spawn_streaming_task(service_id, service, task);
         } else {
             self.queued_search = Some((service_id, query.to_string()));
             self.center_panel
@@ -606,7 +870,97 @@ impl App {
         }
     }
 
+    fn fetch_artist_albums(&mut self, index: usize) {
+        let artist = match self.artist_results.get(index) {
+            Some(a) => a.clone(),
+            None => return,
+        };
+
+        let service_id = match self.search_source {
+            Some(id) => id,
+            None => return,
+        };
+
+        if self.busy_service == Some(service_id) {
+            self.logger
+                .info("Streaming request already in progress...".to_string());
+            return;
+        }
+
+        self.logger
+            .info(format!("Loading albums for '{}'...", artist.name));
+
+        if let Some(service) = self.take_service(service_id) {
+            self.spawn_streaming_task(
+                service_id,
+                service,
+                StreamingTask::GetArtistAlbums {
+                    artist_id: artist.id,
+                    artist_name: artist.name,
+                },
+            );
+        }
+    }
+
     fn play_search_result(&mut self) {
+        let index = match self.center_panel.get_selected_index() {
+            Some(i) => i,
+            None => return,
+        };
+
+        // Use the service that produced these search results
+        let service_id = match self.search_source {
+            Some(id) => id,
+            None => return,
+        };
+
+        if self.busy_service == Some(service_id) {
+            self.logger
+                .info("Streaming request already in progress...".to_string());
+            return;
+        }
+
+        // If we're in album tracks mode and have multiple tracks, play the whole album
+        if self.center_panel.is_showing_album_tracks() && self.search_results.len() > 1 {
+            let tracks = self.search_results.clone();
+            self.logger
+                .info(format!("Resolving {} album tracks...", tracks.len()));
+            if let Some(service) = self.take_service(service_id) {
+                self.spawn_streaming_task(
+                    service_id,
+                    service,
+                    StreamingTask::PlayAlbumStream {
+                        tracks,
+                        start_index: index,
+                    },
+                );
+            }
+            return;
+        }
+
+        let track = match self.search_results.get(index) {
+            Some(t) => t.clone(),
+            None => return,
+        };
+
+        self.logger
+            .info(format!("Getting stream for {}...", track.display_title()));
+
+        if let Some(service) = self.take_service(service_id) {
+            let track_title = track.display_title();
+            self.spawn_streaming_task(
+                service_id,
+                service,
+                StreamingTask::GetStreamUrl {
+                    track_id: track.id,
+                    title: track_title,
+                    enqueue: false,
+                },
+            );
+        }
+    }
+
+    fn enqueue_search_result(&mut self) {
         let index = match self.center_panel.get_selected_index() {
             Some(i) => i,
             None => return,
@@ -616,12 +970,12 @@ impl App {
             Some(t) => t.clone(),
             None => return,
         };
-        let track_title = track.display_title();
 
-        self.logger
-            .info(format!("Getting stream for {}...", track.display_title()));
+        self.logger.info(format!(
+            "Getting stream to enqueue {}...",
+            track.display_title()
+        ));
 
-        // Use the service that produced these search results
         let service_id = match self.search_source {
             Some(id) => id,
             None => return,
@@ -637,8 +991,9 @@ impl App {
                 service_id,
                 service,
                 StreamingTask::GetStreamUrl {
+                    title: track.display_title(),
                     track_id: track.id,
-                    title: track_title,
+                    enqueue: true,
                 },
             );
         }
@@ -736,6 +1091,27 @@ impl App {
                 self.stream_url_task_timeout,
                 "Loading stream...".to_string(),
             ),
+            StreamingTask::PlayAlbumStream { ref tracks, .. } => (
+                StreamingTaskKind::PlayAlbumStream,
+                // Allow more time for resolving multiple tracks
+                Duration::from_secs(self.stream_url_task_timeout.as_secs() * tracks.len() as u64),
+                "Resolving album streams...".to_string(),
+            ),
+            StreamingTask::SearchArtists { .. } => (
+                StreamingTaskKind::SearchArtists,
+                self.search_task_timeout,
+                format!("Searching {} artists...", service_id.as_str()),
+            ),
+            StreamingTask::SearchTracks { .. } => (
+                StreamingTaskKind::SearchTracks,
+                self.search_task_timeout,
+                format!("Searching {} tracks...", service_id.as_str()),
+            ),
+            StreamingTask::GetArtistAlbums { .. } => (
+                StreamingTaskKind::GetArtistAlbums,
+                self.search_task_timeout,
+                "Loading artist albums...".to_string(),
+            ),
         };
         let task_id = self.next_task_id;
         self.next_task_id = self.next_task_id.saturating_add(1);
@@ -792,12 +1168,186 @@ impl App {
                     Ok(false) => StreamingTaskOutput::PollPending,
                     Err(e) => StreamingTaskOutput::Error(format!("Auth polling failed: {}", e)),
                 },
-                StreamingTask::GetStreamUrl { track_id, title } => {
-                    match service.get_stream_url(&track_id) {
-                        Ok(stream) => StreamingTaskOutput::StreamUrlResult { title, stream },
-                        Err(e) => StreamingTaskOutput::Error(format!("Stream URL error: {}", e)),
+                StreamingTask::GetStreamUrl {
+                    track_id,
+                    title,
+                    enqueue,
+                } => match service.get_stream_url(&track_id) {
+                    Ok(stream) => StreamingTaskOutput::StreamUrlResult {
+                        title,
+                        stream,
+                        enqueue,
+                    },
+                    Err(e) => StreamingTaskOutput::Error(format!("Stream URL error: {}", e)),
+                },
+                StreamingTask::PlayAlbumStream {
+                    tracks,
+                    start_index,
+                } => {
+                    let mut failed_count = 0;
+                    let mut resolved: Vec<Option<Song>> = Vec::with_capacity(tracks.len());
+
+                    // Resolve the start track first for immediate playback
+                    for (i, track) in tracks.iter().enumerate() {
+                        if i == start_index {
+                            match service.get_stream_url(&track.id) {
+                                Ok(Some(stream)) => {
+                                    let ResolvedStream {
+                                        source,
+                                        quality_label,
+                                    } = stream;
+                                    let song = match source {
+                                        ResolvedStreamSource::Url(url) => Song::from_url(
+                                            track.display_title(),
+                                            url,
+                                            quality_label,
+                                        ),
+                                        ResolvedStreamSource::Manifest {
+                                            contents,
+                                            file_extension,
+                                        } => Song::from_manifest(
+                                            track.display_title(),
+                                            contents,
+                                            file_extension,
+                                            quality_label,
+                                        ),
+                                    };
+                                    resolved.push(Some(song));
+                                }
+                                _ => {
+                                    failed_count += 1;
+                                    resolved.push(None);
+                                }
+                            }
+                        } else {
+                            resolved.push(None); // placeholder
+                        }
+                    }
+
+                    // Resolve remaining tracks
+                    for (i, track) in tracks.iter().enumerate() {
+                        if i == start_index {
+                            continue;
+                        }
+                        match service.get_stream_url(&track.id) {
+                            Ok(Some(stream)) => {
+                                let ResolvedStream {
+                                    source,
+                                    quality_label,
+                                } = stream;
+                                let song = match source {
+                                    ResolvedStreamSource::Url(url) => {
+                                        Song::from_url(track.display_title(), url, quality_label)
+                                    }
+                                    ResolvedStreamSource::Manifest {
+                                        contents,
+                                        file_extension,
+                                    } => Song::from_manifest(
+                                        track.display_title(),
+                                        contents,
+                                        file_extension,
+                                        quality_label,
+                                    ),
+                                };
+                                resolved[i] = Some(song);
+                            }
+                            _ => {
+                                failed_count += 1;
+                            }
+                        }
+                    }
+
+                    let first_song = resolved[start_index].take();
+                    // Build remaining songs in order, skipping start_index and failed ones
+                    let mut remaining_songs = Vec::new();
+                    // Add tracks after start_index first, then tracks before it
+                    for i in (start_index + 1)..resolved.len() {
+                        if let Some(song) = resolved[i].take() {
+                            remaining_songs.push(song);
+                        }
+                    }
+                    for i in 0..start_index {
+                        if let Some(song) = resolved[i].take() {
+                            remaining_songs.push(song);
+                        }
+                    }
+
+                    StreamingTaskOutput::AlbumStreamUrls {
+                        first_song,
+                        remaining_songs,
+                        failed_count,
                     }
                 }
+                StreamingTask::SearchArtists { query, limit } => {
+                    if !service.is_authenticated() {
+                        match service.authenticate() {
+                            Ok(AuthStatus::Authenticated) => {
+                                match service.search_artists(&query, limit) {
+                                    Ok(artists) => {
+                                        StreamingTaskOutput::ArtistSearchResults(artists)
+                                    }
+                                    Err(e) => StreamingTaskOutput::Error(format!(
+                                        "Artist search failed: {}",
+                                        e
+                                    )),
+                                }
+                            }
+                            Ok(AuthStatus::PendingUserAction(msg)) => {
+                                StreamingTaskOutput::AuthPending {
+                                    message: msg,
+                                    deferred_query: Some(query),
+                                }
+                            }
+                            Err(e) => StreamingTaskOutput::Error(format!("Auth failed: {}", e)),
+                        }
+                    } else {
+                        match service.search_artists(&query, limit) {
+                            Ok(artists) => StreamingTaskOutput::ArtistSearchResults(artists),
+                            Err(e) => {
+                                StreamingTaskOutput::Error(format!("Artist search failed: {}", e))
+                            }
+                        }
+                    }
+                }
+                StreamingTask::SearchTracks { query, limit } => {
+                    if !service.is_authenticated() {
+                        match service.authenticate() {
+                            Ok(AuthStatus::Authenticated) => match service.search(&query, limit) {
+                                Ok(tracks) => StreamingTaskOutput::TrackSearchResults(tracks),
+                                Err(e) => StreamingTaskOutput::Error(format!(
+                                    "Track search failed: {}",
+                                    e
+                                )),
+                            },
+                            Ok(AuthStatus::PendingUserAction(msg)) => {
+                                StreamingTaskOutput::AuthPending {
+                                    message: msg,
+                                    deferred_query: Some(query),
+                                }
+                            }
+                            Err(e) => StreamingTaskOutput::Error(format!("Auth failed: {}", e)),
+                        }
+                    } else {
+                        match service.search(&query, limit) {
+                            Ok(tracks) => StreamingTaskOutput::TrackSearchResults(tracks),
+                            Err(e) => {
+                                StreamingTaskOutput::Error(format!("Track search failed: {}", e))
+                            }
+                        }
+                    }
+                }
+                StreamingTask::GetArtistAlbums {
+                    artist_id,
+                    artist_name,
+                } => match service.get_artist_albums(&artist_id) {
+                    Ok(albums) => StreamingTaskOutput::ArtistAlbums {
+                        artist_name,
+                        albums,
+                    },
+                    Err(e) => {
+                        StreamingTaskOutput::Error(format!("Failed to load artist albums: {}", e))
+                    }
+                },
             };
 
             let _ = tx.send(StreamingTaskResult {
@@ -836,6 +1386,8 @@ impl App {
             self.center_panel.set_status(None);
         }
         self.put_service(result.service_name, result.service);
+        // Persist credentials if they changed (e.g. Tidal token refresh during a task)
+        self.sync_service_credentials(result.service_name);
         if is_canceled {
             self.maybe_start_queued_search_for(result.service_name);
             return;
@@ -886,7 +1438,11 @@ impl App {
                 }
             }
             StreamingTaskOutput::PollPending => {}
-            StreamingTaskOutput::StreamUrlResult { title, stream } => match stream {
+            StreamingTaskOutput::StreamUrlResult {
+                title,
+                stream,
+                enqueue,
+            } => match stream {
                 Some(stream) => {
                     let ResolvedStream {
                         source,
@@ -899,7 +1455,13 @@ impl App {
                             file_extension,
                         } => Song::from_manifest(title, contents, file_extension, quality_label),
                     };
-                    if let Err(e) = self.player.play(&song) {
+                    if enqueue {
+                        if let Err(e) = self.player.enqueue(vec![song]) {
+                            self.logger.error(format!("Enqueue error: {}", e));
+                        } else {
+                            self.logger.info("Added to queue".to_string());
+                        }
+                    } else if let Err(e) = self.player.play(&song) {
                         self.logger.error(format!("Playback error: {}", e));
                     }
                 }
@@ -908,6 +1470,61 @@ impl App {
                         .error("Could not get stream URL for this track".to_string());
                 }
             },
+            StreamingTaskOutput::AlbumStreamUrls {
+                first_song,
+                remaining_songs,
+                failed_count,
+            } => {
+                if let Some(song) = first_song {
+                    if let Err(e) = self.player.play(&song) {
+                        self.logger.error(format!("Playback error: {}", e));
+                    } else if !remaining_songs.is_empty() {
+                        if let Err(e) = self.player.enqueue(remaining_songs) {
+                            self.logger.error(format!("Enqueue error: {}", e));
+                        }
+                    }
+                } else {
+                    self.logger
+                        .error("Could not resolve the selected track".to_string());
+                }
+                if failed_count > 0 {
+                    self.logger
+                        .info(format!("{} track(s) could not be resolved", failed_count));
+                }
+            }
+            StreamingTaskOutput::ArtistSearchResults(artists) => {
+                self.logger.info(format!("Found {} artists", artists.len()));
+                let display_titles: Vec<String> =
+                    artists.iter().map(|a| a.display_title()).collect();
+                self.artist_results = artists;
+                self.search_source = Some(result.service_name);
+                self.center_panel.set_artist_results(display_titles);
+            }
+            StreamingTaskOutput::TrackSearchResults(tracks) => {
+                self.logger.info(format!("Found {} tracks", tracks.len()));
+                let songs: Vec<Song> = tracks
+                    .iter()
+                    .map(|t| Song {
+                        title: t.display_title(),
+                        artist: t.artist.clone(),
+                        ..Default::default()
+                    })
+                    .collect();
+                self.search_results = tracks;
+                self.search_source = Some(result.service_name);
+                self.center_panel.set_search_results(songs);
+            }
+            StreamingTaskOutput::ArtistAlbums {
+                artist_name,
+                albums,
+            } => {
+                self.logger
+                    .info(format!("Found {} albums for {}", albums.len(), artist_name));
+                let display_titles: Vec<String> =
+                    albums.iter().map(|a| a.display_title()).collect();
+                self.album_results = albums;
+                self.center_panel.set_album_results(display_titles);
+            }
             StreamingTaskOutput::Error(msg) => {
                 self.pending_auth_service = None;
                 self.deferred_search = None;

@@ -11,6 +11,32 @@ use ratatui::{
 
 use crate::{sources::song::Song, ui::input_line::InputLine};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SearchMode {
+    #[default]
+    Albums,
+    Artists,
+    Tracks,
+}
+
+impl SearchMode {
+    pub fn cycle(self) -> Self {
+        match self {
+            Self::Albums => Self::Artists,
+            Self::Artists => Self::Tracks,
+            Self::Tracks => Self::Albums,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Albums => "Albums",
+            Self::Artists => "Artists",
+            Self::Tracks => "Tracks",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CenterPanelMode {
     Album,
@@ -18,6 +44,10 @@ pub enum CenterPanelMode {
     SearchResults,
     AlbumResults,
     AlbumTracks,
+    Queue,
+    ArtistResults,
+    CreatePlaylist,
+    PlaylistPicker,
 }
 
 #[derive(Debug)]
@@ -38,6 +68,35 @@ pub struct CenterPanel {
     viewing_album_title: Option<String>,
     /// Signals that the user selected an album and we need to fetch its tracks.
     pending_album_selection: Option<usize>,
+    /// Queue songs (populated from player state).
+    queue_songs: Vec<Song>,
+    /// Currently playing position in the queue.
+    queue_position: usize,
+    queue_list_state: ListState,
+    /// Signals that the user wants to remove a track from the queue.
+    pending_queue_remove: Option<usize>,
+    /// Signals that the user wants to jump to a track in the queue.
+    pending_queue_jump: Option<usize>,
+    /// The mode to return to when closing the queue view.
+    pre_queue_mode: Option<CenterPanelMode>,
+    /// Current search mode (Albums/Artists/Tracks).
+    search_mode: SearchMode,
+    /// Artist display titles for ArtistResults mode.
+    artist_display_titles: Vec<String>,
+    artist_list_state: ListState,
+    /// Signals that the user selected an artist and we need to fetch their albums.
+    pending_artist_selection: Option<usize>,
+    /// Input for creating a new playlist name.
+    playlist_name_input: InputLine,
+    /// Pending playlist name to create.
+    pending_playlist_create: Option<String>,
+    /// Playlist names for the picker overlay.
+    playlist_picker_names: Vec<String>,
+    playlist_picker_state: ListState,
+    /// Pending selection of which playlist to add to.
+    pending_add_to_playlist: Option<usize>,
+    /// The mode to return to when closing playlist create/picker.
+    pre_playlist_mode: Option<CenterPanelMode>,
 }
 
 impl CenterPanel {
@@ -55,6 +114,22 @@ impl CenterPanel {
             album_list_state: ListState::default(),
             viewing_album_title: None,
             pending_album_selection: None,
+            queue_songs: Vec::new(),
+            queue_position: 0,
+            queue_list_state: ListState::default(),
+            pending_queue_remove: None,
+            pending_queue_jump: None,
+            pre_queue_mode: None,
+            search_mode: SearchMode::default(),
+            artist_display_titles: Vec::new(),
+            artist_list_state: ListState::default(),
+            pending_artist_selection: None,
+            playlist_name_input: InputLine::new(),
+            pending_playlist_create: None,
+            playlist_picker_names: Vec::new(),
+            playlist_picker_state: ListState::default(),
+            pending_add_to_playlist: None,
+            pre_playlist_mode: None,
         }
     }
 
@@ -108,6 +183,79 @@ impl CenterPanel {
     /// Returns the index of a selected album in AlbumResults mode, if any.
     pub fn take_pending_album_selection(&mut self) -> Option<usize> {
         self.pending_album_selection.take()
+    }
+
+    pub fn set_queue(&mut self, songs: Vec<Song>, position: usize) {
+        self.queue_songs = songs;
+        self.queue_position = position;
+        if !self.queue_songs.is_empty() {
+            self.queue_list_state.select(Some(position));
+        } else {
+            self.queue_list_state.select(None);
+        }
+    }
+
+    pub fn show_queue(&mut self) {
+        if self.mode != CenterPanelMode::Queue {
+            self.pre_queue_mode = Some(self.mode);
+        }
+        self.mode = CenterPanelMode::Queue;
+        if !self.queue_songs.is_empty() && self.queue_list_state.selected().is_none() {
+            self.queue_list_state.select(Some(self.queue_position));
+        }
+    }
+
+    pub fn take_pending_queue_remove(&mut self) -> Option<usize> {
+        self.pending_queue_remove.take()
+    }
+
+    pub fn take_pending_queue_jump(&mut self) -> Option<usize> {
+        self.pending_queue_jump.take()
+    }
+
+    pub fn is_showing_queue(&self) -> bool {
+        self.mode == CenterPanelMode::Queue
+    }
+
+    pub fn search_mode(&self) -> SearchMode {
+        self.search_mode
+    }
+
+    pub fn set_artist_results(&mut self, display_titles: Vec<String>) {
+        self.artist_display_titles = display_titles;
+        self.mode = CenterPanelMode::ArtistResults;
+        if !self.artist_display_titles.is_empty() {
+            self.artist_list_state.select(Some(0));
+        } else {
+            self.artist_list_state.select(None);
+        }
+    }
+
+    pub fn take_pending_artist_selection(&mut self) -> Option<usize> {
+        self.pending_artist_selection.take()
+    }
+
+    pub fn open_create_playlist(&mut self) {
+        self.pre_playlist_mode = Some(self.mode);
+        self.mode = CenterPanelMode::CreatePlaylist;
+        self.playlist_name_input.enter_input_mode();
+    }
+
+    pub fn take_pending_playlist_create(&mut self) -> Option<String> {
+        self.pending_playlist_create.take()
+    }
+
+    pub fn open_playlist_picker(&mut self, names: Vec<String>) {
+        self.pre_playlist_mode = Some(self.mode);
+        self.playlist_picker_names = names;
+        self.mode = CenterPanelMode::PlaylistPicker;
+        if !self.playlist_picker_names.is_empty() {
+            self.playlist_picker_state.select(Some(0));
+        }
+    }
+
+    pub fn take_pending_add_to_playlist(&mut self) -> Option<usize> {
+        self.pending_add_to_playlist.take()
     }
 
     /// Open search for streaming services — clears songs to avoid stale data.
@@ -183,6 +331,10 @@ impl CenterPanel {
             CenterPanelMode::Album => self.render_album(frame, area, is_focused),
             CenterPanelMode::AlbumResults => self.render_album_results(frame, area, is_focused),
             CenterPanelMode::AlbumTracks => self.render_album_tracks(frame, area, is_focused),
+            CenterPanelMode::Queue => self.render_queue(frame, area, is_focused),
+            CenterPanelMode::ArtistResults => self.render_artist_results(frame, area, is_focused),
+            CenterPanelMode::CreatePlaylist => self.render_create_playlist(frame, area, is_focused),
+            CenterPanelMode::PlaylistPicker => self.render_playlist_picker(frame, area, is_focused),
         }
     }
 
@@ -229,8 +381,9 @@ impl CenterPanel {
             Layout::vertical([Constraint::Length(3), Constraint::Fill(1)]).areas(area);
 
         // Search input
+        let search_title = format!(" Search {} (Tab to switch) ", self.search_mode.label());
         let input_block = Block::bordered()
-            .title(" Search ")
+            .title(search_title)
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Yellow));
 
@@ -371,6 +524,78 @@ impl CenterPanel {
         frame.render_stateful_widget(list, area, &mut self.list_state);
     }
 
+    fn render_queue(&mut self, frame: &mut Frame, area: Rect, is_focused: bool) {
+        let border_style = if is_focused {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default()
+        };
+
+        let list_items: Vec<ListItem> = self
+            .queue_songs
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                let prefix = if i == self.queue_position { ">" } else { " " };
+                let display = if !s.artist.is_empty() {
+                    format!("{} {} - {}", prefix, s.artist, s.title)
+                } else {
+                    format!("{} {}", prefix, s.title)
+                };
+                let style = if i == self.queue_position {
+                    Style::default().fg(Color::Green)
+                } else {
+                    Style::default()
+                };
+                ListItem::new(display).style(style)
+            })
+            .collect();
+
+        let title = format!("Queue ({} tracks)", self.queue_songs.len());
+
+        let list = List::new(list_items)
+            .block(
+                Block::bordered()
+                    .title(title)
+                    .borders(Borders::ALL)
+                    .border_style(border_style),
+            )
+            .highlight_style(Style::default().bg(Color::DarkGray));
+
+        frame.render_stateful_widget(list, area, &mut self.queue_list_state);
+    }
+
+    fn render_artist_results(&mut self, frame: &mut Frame, area: Rect, is_focused: bool) {
+        let border_style = if is_focused {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default()
+        };
+
+        let list_items: Vec<ListItem> = self
+            .artist_display_titles
+            .iter()
+            .map(|t| ListItem::new(t.as_str()))
+            .collect();
+
+        let result_count = self.artist_display_titles.len();
+        let title = match &self.status_message {
+            Some(msg) => format!("Artists ({}) - {}", result_count, msg),
+            None => format!("Artists ({})", result_count),
+        };
+
+        let list = List::new(list_items)
+            .block(
+                Block::bordered()
+                    .title(title)
+                    .borders(Borders::ALL)
+                    .border_style(border_style),
+            )
+            .highlight_style(Style::default().bg(Color::DarkGray));
+
+        frame.render_stateful_widget(list, area, &mut self.artist_list_state);
+    }
+
     pub fn handle_events(&mut self, key: KeyEvent) {
         match self.mode {
             CenterPanelMode::SearchInput => self.handle_search_input(key),
@@ -378,18 +603,30 @@ impl CenterPanel {
             CenterPanelMode::Album => self.handle_album(key),
             CenterPanelMode::AlbumResults => self.handle_album_results(key),
             CenterPanelMode::AlbumTracks => self.handle_album_tracks(key),
+            CenterPanelMode::Queue => self.handle_queue(key),
+            CenterPanelMode::ArtistResults => self.handle_artist_results(key),
+            CenterPanelMode::CreatePlaylist => self.handle_create_playlist(key),
+            CenterPanelMode::PlaylistPicker => self.handle_playlist_picker(key),
         }
     }
 
     fn handle_search_input(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Esc => self.close_search(),
+            KeyCode::Tab => {
+                self.search_mode = self.search_mode.cycle();
+            }
             KeyCode::Enter => {
                 let query = self.search_input.value.trim().to_string();
                 if !query.is_empty() {
                     self.pending_query = Some(query);
                     self.search_input.confirm_input();
-                    self.mode = CenterPanelMode::AlbumResults;
+                    // Set mode based on search type so the UI shows the right view
+                    self.mode = match self.search_mode {
+                        SearchMode::Albums => CenterPanelMode::AlbumResults,
+                        SearchMode::Artists => CenterPanelMode::ArtistResults,
+                        SearchMode::Tracks => CenterPanelMode::SearchResults,
+                    };
                 }
             }
             KeyCode::Char(c) => self.search_input.append_char(c),
@@ -450,6 +687,175 @@ impl CenterPanel {
                 self.list_state.select(None);
                 self.viewing_album_title = None;
                 self.mode = CenterPanelMode::AlbumResults;
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_artist_results(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => self.next_artist_item(),
+            KeyCode::Char('k') | KeyCode::Up => self.previous_artist_item(),
+            KeyCode::Char('/') => self.open_search(),
+            KeyCode::Enter => {
+                if let Some(index) = self.artist_list_state.selected() {
+                    self.pending_artist_selection = Some(index);
+                }
+            }
+            KeyCode::Esc => {
+                self.artist_display_titles.clear();
+                self.artist_list_state.select(None);
+                self.mode = CenterPanelMode::Album;
+            }
+            _ => {}
+        }
+    }
+
+    fn render_create_playlist(&mut self, frame: &mut Frame, area: Rect, _is_focused: bool) {
+        let input_block = Block::bordered()
+            .title(" New Playlist Name ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Yellow));
+
+        let input_text = Line::from(vec![
+            Span::styled(
+                "> ",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(&self.playlist_name_input.value),
+            Span::styled("_", Style::default().fg(Color::Yellow)),
+        ]);
+
+        let paragraph = Paragraph::new(input_text).block(input_block);
+        frame.render_widget(paragraph, area);
+    }
+
+    fn render_playlist_picker(&mut self, frame: &mut Frame, area: Rect, is_focused: bool) {
+        let border_style = if is_focused {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default()
+        };
+
+        let list_items: Vec<ListItem> = self
+            .playlist_picker_names
+            .iter()
+            .map(|n| ListItem::new(n.as_str()))
+            .collect();
+
+        let list = List::new(list_items)
+            .block(
+                Block::bordered()
+                    .title(" Add to Playlist (Enter to select, Esc to cancel) ")
+                    .borders(Borders::ALL)
+                    .border_style(border_style),
+            )
+            .highlight_style(Style::default().bg(Color::DarkGray));
+
+        frame.render_stateful_widget(list, area, &mut self.playlist_picker_state);
+    }
+
+    fn handle_create_playlist(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.playlist_name_input.exit_input_mode();
+                self.mode = self
+                    .pre_playlist_mode
+                    .take()
+                    .unwrap_or(CenterPanelMode::Album);
+            }
+            KeyCode::Enter => {
+                let name = self.playlist_name_input.value.trim().to_string();
+                if !name.is_empty() {
+                    self.pending_playlist_create = Some(name);
+                    self.playlist_name_input.exit_input_mode();
+                    self.mode = self
+                        .pre_playlist_mode
+                        .take()
+                        .unwrap_or(CenterPanelMode::Album);
+                }
+            }
+            KeyCode::Char(c) => self.playlist_name_input.append_char(c),
+            KeyCode::Backspace => self.playlist_name_input.delete_char(),
+            KeyCode::Left => self.playlist_name_input.move_cursor_left(),
+            KeyCode::Right => self.playlist_name_input.move_cursor_right(),
+            _ => {}
+        }
+    }
+
+    fn handle_playlist_picker(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => {
+                if self.playlist_picker_names.is_empty() {
+                    return;
+                }
+                let i = match self.playlist_picker_state.selected() {
+                    Some(i) => {
+                        if i >= self.playlist_picker_names.len() - 1 {
+                            0
+                        } else {
+                            i + 1
+                        }
+                    }
+                    None => 0,
+                };
+                self.playlist_picker_state.select(Some(i));
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                if self.playlist_picker_names.is_empty() {
+                    return;
+                }
+                let i = match self.playlist_picker_state.selected() {
+                    Some(i) => {
+                        if i == 0 {
+                            self.playlist_picker_names.len() - 1
+                        } else {
+                            i - 1
+                        }
+                    }
+                    None => 0,
+                };
+                self.playlist_picker_state.select(Some(i));
+            }
+            KeyCode::Enter => {
+                if let Some(index) = self.playlist_picker_state.selected() {
+                    self.pending_add_to_playlist = Some(index);
+                }
+                self.mode = self
+                    .pre_playlist_mode
+                    .take()
+                    .unwrap_or(CenterPanelMode::Album);
+            }
+            KeyCode::Esc => {
+                self.mode = self
+                    .pre_playlist_mode
+                    .take()
+                    .unwrap_or(CenterPanelMode::Album);
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_queue(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => self.next_queue_item(),
+            KeyCode::Char('k') | KeyCode::Up => self.previous_queue_item(),
+            KeyCode::Char('d') => {
+                if let Some(index) = self.queue_list_state.selected() {
+                    if index != self.queue_position {
+                        self.pending_queue_remove = Some(index);
+                    }
+                }
+            }
+            KeyCode::Enter => {
+                if let Some(index) = self.queue_list_state.selected() {
+                    self.pending_queue_jump = Some(index);
+                }
+            }
+            KeyCode::Esc => {
+                self.mode = self.pre_queue_mode.take().unwrap_or(CenterPanelMode::Album);
             }
             _ => {}
         }
@@ -537,5 +943,73 @@ impl CenterPanel {
             None => 0,
         };
         self.album_list_state.select(Some(i));
+    }
+
+    fn next_queue_item(&mut self) {
+        if self.queue_songs.is_empty() {
+            return;
+        }
+        let i = match self.queue_list_state.selected() {
+            Some(i) => {
+                if i >= self.queue_songs.len() - 1 {
+                    0
+                } else {
+                    i + 1
+                }
+            }
+            None => 0,
+        };
+        self.queue_list_state.select(Some(i));
+    }
+
+    fn previous_queue_item(&mut self) {
+        if self.queue_songs.is_empty() {
+            return;
+        }
+        let i = match self.queue_list_state.selected() {
+            Some(i) => {
+                if i == 0 {
+                    self.queue_songs.len() - 1
+                } else {
+                    i - 1
+                }
+            }
+            None => 0,
+        };
+        self.queue_list_state.select(Some(i));
+    }
+
+    fn next_artist_item(&mut self) {
+        if self.artist_display_titles.is_empty() {
+            return;
+        }
+        let i = match self.artist_list_state.selected() {
+            Some(i) => {
+                if i >= self.artist_display_titles.len() - 1 {
+                    0
+                } else {
+                    i + 1
+                }
+            }
+            None => 0,
+        };
+        self.artist_list_state.select(Some(i));
+    }
+
+    fn previous_artist_item(&mut self) {
+        if self.artist_display_titles.is_empty() {
+            return;
+        }
+        let i = match self.artist_list_state.selected() {
+            Some(i) => {
+                if i == 0 {
+                    self.artist_display_titles.len() - 1
+                } else {
+                    i - 1
+                }
+            }
+            None => 0,
+        };
+        self.artist_list_state.select(Some(i));
     }
 }
