@@ -6,5 +6,6 @@ pub mod keymap;
 pub mod players;
 pub mod playlist;
 pub mod sources;
+pub mod streaming_coordinator;
 pub mod ui;
 pub mod utils;
