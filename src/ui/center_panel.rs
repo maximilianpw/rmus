@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{collections::VecDeque, path::PathBuf};
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
@@ -50,6 +50,17 @@ pub enum CenterPanelMode {
     PlaylistPicker,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CenterPanelEvent {
+    QuerySubmitted(String),
+    AlbumSelected(usize),
+    ArtistSelected(usize),
+    QueueItemRemoved(usize),
+    QueueItemJumped(usize),
+    PlaylistCreated(String),
+    PlaylistSelectedForAdd(usize),
+}
+
 #[derive(Debug)]
 pub struct CenterPanel {
     selected_album: Option<PathBuf>,
@@ -59,24 +70,18 @@ pub struct CenterPanel {
     list_state: ListState,
     mode: CenterPanelMode,
     search_input: InputLine,
-    pending_query: Option<String>,
+    events: VecDeque<CenterPanelEvent>,
     status_message: Option<String>,
     /// Album titles for display in AlbumResults mode.
     album_display_titles: Vec<String>,
     album_list_state: ListState,
     /// The album title we're viewing tracks for (shown in AlbumTracks title bar).
     viewing_album_title: Option<String>,
-    /// Signals that the user selected an album and we need to fetch its tracks.
-    pending_album_selection: Option<usize>,
     /// Queue songs (populated from player state).
     queue_songs: Vec<Song>,
     /// Currently playing position in the queue.
     queue_position: usize,
     queue_list_state: ListState,
-    /// Signals that the user wants to remove a track from the queue.
-    pending_queue_remove: Option<usize>,
-    /// Signals that the user wants to jump to a track in the queue.
-    pending_queue_jump: Option<usize>,
     /// The mode to return to when closing the queue view.
     pre_queue_mode: Option<CenterPanelMode>,
     /// Current search mode (Albums/Artists/Tracks).
@@ -84,17 +89,11 @@ pub struct CenterPanel {
     /// Artist display titles for ArtistResults mode.
     artist_display_titles: Vec<String>,
     artist_list_state: ListState,
-    /// Signals that the user selected an artist and we need to fetch their albums.
-    pending_artist_selection: Option<usize>,
     /// Input for creating a new playlist name.
     playlist_name_input: InputLine,
-    /// Pending playlist name to create.
-    pending_playlist_create: Option<String>,
     /// Playlist names for the picker overlay.
     playlist_picker_names: Vec<String>,
     playlist_picker_state: ListState,
-    /// Pending selection of which playlist to add to.
-    pending_add_to_playlist: Option<usize>,
     /// The mode to return to when closing playlist create/picker.
     pre_playlist_mode: Option<CenterPanelMode>,
 }
@@ -108,27 +107,21 @@ impl CenterPanel {
             list_state: ListState::default(),
             mode: CenterPanelMode::Album,
             search_input: InputLine::new(),
-            pending_query: None,
+            events: VecDeque::new(),
             status_message: None,
             album_display_titles: Vec::new(),
             album_list_state: ListState::default(),
             viewing_album_title: None,
-            pending_album_selection: None,
             queue_songs: Vec::new(),
             queue_position: 0,
             queue_list_state: ListState::default(),
-            pending_queue_remove: None,
-            pending_queue_jump: None,
             pre_queue_mode: None,
             search_mode: SearchMode::default(),
             artist_display_titles: Vec::new(),
             artist_list_state: ListState::default(),
-            pending_artist_selection: None,
             playlist_name_input: InputLine::new(),
-            pending_playlist_create: None,
             playlist_picker_names: Vec::new(),
             playlist_picker_state: ListState::default(),
-            pending_add_to_playlist: None,
             pre_playlist_mode: None,
         }
     }
@@ -180,11 +173,6 @@ impl CenterPanel {
         }
     }
 
-    /// Returns the index of a selected album in AlbumResults mode, if any.
-    pub fn take_pending_album_selection(&mut self) -> Option<usize> {
-        self.pending_album_selection.take()
-    }
-
     pub fn set_queue(&mut self, songs: Vec<Song>, position: usize) {
         self.queue_songs = songs;
         self.queue_position = position;
@@ -205,14 +193,6 @@ impl CenterPanel {
         }
     }
 
-    pub fn take_pending_queue_remove(&mut self) -> Option<usize> {
-        self.pending_queue_remove.take()
-    }
-
-    pub fn take_pending_queue_jump(&mut self) -> Option<usize> {
-        self.pending_queue_jump.take()
-    }
-
     pub fn is_showing_queue(&self) -> bool {
         self.mode == CenterPanelMode::Queue
     }
@@ -231,18 +211,10 @@ impl CenterPanel {
         }
     }
 
-    pub fn take_pending_artist_selection(&mut self) -> Option<usize> {
-        self.pending_artist_selection.take()
-    }
-
     pub fn open_create_playlist(&mut self) {
         self.pre_playlist_mode = Some(self.mode);
         self.mode = CenterPanelMode::CreatePlaylist;
         self.playlist_name_input.enter_input_mode();
-    }
-
-    pub fn take_pending_playlist_create(&mut self) -> Option<String> {
-        self.pending_playlist_create.take()
     }
 
     pub fn open_playlist_picker(&mut self, names: Vec<String>) {
@@ -252,10 +224,6 @@ impl CenterPanel {
         if !self.playlist_picker_names.is_empty() {
             self.playlist_picker_state.select(Some(0));
         }
-    }
-
-    pub fn take_pending_add_to_playlist(&mut self) -> Option<usize> {
-        self.pending_add_to_playlist.take()
     }
 
     /// Open search for streaming services — clears songs to avoid stale data.
@@ -320,8 +288,8 @@ impl CenterPanel {
         self.mode == CenterPanelMode::AlbumTracks
     }
 
-    pub fn take_pending_query(&mut self) -> Option<String> {
-        self.pending_query.take()
+    pub fn next_event(&mut self) -> Option<CenterPanelEvent> {
+        self.events.pop_front()
     }
 
     pub fn render(&mut self, frame: &mut Frame, area: Rect, is_focused: bool) {
@@ -619,7 +587,8 @@ impl CenterPanel {
             KeyCode::Enter => {
                 let query = self.search_input.value.trim().to_string();
                 if !query.is_empty() {
-                    self.pending_query = Some(query);
+                    self.events
+                        .push_back(CenterPanelEvent::QuerySubmitted(query));
                     self.search_input.confirm_input();
                     // Set mode based on search type so the UI shows the right view
                     self.mode = match self.search_mode {
@@ -665,7 +634,8 @@ impl CenterPanel {
             KeyCode::Char('/') => self.open_search(),
             KeyCode::Enter => {
                 if let Some(index) = self.album_list_state.selected() {
-                    self.pending_album_selection = Some(index);
+                    self.events
+                        .push_back(CenterPanelEvent::AlbumSelected(index));
                 }
             }
             KeyCode::Esc => {
@@ -699,7 +669,8 @@ impl CenterPanel {
             KeyCode::Char('/') => self.open_search(),
             KeyCode::Enter => {
                 if let Some(index) = self.artist_list_state.selected() {
-                    self.pending_artist_selection = Some(index);
+                    self.events
+                        .push_back(CenterPanelEvent::ArtistSelected(index));
                 }
             }
             KeyCode::Esc => {
@@ -769,7 +740,8 @@ impl CenterPanel {
             KeyCode::Enter => {
                 let name = self.playlist_name_input.value.trim().to_string();
                 if !name.is_empty() {
-                    self.pending_playlist_create = Some(name);
+                    self.events
+                        .push_back(CenterPanelEvent::PlaylistCreated(name));
                     self.playlist_name_input.exit_input_mode();
                     self.mode = self
                         .pre_playlist_mode
@@ -821,7 +793,8 @@ impl CenterPanel {
             }
             KeyCode::Enter => {
                 if let Some(index) = self.playlist_picker_state.selected() {
-                    self.pending_add_to_playlist = Some(index);
+                    self.events
+                        .push_back(CenterPanelEvent::PlaylistSelectedForAdd(index));
                 }
                 self.mode = self
                     .pre_playlist_mode
@@ -845,13 +818,15 @@ impl CenterPanel {
             KeyCode::Char('d') => {
                 if let Some(index) = self.queue_list_state.selected() {
                     if index != self.queue_position {
-                        self.pending_queue_remove = Some(index);
+                        self.events
+                            .push_back(CenterPanelEvent::QueueItemRemoved(index));
                     }
                 }
             }
             KeyCode::Enter => {
                 if let Some(index) = self.queue_list_state.selected() {
-                    self.pending_queue_jump = Some(index);
+                    self.events
+                        .push_back(CenterPanelEvent::QueueItemJumped(index));
                 }
             }
             KeyCode::Esc => {

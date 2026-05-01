@@ -26,7 +26,7 @@ use crate::{
         StreamingTaskOutput,
     },
     ui::{
-        center_panel::{CenterPanel, SearchMode},
+        center_panel::{CenterPanel, CenterPanelEvent, SearchMode},
         left_panel::LeftPanel,
         log_panel::{LogPanel, Logger},
         right_panel::RightPanel,
@@ -191,89 +191,12 @@ impl App {
         self.poll_streaming_task_results();
         self.poll_pending_auth();
         self.poll_streaming_task_results();
-        if let Some(query) = self.center_panel.take_pending_query() {
-            self.perform_search(&query);
-            self.poll_streaming_task_results();
-        }
-        if let Some(index) = self.center_panel.take_pending_album_selection() {
-            self.fetch_album_tracks(index);
-            self.poll_streaming_task_results();
-        }
-        if let Some(index) = self.center_panel.take_pending_artist_selection() {
-            self.fetch_artist_albums(index);
-            self.poll_streaming_task_results();
-        }
-        if let Some(index) = self.center_panel.take_pending_queue_remove() {
-            match self.player.remove_from_queue(index) {
-                Ok(()) => {
-                    self.logger.info("Removed from queue".to_string());
-                    // Refresh queue view
-                    let queue = self.player.get_queue().to_vec();
-                    let pos = self.player.get_queue_position();
-                    self.center_panel.set_queue(queue, pos);
-                }
-                Err(e) => self.logger.error(format!("Cannot remove: {}", e)),
-            }
-        }
-        if let Some(index) = self.center_panel.take_pending_queue_jump() {
-            let queue = self.player.get_queue().to_vec();
-            if index < queue.len() {
-                if let Err(e) = self.player.play_album(queue, index) {
-                    self.logger.error(format!("Playback error: {}", e));
-                }
-            }
-        }
+        self.process_center_panel_events();
         // Keep queue view in sync with player state
         if self.center_panel.is_showing_queue() {
             let queue = self.player.get_queue().to_vec();
             let pos = self.player.get_queue_position();
             self.center_panel.set_queue(queue, pos);
-        }
-        // Handle playlist creation
-        if let Some(name) = self.center_panel.take_pending_playlist_create() {
-            let playlist = Playlist::new(name.clone());
-            match playlist.save() {
-                Ok(()) => {
-                    self.logger.info(format!("Created playlist '{}'", name));
-                    self.rebuild_left_panel();
-                }
-                Err(e) => self
-                    .logger
-                    .error(format!("Failed to create playlist: {}", e)),
-            }
-        }
-        // Handle add-to-playlist
-        if let Some(index) = self.center_panel.take_pending_add_to_playlist() {
-            let mut playlists = Playlist::load_all();
-            if let Some(playlist) = playlists.get_mut(index) {
-                let songs = self.center_panel.get_songs();
-                for song in &songs {
-                    let track = PlaylistTrack {
-                        title: song.title.clone(),
-                        artist: song.artist.clone(),
-                        album_name: song.album_name.clone(),
-                        path: if song.path.as_os_str().is_empty() {
-                            None
-                        } else {
-                            Some(song.path.to_string_lossy().into_owned())
-                        },
-                        stream_service: None,
-                        stream_track_id: None,
-                    };
-                    playlist.tracks.push(track);
-                }
-                match playlist.save() {
-                    Ok(()) => {
-                        self.logger.info(format!(
-                            "Added {} song(s) to '{}'",
-                            songs.len(),
-                            playlist.name
-                        ));
-                        self.rebuild_left_panel();
-                    }
-                    Err(e) => self.logger.error(format!("Failed to save playlist: {}", e)),
-                }
-            }
         }
     }
 
@@ -293,17 +216,7 @@ impl App {
             self.poll_pending_auth();
             self.poll_streaming_task_results();
 
-            // Check for pending search queries
-            if let Some(query) = self.center_panel.take_pending_query() {
-                self.perform_search(&query);
-                self.poll_streaming_task_results();
-            }
-
-            // Check for pending album selections
-            if let Some(index) = self.center_panel.take_pending_album_selection() {
-                self.fetch_album_tracks(index);
-                self.poll_streaming_task_results();
-            }
+            self.process_center_panel_events();
 
             terminal.draw(|frame| self.render(frame))?;
             handle_crossterm_events(&mut self)?;
@@ -312,6 +225,91 @@ impl App {
         // Clean shutdown
         let _ = self.player.shutdown();
         Ok(())
+    }
+
+    fn process_center_panel_events(&mut self) {
+        while let Some(event) = self.center_panel.next_event() {
+            self.handle_center_panel_event(event);
+        }
+    }
+
+    fn handle_center_panel_event(&mut self, event: CenterPanelEvent) {
+        match event {
+            CenterPanelEvent::QuerySubmitted(query) => {
+                self.perform_search(&query);
+                self.poll_streaming_task_results();
+            }
+            CenterPanelEvent::AlbumSelected(index) => {
+                self.fetch_album_tracks(index);
+                self.poll_streaming_task_results();
+            }
+            CenterPanelEvent::ArtistSelected(index) => {
+                self.fetch_artist_albums(index);
+                self.poll_streaming_task_results();
+            }
+            CenterPanelEvent::QueueItemRemoved(index) => match self.player.remove_from_queue(index)
+            {
+                Ok(()) => {
+                    self.logger.info("Removed from queue".to_string());
+                    let queue = self.player.get_queue().to_vec();
+                    let pos = self.player.get_queue_position();
+                    self.center_panel.set_queue(queue, pos);
+                }
+                Err(e) => self.logger.error(format!("Cannot remove: {}", e)),
+            },
+            CenterPanelEvent::QueueItemJumped(index) => {
+                let queue = self.player.get_queue().to_vec();
+                if index < queue.len() {
+                    if let Err(e) = self.player.play_album(queue, index) {
+                        self.logger.error(format!("Playback error: {}", e));
+                    }
+                }
+            }
+            CenterPanelEvent::PlaylistCreated(name) => {
+                let playlist = Playlist::new(name.clone());
+                match playlist.save() {
+                    Ok(()) => {
+                        self.logger.info(format!("Created playlist '{}'", name));
+                        self.rebuild_left_panel();
+                    }
+                    Err(e) => self
+                        .logger
+                        .error(format!("Failed to create playlist: {}", e)),
+                }
+            }
+            CenterPanelEvent::PlaylistSelectedForAdd(index) => {
+                let mut playlists = Playlist::load_all();
+                if let Some(playlist) = playlists.get_mut(index) {
+                    let songs = self.center_panel.get_songs();
+                    for song in &songs {
+                        let track = PlaylistTrack {
+                            title: song.title.clone(),
+                            artist: song.artist.clone(),
+                            album_name: song.album_name.clone(),
+                            path: if song.path.as_os_str().is_empty() {
+                                None
+                            } else {
+                                Some(song.path.to_string_lossy().into_owned())
+                            },
+                            stream_service: None,
+                            stream_track_id: None,
+                        };
+                        playlist.tracks.push(track);
+                    }
+                    match playlist.save() {
+                        Ok(()) => {
+                            self.logger.info(format!(
+                                "Added {} song(s) to '{}'",
+                                songs.len(),
+                                playlist.name
+                            ));
+                            self.rebuild_left_panel();
+                        }
+                        Err(e) => self.logger.error(format!("Failed to save playlist: {}", e)),
+                    }
+                }
+            }
+        }
     }
 
     pub fn execute(&mut self, action: Action) {
