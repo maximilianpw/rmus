@@ -118,6 +118,10 @@ impl LeftPanel {
             .unwrap_or_default()
     }
 
+    pub fn selected_item_index(&self) -> Option<usize> {
+        self.list_state.selected()
+    }
+
     fn next_tab(&mut self) {
         if !self.items.is_empty() {
             self.selected_tab_index = (self.selected_tab_index + 1) % self.items.len();

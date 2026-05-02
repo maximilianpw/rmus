@@ -9,7 +9,7 @@ use crate::{
     action::Action,
     config::{Config, LocalSource, TidalConfig},
     players::{MusicPlayer, SafePlayer},
-    playlist::{Playlist, PlaylistTrack},
+    playlist::{PlaylistSource, PlaylistStore},
     sources::{
         local::LocalFiles,
         qobuz::QobuzSource,
@@ -19,7 +19,7 @@ use crate::{
             StreamingService, StreamingServiceId,
         },
         tidal::TidalSource,
-        MusicSource, PlaylistSource, StreamingTab,
+        MusicSource, StreamingTab,
     },
     streaming_coordinator::{
         StreamingCoordinator, StreamingCoordinatorEvent, StreamingRequest, StreamingSubmitResult,
@@ -266,8 +266,8 @@ impl App {
                 }
             }
             CenterPanelEvent::PlaylistCreated(name) => {
-                let playlist = Playlist::new(name.clone());
-                match playlist.save() {
+                let store = PlaylistStore::default();
+                match store.create(name.clone()) {
                     Ok(()) => {
                         self.logger.info(format!("Created playlist '{}'", name));
                         self.rebuild_left_panel();
@@ -278,37 +278,50 @@ impl App {
                 }
             }
             CenterPanelEvent::PlaylistSelectedForAdd(index) => {
-                let mut playlists = Playlist::load_all();
-                if let Some(playlist) = playlists.get_mut(index) {
-                    let songs = self.center_panel.get_songs();
-                    for song in &songs {
-                        let track = PlaylistTrack {
-                            title: song.title.clone(),
-                            artist: song.artist.clone(),
-                            album_name: song.album_name.clone(),
-                            path: if song.path.as_os_str().is_empty() {
-                                None
-                            } else {
-                                Some(song.path.to_string_lossy().into_owned())
-                            },
-                            stream_service: None,
-                            stream_track_id: None,
-                        };
-                        playlist.tracks.push(track);
+                let store = PlaylistStore::default();
+                let songs = self.center_panel.get_songs();
+                match store.add_songs_to_index(index, &songs) {
+                    Ok(Some((playlist_name, song_count))) => {
+                        self.logger.info(format!(
+                            "Added {} song(s) to '{}'",
+                            song_count, playlist_name
+                        ));
+                        self.rebuild_left_panel();
                     }
-                    match playlist.save() {
-                        Ok(()) => {
-                            self.logger.info(format!(
-                                "Added {} song(s) to '{}'",
-                                songs.len(),
-                                playlist.name
-                            ));
-                            self.rebuild_left_panel();
-                        }
-                        Err(e) => self.logger.error(format!("Failed to save playlist: {}", e)),
-                    }
+                    Ok(None) => {}
+                    Err(e) => self.logger.error(format!("Failed to save playlist: {}", e)),
                 }
             }
+        }
+    }
+
+    fn delete_selected_playlist(&mut self) {
+        let Some(index) = self.left_panel.selected_item_index() else {
+            return;
+        };
+
+        let store = PlaylistStore::default();
+        match store.delete_at(index) {
+            Ok(Some(name)) => {
+                self.logger.info(format!("Deleted playlist '{}'", name));
+                self.rebuild_left_panel();
+            }
+            Ok(None) => {}
+            Err(e) => {
+                self.logger.error(format!("Delete failed: {}", e));
+            }
+        }
+    }
+
+    fn open_playlist_picker(&mut self) {
+        let store = PlaylistStore::default();
+        let names = store.playlist_names();
+        if names.is_empty() {
+            self.logger
+                .info("No playlists yet. Create one first (C on Playlists tab).".to_string());
+        } else {
+            self.focused_window = FocusedWindow::Center;
+            self.center_panel.open_playlist_picker(names);
         }
     }
 
@@ -416,40 +429,11 @@ impl App {
             }
             Action::DeletePlaylist => {
                 if self.left_panel.active_tab_name() == "Playlists" {
-                    if let Some((path, _)) = self.left_panel.get_selected_album() {
-                        let path_str = path.to_string_lossy();
-                        if let Some(idx_str) = path_str.strip_prefix("playlist:") {
-                            if let Ok(idx) = idx_str.parse::<usize>() {
-                                let playlists = Playlist::load_all();
-                                if let Some(playlist) = playlists.get(idx) {
-                                    let name = playlist.name.clone();
-                                    match Playlist::delete(&name) {
-                                        Ok(()) => {
-                                            self.logger
-                                                .info(format!("Deleted playlist '{}'", name));
-                                            self.rebuild_left_panel();
-                                        }
-                                        Err(e) => {
-                                            self.logger.error(format!("Delete failed: {}", e));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    self.delete_selected_playlist();
                 }
             }
             Action::AddToPlaylist => {
-                let playlists = Playlist::load_all();
-                if playlists.is_empty() {
-                    self.logger.info(
-                        "No playlists yet. Create one first (C on Playlists tab).".to_string(),
-                    );
-                } else {
-                    let names: Vec<String> = playlists.iter().map(|p| p.name.clone()).collect();
-                    self.focused_window = FocusedWindow::Center;
-                    self.center_panel.open_playlist_picker(names);
-                }
+                self.open_playlist_picker();
             }
             Action::OpenSearch => {
                 let tab = self.left_panel.active_tab_name();

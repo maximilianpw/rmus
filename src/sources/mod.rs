@@ -1,6 +1,5 @@
 use std::{fmt::Debug, path::PathBuf};
 
-use crate::playlist::Playlist;
 use crate::sources::song::Song;
 
 pub mod local;
@@ -51,81 +50,5 @@ impl MusicSource for StreamingTab {
 
     fn get_songs_from_album(&self, _path: PathBuf) -> Vec<Song> {
         vec![]
-    }
-}
-
-/// Source backed by saved playlists from ~/.config/rmus/playlists/.
-pub struct PlaylistSource {
-    playlists: Vec<Playlist>,
-}
-
-impl PlaylistSource {
-    pub fn new() -> Self {
-        Self {
-            playlists: Playlist::load_all(),
-        }
-    }
-
-    pub fn reload(&mut self) {
-        self.playlists = Playlist::load_all();
-    }
-
-    pub fn get_playlist(&self, index: usize) -> Option<&Playlist> {
-        self.playlists.get(index)
-    }
-}
-
-impl MusicSource for PlaylistSource {
-    fn name(&self) -> String {
-        "Playlists".to_string()
-    }
-
-    fn get_albums(&self) -> Vec<String> {
-        self.playlists
-            .iter()
-            .map(|p| format!("{} ({} tracks)", p.name, p.tracks.len()))
-            .collect()
-    }
-
-    fn get_album_path(&self, index: usize) -> Option<PathBuf> {
-        // Use the index as a sentinel — we don't need real paths for playlists
-        self.playlists
-            .get(index)
-            .map(|_| PathBuf::from(format!("playlist:{}", index)))
-    }
-
-    fn get_songs_from_album(&self, path: PathBuf) -> Vec<Song> {
-        let path_str = path.to_string_lossy();
-        let index: usize = path_str
-            .strip_prefix("playlist:")
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(usize::MAX);
-        let Some(playlist) = self.playlists.get(index) else {
-            return Vec::new();
-        };
-
-        playlist
-            .tracks
-            .iter()
-            .map(|t| {
-                if let Some(ref file_path) = t.path {
-                    Song {
-                        title: t.title.clone(),
-                        artist: t.artist.clone(),
-                        album_name: t.album_name.clone(),
-                        path: PathBuf::from(file_path),
-                        ..Default::default()
-                    }
-                } else {
-                    // Stream track — title only, needs URL resolution at play time
-                    Song {
-                        title: t.title.clone(),
-                        artist: t.artist.clone(),
-                        album_name: t.album_name.clone(),
-                        ..Default::default()
-                    }
-                }
-            })
-            .collect()
     }
 }
