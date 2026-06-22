@@ -1,3 +1,5 @@
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::{
     cmp::Ordering,
     fmt::Debug,
@@ -20,6 +22,19 @@ pub struct LocalFiles {
 const SUPPORTED_AUDIO_EXTENSIONS: &[&str] = &[
     "mp3", "flac", "ogg", "opus", "wav", "m4a", "aac", "wma", "alac", "aiff", "ape", "mka", "wv",
 ];
+
+#[cfg(test)]
+static SONG_SCAN_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(test)]
+pub(crate) fn reset_song_scan_count() {
+    SONG_SCAN_COUNT.store(0, AtomicOrdering::SeqCst);
+}
+
+#[cfg(test)]
+pub(crate) fn song_scan_count() -> usize {
+    SONG_SCAN_COUNT.load(AtomicOrdering::SeqCst)
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct LocalAlbumEntry {
@@ -251,6 +266,9 @@ impl LocalFiles {
     }
 
     fn songs_from_files(mut files: Vec<PathBuf>) -> Vec<Song> {
+        #[cfg(test)]
+        SONG_SCAN_COUNT.fetch_add(files.len(), AtomicOrdering::SeqCst);
+
         files.sort_by(|a, b| {
             a.file_name()
                 .map(|name| name.to_string_lossy().to_lowercase())

@@ -8,7 +8,10 @@ use ratatui::{
 };
 use std::sync::mpsc::{self, Receiver, Sender};
 
-use crate::ui::{widget::handle_focused_border_style, AppPanel};
+use crate::ui::{
+    widget::{handle_focused_border_style, selected_row_style},
+    AppPanel,
+};
 
 const PAGE_STEP: usize = 10;
 
@@ -98,7 +101,7 @@ impl AppPanel for LogPanel {
                     .borders(Borders::ALL)
                     .border_style(border_style),
             )
-            .highlight_style(Style::default().bg(Color::DarkGray));
+            .highlight_style(selected_row_style());
         frame.render_stateful_widget(list, area, &mut self.list_state);
     }
 }

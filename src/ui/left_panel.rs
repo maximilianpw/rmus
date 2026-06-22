@@ -14,7 +14,7 @@ use crate::{
     ui::{
         input_line::InputLine,
         log_panel::Logger,
-        widget::{handle_focused_border_style, tabs_from_strings},
+        widget::{handle_focused_border_style, selected_row_style, tabs_from_strings},
     },
 };
 
@@ -338,7 +338,7 @@ impl LeftPanel {
                     .borders(Borders::ALL)
                     .border_style(handle_focused_border_style(is_focused)),
             )
-            .highlight_style(Style::default().bg(Color::DarkGray))
+            .highlight_style(selected_row_style())
     }
 
     fn empty_tab_items(&self) -> Vec<ListItem<'static>> {

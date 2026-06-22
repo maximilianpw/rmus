@@ -11,7 +11,7 @@ use ratatui::{
 use crate::{
     config::{Config, LocalSource, MaxStreamQuality},
     players::ShuffleMode,
-    ui::input_line::InputLine,
+    ui::{input_line::InputLine, widget::selected_row_style},
 };
 
 const PAGE_STEP: usize = 10;
@@ -101,7 +101,7 @@ impl SourceSettings {
         };
         let widget = List::new(list_items)
             .block(Block::bordered().title(title).borders(Borders::ALL))
-            .highlight_style(Style::default().bg(Color::DarkGray));
+            .highlight_style(selected_row_style());
 
         frame.render_stateful_widget(widget, area, &mut self.list_state);
     }

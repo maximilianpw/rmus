@@ -1,6 +1,6 @@
 use ratatui::{
     layout::{Alignment, Rect},
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Gauge, Paragraph, Tabs},
     Frame,
@@ -15,6 +15,13 @@ pub fn handle_focused_border_style(is_focused: bool) -> Style {
     } else {
         Style::default()
     }
+}
+
+pub fn selected_row_style() -> Style {
+    Style::default()
+        .fg(Color::Black)
+        .bg(Color::Yellow)
+        .add_modifier(Modifier::BOLD)
 }
 
 pub fn tabs_from_strings<'a>(
