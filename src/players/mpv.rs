@@ -1,9 +1,15 @@
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
+use std::io::Write;
+#[cfg(unix)]
+use std::io::{BufRead, BufReader};
+#[cfg(unix)]
+use std::os::unix::net::UnixStream as IpcStream;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
+
+#[cfg(windows)]
+type IpcStream = fs::File;
 
 use crate::players::{
     MusicPlayer, PlaybackInfo, PlaybackState, PlayerError, PlayerResult, RepeatMode, ShuffleMode,
@@ -12,7 +18,7 @@ use crate::sources::song::Song;
 
 pub struct MpvPlayer {
     process: Option<Child>,
-    socket: Option<UnixStream>,
+    socket: Option<IpcStream>,
     playback_info: PlaybackInfo,
     playlist: Vec<Song>,
     playlist_index: usize,
@@ -29,40 +35,91 @@ pub struct MpvPlayer {
 
 impl MpvPlayer {
     pub fn new(socket_path: PathBuf) -> Self {
+        Self::new_with_default_volume(socket_path, 50)
+    }
+
+    pub fn new_with_default_volume(socket_path: PathBuf, default_volume: u16) -> Self {
+        Self::new_with_playback_defaults(
+            socket_path,
+            default_volume,
+            ShuffleMode::Off,
+            RepeatMode::Off,
+        )
+    }
+
+    pub fn new_with_playback_defaults(
+        socket_path: PathBuf,
+        default_volume: u16,
+        default_shuffle: ShuffleMode,
+        default_repeat: RepeatMode,
+    ) -> Self {
         Self {
             process: None,
             socket: None,
-            playback_info: PlaybackInfo::default(),
+            playback_info: PlaybackInfo {
+                volume: default_volume.min(100) as u8,
+                shuffle: default_shuffle,
+                repeat: default_repeat,
+                ..Default::default()
+            },
             playlist: Vec::new(),
             playlist_index: 0,
             request_id: 0,
             socket_path,
             active_temp_stream_path: None,
-            shuffle: ShuffleMode::Off,
-            repeat: RepeatMode::Off,
+            shuffle: default_shuffle,
+            repeat: default_repeat,
             shuffle_order: Vec::new(),
             shuffle_position: 0,
         }
     }
 
-    fn build_mpv_args(socket_path: &std::path::Path) -> Vec<String> {
+    fn build_mpv_args(socket_path: &Path, default_volume: u16) -> Vec<String> {
+        let default_volume = default_volume.min(100);
         vec![
             "--idle=yes".to_string(),
             "--no-video".to_string(),
             "--audio-display=no".to_string(),
             "--cover-art-auto=no".to_string(),
+            format!("--volume={default_volume}"),
             "--demuxer-lavf-o-add=protocol_whitelist=[file,crypto,data,http,https,tcp,tls]"
                 .to_string(),
             "--no-terminal".to_string(),
-            format!("--input-ipc-server={}", socket_path.display()),
+            format!("--input-ipc-server={}", Self::ipc_endpoint(socket_path)),
         ]
     }
 
+    fn ipc_endpoint(socket_path: &Path) -> String {
+        #[cfg(windows)]
+        {
+            let pipe_name: String = socket_path
+                .to_string_lossy()
+                .chars()
+                .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+                .collect();
+            let pipe_name = if pipe_name.is_empty() {
+                "rmus_mpv".to_string()
+            } else {
+                pipe_name
+            };
+            format!(r"\\.\pipe\{pipe_name}")
+        }
+
+        #[cfg(not(windows))]
+        {
+            socket_path.to_string_lossy().into_owned()
+        }
+    }
+
     fn spawn_mpv(&mut self) -> PlayerResult<()> {
+        #[cfg(unix)]
         let _ = std::fs::remove_file(&self.socket_path);
 
         let child = Command::new("mpv")
-            .args(Self::build_mpv_args(&self.socket_path))
+            .args(Self::build_mpv_args(
+                &self.socket_path,
+                self.playback_info.volume as u16,
+            ))
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -71,9 +128,10 @@ impl MpvPlayer {
 
         self.process = Some(child);
 
-        // Poll for socket file to appear (up to 3 seconds)
+        // Poll for the IPC endpoint to accept connections (up to 3 seconds).
         let deadline = std::time::Instant::now() + Duration::from_secs(3);
         while std::time::Instant::now() < deadline {
+            #[cfg(unix)]
             if self.socket_path.exists() {
                 match self.connect_socket() {
                     Ok(()) => return Ok(()),
@@ -85,25 +143,47 @@ impl MpvPlayer {
             } else {
                 std::thread::sleep(Duration::from_millis(50));
             }
+
+            #[cfg(windows)]
+            match self.connect_socket() {
+                Ok(()) => return Ok(()),
+                Err(_) => std::thread::sleep(Duration::from_millis(50)),
+            }
         }
 
         Err(PlayerError::IpcError(format!(
-            "Timed out waiting for mpv socket at {}",
-            self.socket_path.display()
+            "Timed out waiting for mpv IPC at {}",
+            Self::ipc_endpoint(&self.socket_path)
         )))
     }
 
     fn connect_socket(&mut self) -> PlayerResult<()> {
-        let stream = UnixStream::connect(&self.socket_path)
-            .map_err(|e| PlayerError::IpcError(format!("Failed to connect: {}", e)))?;
+        #[cfg(unix)]
+        let stream = {
+            let stream = IpcStream::connect(&self.socket_path)
+                .map_err(|e| PlayerError::IpcError(format!("Failed to connect: {}", e)))?;
 
-        stream
-            .set_read_timeout(Some(Duration::from_millis(10)))
-            .ok();
-        stream
-            .set_write_timeout(Some(Duration::from_millis(50)))
-            .ok();
-        stream.set_nonblocking(true).ok();
+            stream
+                .set_read_timeout(Some(Duration::from_millis(10)))
+                .ok();
+            stream
+                .set_write_timeout(Some(Duration::from_millis(50)))
+                .ok();
+            stream.set_nonblocking(true).ok();
+            stream
+        };
+
+        #[cfg(windows)]
+        let stream = {
+            let endpoint = Self::ipc_endpoint(&self.socket_path);
+            fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&endpoint)
+                .map_err(|e| {
+                    PlayerError::IpcError(format!("Failed to connect to {endpoint}: {e}"))
+                })?
+        };
 
         self.socket = Some(stream);
 
@@ -157,32 +237,40 @@ impl MpvPlayer {
     }
 
     fn process_messages(&mut self) -> PlayerResult<()> {
-        let socket = match self.socket.as_mut() {
-            Some(s) => s,
-            None => return Ok(()),
-        };
-
-        let socket_clone = match socket.try_clone() {
-            Ok(s) => s,
-            Err(_) => return Ok(()),
-        };
-
-        let mut reader = BufReader::new(socket_clone);
-        let mut line = String::new();
-
-        loop {
-            line.clear();
-            match reader.read_line(&mut line) {
-                Ok(0) => break,
-                Ok(_) => {
-                    self.handle_message(&line);
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
-                Err(_) => break,
-            }
+        #[cfg(windows)]
+        {
+            return Ok(());
         }
 
-        Ok(())
+        #[cfg(unix)]
+        {
+            let socket = match self.socket.as_mut() {
+                Some(s) => s,
+                None => return Ok(()),
+            };
+
+            let socket_clone = match socket.try_clone() {
+                Ok(s) => s,
+                Err(_) => return Ok(()),
+            };
+
+            let mut reader = BufReader::new(socket_clone);
+            let mut line = String::new();
+
+            loop {
+                line.clear();
+                match reader.read_line(&mut line) {
+                    Ok(0) => break,
+                    Ok(_) => {
+                        self.handle_message(&line);
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                    Err(_) => break,
+                }
+            }
+
+            Ok(())
+        }
     }
 
     fn handle_message(&mut self, msg: &str) {
@@ -624,6 +712,36 @@ impl MusicPlayer for MpvPlayer {
         Ok(())
     }
 
+    fn move_in_queue(&mut self, from: usize, to: usize) -> PlayerResult<()> {
+        if from >= self.playlist.len() || to >= self.playlist.len() {
+            return Err(PlayerError::ValidationError(format!(
+                "Queue move {} -> {} out of bounds for {} songs",
+                from,
+                to,
+                self.playlist.len()
+            )));
+        }
+
+        if from == self.playlist_index || to == self.playlist_index {
+            return Err(PlayerError::ValidationError(
+                "Cannot move the currently playing track".to_string(),
+            ));
+        }
+
+        if from == to {
+            return Ok(());
+        }
+
+        let song = self.playlist.remove(from);
+        self.playlist.insert(to, song);
+
+        if self.shuffle == ShuffleMode::On {
+            self.generate_shuffle_order(true);
+        }
+
+        Ok(())
+    }
+
     fn toggle_shuffle(&mut self) -> PlayerResult<()> {
         self.shuffle = match self.shuffle {
             ShuffleMode::Off => {
@@ -636,11 +754,13 @@ impl MusicPlayer for MpvPlayer {
                 ShuffleMode::Off
             }
         };
+        self.playback_info.shuffle = self.shuffle;
         Ok(())
     }
 
     fn cycle_repeat(&mut self) -> PlayerResult<()> {
         self.repeat = self.repeat.cycle();
+        self.playback_info.repeat = self.repeat;
         Ok(())
     }
 
@@ -658,6 +778,7 @@ impl MusicPlayer for MpvPlayer {
 
         self.socket = None;
         self.cleanup_temp_stream_file();
+        #[cfg(unix)]
         let _ = std::fs::remove_file(&self.socket_path);
 
         Ok(())
@@ -685,23 +806,56 @@ impl std::fmt::Debug for MpvPlayer {
 mod tests {
     use std::path::Path;
 
-    use crate::{players::PlaybackState, sources::song::Song};
+    use crate::{
+        players::{MusicPlayer, PlaybackState, RepeatMode, ShuffleMode},
+        sources::song::Song,
+    };
 
     use super::MpvPlayer;
 
     #[test]
     fn mpv_is_launched_in_audio_only_mode() {
-        let args = MpvPlayer::build_mpv_args(Path::new("/tmp/rmus-mpv.sock"));
+        let args = MpvPlayer::build_mpv_args(Path::new("/tmp/rmus-mpv.sock"), 73);
 
         assert!(args.iter().any(|arg| arg == "--no-video"));
         assert!(args.iter().any(|arg| arg == "--audio-display=no"));
         assert!(args.iter().any(|arg| arg == "--cover-art-auto=no"));
+        assert!(args.iter().any(|arg| arg == "--volume=73"));
         assert!(args.iter().any(|arg| {
             arg == "--demuxer-lavf-o-add=protocol_whitelist=[file,crypto,data,http,https,tcp,tls]"
         }));
+
+        #[cfg(unix)]
         assert!(args
             .iter()
             .any(|arg| arg == "--input-ipc-server=/tmp/rmus-mpv.sock"));
+
+        #[cfg(windows)]
+        assert!(args
+            .iter()
+            .any(|arg| arg == r"--input-ipc-server=\\.\pipe\_tmp_rmus_mpv_sock"));
+    }
+
+    #[test]
+    fn configured_startup_volume_is_clamped_for_mpv() {
+        let args = MpvPlayer::build_mpv_args(Path::new("/tmp/rmus-mpv.sock"), 175);
+
+        assert!(args.iter().any(|arg| arg == "--volume=100"));
+    }
+
+    #[test]
+    fn configured_playback_defaults_are_exposed_before_polling() {
+        let player = MpvPlayer::new_with_playback_defaults(
+            "/tmp/rmus.sock".into(),
+            35,
+            ShuffleMode::On,
+            RepeatMode::All,
+        );
+
+        let info = player.get_playback_info();
+        assert_eq!(info.volume, 35);
+        assert_eq!(info.shuffle, ShuffleMode::On);
+        assert_eq!(info.repeat, RepeatMode::All);
     }
 
     #[test]
@@ -741,6 +895,43 @@ mod tests {
         assert_eq!(
             player.playback_info.last_error.as_deref(),
             Some("loading failed")
+        );
+    }
+
+    #[test]
+    fn queue_move_reorders_upcoming_tracks_without_moving_current() {
+        let mut player = MpvPlayer::new("/tmp/rmus.sock".into());
+        player.playlist = vec![
+            Song {
+                title: "Current".to_string(),
+                ..Default::default()
+            },
+            Song {
+                title: "Second".to_string(),
+                ..Default::default()
+            },
+            Song {
+                title: "Third".to_string(),
+                ..Default::default()
+            },
+        ];
+        player.playlist_index = 0;
+
+        player.move_in_queue(1, 2).unwrap();
+
+        let titles: Vec<_> = player
+            .playlist
+            .iter()
+            .map(|song| song.title.as_str())
+            .collect();
+        assert_eq!(titles, vec!["Current", "Third", "Second"]);
+        assert_eq!(player.playlist_index, 0);
+
+        let err = player.move_in_queue(1, 0).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Cannot move the currently playing track"),
+            "moving another item into the current slot should be rejected"
         );
     }
 }

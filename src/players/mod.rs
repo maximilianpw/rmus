@@ -7,18 +7,21 @@ use std::path::Path;
 
 use directories::BaseDirs;
 use reqwest::Url;
+use serde::{Deserialize, Serialize};
 
 use crate::players::mpv::MpvPlayer;
 use crate::sources::song::Song;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ShuffleMode {
     #[default]
     Off,
     On,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RepeatMode {
     #[default]
     Off,
@@ -106,6 +109,7 @@ pub trait MusicPlayer {
     fn get_queue(&self) -> &[Song];
     fn get_queue_position(&self) -> usize;
     fn remove_from_queue(&mut self, index: usize) -> PlayerResult<()>;
+    fn move_in_queue(&mut self, from: usize, to: usize) -> PlayerResult<()>;
 }
 
 const ALLOWED_AUDIO_EXTENSIONS: &[&str] = &[
@@ -127,6 +131,18 @@ pub struct SafePlayer {
 
 impl SafePlayer {
     pub fn new() -> Self {
+        Self::new_with_default_volume(50)
+    }
+
+    pub fn new_with_default_volume(default_volume: u16) -> Self {
+        Self::new_with_playback_defaults(default_volume, ShuffleMode::Off, RepeatMode::Off)
+    }
+
+    pub fn new_with_playback_defaults(
+        default_volume: u16,
+        default_shuffle: ShuffleMode,
+        default_repeat: RepeatMode,
+    ) -> Self {
         let socket_dir = if let Some(base) = BaseDirs::new() {
             if let Some(runtime) = base.runtime_dir() {
                 runtime.join("rmus")
@@ -151,7 +167,12 @@ impl SafePlayer {
         let socket_path = socket_dir.join("mpv.sock");
 
         Self {
-            inner: MpvPlayer::new(socket_path),
+            inner: MpvPlayer::new_with_playback_defaults(
+                socket_path,
+                default_volume,
+                default_shuffle,
+                default_repeat,
+            ),
         }
     }
 
@@ -228,6 +249,12 @@ impl SafePlayer {
                 other
             ))),
         }
+    }
+}
+
+impl Default for SafePlayer {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -369,6 +396,10 @@ impl MusicPlayer for SafePlayer {
 
     fn remove_from_queue(&mut self, index: usize) -> PlayerResult<()> {
         self.inner.remove_from_queue(index)
+    }
+
+    fn move_in_queue(&mut self, from: usize, to: usize) -> PlayerResult<()> {
+        self.inner.move_in_queue(from, to)
     }
 }
 

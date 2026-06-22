@@ -4,6 +4,8 @@ use std::fmt::Display;
 use std::fs;
 use std::path::PathBuf;
 
+use crate::players::{RepeatMode, ShuffleMode};
+
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
 pub struct Config {
     pub local: LocalConfig,
@@ -52,6 +54,10 @@ pub struct AudioConfig {
     pub default_volume: u16,
     #[serde(default)]
     pub max_stream_quality: MaxStreamQuality,
+    #[serde(default)]
+    pub default_shuffle: ShuffleMode,
+    #[serde(default)]
+    pub default_repeat: RepeatMode,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -105,10 +111,18 @@ impl Default for Config {
             },
             qobuz: None,
             tidal: None,
-            audio: AudioConfig {
-                default_volume: 50,
-                max_stream_quality: MaxStreamQuality::default(),
-            },
+            audio: AudioConfig::default(),
+        }
+    }
+}
+
+impl Default for AudioConfig {
+    fn default() -> Self {
+        Self {
+            default_volume: 50,
+            max_stream_quality: MaxStreamQuality::default(),
+            default_shuffle: ShuffleMode::Off,
+            default_repeat: RepeatMode::Off,
         }
     }
 }
@@ -136,6 +150,10 @@ impl std::fmt::Debug for Config {
 }
 
 impl QobuzConfig {
+    pub fn has_credentials(&self) -> bool {
+        !self.email.trim().is_empty() && !self.password.trim().is_empty()
+    }
+
     fn redacted(&self) -> String {
         format!(
             "QobuzConfig {{ email: {}, password: <redacted>, app_id: {}, app_secret: <redacted> }}",
@@ -145,6 +163,14 @@ impl QobuzConfig {
 }
 
 impl TidalConfig {
+    pub fn has_access_token(&self) -> bool {
+        !self.access_token.trim().is_empty()
+    }
+
+    pub fn has_refresh_token(&self) -> bool {
+        !self.refresh_token.trim().is_empty()
+    }
+
     fn redacted(&self) -> String {
         format!(
             "TidalConfig {{ access_token: <redacted>, refresh_token: <redacted>, country_code: {}, token_expiry: {} }}",
@@ -231,6 +257,8 @@ mod tests {
         assert!(config.tidal.is_none());
         assert_eq!(config.audio.default_volume, 75);
         assert_eq!(config.audio.max_stream_quality, MaxStreamQuality::HiRes);
+        assert_eq!(config.audio.default_shuffle, ShuffleMode::Off);
+        assert_eq!(config.audio.default_repeat, RepeatMode::Off);
         assert_eq!(config.local.sources.len(), 1);
         assert_eq!(config.local.sources[0].name, "Test Album");
     }
@@ -256,6 +284,33 @@ mod tests {
         let qobuz = config.qobuz.unwrap();
         assert_eq!(qobuz.email, "test@example.com");
         assert_eq!(qobuz.app_id, "12345");
+    }
+
+    #[test]
+    fn qobuz_credentials_require_email_and_password() {
+        let configured = QobuzConfig {
+            email: "listener@example.com".to_string(),
+            password: "secret".to_string(),
+            app_id: String::new(),
+            app_secret: String::new(),
+        };
+        assert!(configured.has_credentials());
+
+        let missing_email = QobuzConfig {
+            email: " ".to_string(),
+            password: "secret".to_string(),
+            app_id: String::new(),
+            app_secret: String::new(),
+        };
+        assert!(!missing_email.has_credentials());
+
+        let missing_password = QobuzConfig {
+            email: "listener@example.com".to_string(),
+            password: String::new(),
+            app_id: String::new(),
+            app_secret: String::new(),
+        };
+        assert!(!missing_password.has_credentials());
     }
 
     #[test]
@@ -285,6 +340,27 @@ mod tests {
     }
 
     #[test]
+    fn tidal_tokens_require_nonblank_text() {
+        let configured = TidalConfig {
+            access_token: "abc123".to_string(),
+            refresh_token: "def456".to_string(),
+            country_code: "US".to_string(),
+            token_expiry: 1700000000,
+        };
+        assert!(configured.has_access_token());
+        assert!(configured.has_refresh_token());
+
+        let whitespace = TidalConfig {
+            access_token: "   ".to_string(),
+            refresh_token: "\t".to_string(),
+            country_code: "US".to_string(),
+            token_expiry: 1700000000,
+        };
+        assert!(!whitespace.has_access_token());
+        assert!(!whitespace.has_refresh_token());
+    }
+
+    #[test]
     fn test_parse_config_with_max_stream_quality() {
         let toml = r#"
             [[local.sources]]
@@ -294,10 +370,14 @@ mod tests {
             [audio]
             default_volume = 50
             max_stream_quality = "cd"
+            default_shuffle = "on"
+            default_repeat = "all"
         "#;
 
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.audio.max_stream_quality, MaxStreamQuality::Cd);
+        assert_eq!(config.audio.default_shuffle, ShuffleMode::On);
+        assert_eq!(config.audio.default_repeat, RepeatMode::All);
     }
 
     #[test]
@@ -329,6 +409,8 @@ mod tests {
         assert!(config.tidal.is_none());
         assert_eq!(config.audio.default_volume, 50);
         assert_eq!(config.audio.max_stream_quality, MaxStreamQuality::HiRes);
+        assert_eq!(config.audio.default_shuffle, ShuffleMode::Off);
+        assert_eq!(config.audio.default_repeat, RepeatMode::Off);
     }
 
     #[test]
@@ -345,6 +427,8 @@ mod tests {
             audio: AudioConfig {
                 default_volume: 50,
                 max_stream_quality: MaxStreamQuality::HiRes,
+                default_shuffle: ShuffleMode::Off,
+                default_repeat: RepeatMode::Off,
             },
         };
 
@@ -369,6 +453,8 @@ mod tests {
             audio: AudioConfig {
                 default_volume: 50,
                 max_stream_quality: MaxStreamQuality::HiRes,
+                default_shuffle: ShuffleMode::Off,
+                default_repeat: RepeatMode::Off,
             },
         };
 
