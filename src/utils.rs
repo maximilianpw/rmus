@@ -17,3 +17,27 @@ pub fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
 
     center
 }
+
+pub fn track_count_label(count: usize) -> String {
+    if count == 1 {
+        "1 track".to_string()
+    } else {
+        format!("{count} tracks")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn track_count_label_uses_singular_for_one_track() {
+        assert_eq!(track_count_label(1), "1 track");
+    }
+
+    #[test]
+    fn track_count_label_uses_plural_for_zero_and_many_tracks() {
+        assert_eq!(track_count_label(0), "0 tracks");
+        assert_eq!(track_count_label(2), "2 tracks");
+    }
+}

@@ -1,12 +1,13 @@
 use ratatui::{
-    layout::{Alignment, Constraint, Layout, Rect},
+    layout::{Alignment, Rect},
     style::{Color, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Gauge, List, ListItem, Paragraph, Tabs},
+    widgets::{Block, Borders, Gauge, Paragraph, Tabs},
     Frame,
 };
 
 use crate::players::{PlaybackInfo, PlaybackState, RepeatMode, ShuffleMode};
+use crate::sources::song::Song;
 
 pub fn handle_focused_border_style(is_focused: bool) -> Style {
     if is_focused {
@@ -16,30 +17,13 @@ pub fn handle_focused_border_style(is_focused: bool) -> Style {
     }
 }
 
-pub fn list_from_strings<'a>(list_items: &'a Vec<String>, is_focused: bool) -> List<'a> {
-    let border_style = handle_focused_border_style(is_focused);
-    let list_items: Vec<ListItem> = list_items
-        .iter()
-        .map(|i| ListItem::new(Line::from(i.as_str())))
-        .collect();
-
-    List::new(list_items)
-        .block(
-            Block::bordered()
-                .title("Library")
-                .borders(Borders::ALL)
-                .border_style(border_style),
-        )
-        .highlight_style(Style::default().bg(Color::DarkGray))
-}
-
 pub fn tabs_from_strings<'a>(
-    tabs_items: &'a Vec<String>,
+    tabs_items: &'a [String],
     selected_tab_index: usize,
     is_focused: bool,
 ) -> Tabs<'a> {
     let border_style = handle_focused_border_style(is_focused);
-    Tabs::new(tabs_items.clone())
+    Tabs::new(tabs_items.to_owned())
         .block(
             Block::bordered()
                 .title("Sources")
@@ -54,7 +38,7 @@ pub fn now_playing_widget(info: &PlaybackInfo, is_focused: bool, frame: &mut Fra
     let border_style = handle_focused_border_style(is_focused);
 
     let title = match &info.current_song {
-        Some(song) => song.title.clone(),
+        Some(song) => now_playing_title(song),
         None => "Not Playing".to_string(),
     };
 
@@ -70,12 +54,18 @@ pub fn now_playing_widget(info: &PlaybackInfo, is_focused: bool, frame: &mut Fra
         return;
     }
 
-    let chunks = Layout::vertical([
-        Constraint::Length(1), // Status
-        Constraint::Length(1), // Progress
-        Constraint::Length(1), // Time
-    ])
-    .split(inner);
+    let mut row_y = inner.y;
+    let metadata_row_limit = inner.height.saturating_sub(3) as usize;
+    if let Some(song) = &info.current_song {
+        for line in now_playing_metadata_lines(song)
+            .into_iter()
+            .take(metadata_row_limit)
+        {
+            let row = Rect::new(inner.x, row_y, inner.width, 1);
+            frame.render_widget(Paragraph::new(line), row);
+            row_y += 1;
+        }
+    }
 
     // Status line
     let status = match info.state {
@@ -106,7 +96,11 @@ pub fn now_playing_widget(info: &PlaybackInfo, is_focused: bool, frame: &mut Fra
             Style::default().fg(Color::Cyan),
         ));
     }
-    frame.render_widget(Paragraph::new(Line::from(status_parts)), chunks[0]);
+    frame.render_widget(
+        Paragraph::new(Line::from(status_parts)),
+        Rect::new(inner.x, row_y, inner.width, 1),
+    );
+    row_y += 1;
 
     // Progress bar
     let progress = if info.duration > 0.0 {
@@ -117,26 +111,96 @@ pub fn now_playing_widget(info: &PlaybackInfo, is_focused: bool, frame: &mut Fra
     let gauge = Gauge::default()
         .ratio(progress)
         .gauge_style(Style::default().fg(Color::Cyan));
-    frame.render_widget(gauge, chunks[1]);
+    frame.render_widget(gauge, Rect::new(inner.x, row_y, inner.width, 1));
+    row_y += 1;
 
-    // Time display
-    let pos_mins = (info.position / 60.0) as u32;
-    let pos_secs = (info.position % 60.0) as u32;
-    let dur_mins = (info.duration / 60.0) as u32;
-    let dur_secs = (info.duration % 60.0) as u32;
     let time_str = format!(
-        "{:02}:{:02} / {:02}:{:02}",
-        pos_mins, pos_secs, dur_mins, dur_secs
+        "{} / {}",
+        playback_time_label(info.position),
+        playback_time_label(info.duration)
     );
     frame.render_widget(
         Paragraph::new(time_str).alignment(Alignment::Center),
-        chunks[2],
+        Rect::new(inner.x, row_y, inner.width, 1),
     );
+}
+
+fn playback_time_label(seconds: f64) -> String {
+    if !seconds.is_finite() || seconds <= 0.0 {
+        return "00:00".to_string();
+    }
+
+    let total_seconds = seconds.floor() as u64;
+    let secs = total_seconds % 60;
+    let total_minutes = total_seconds / 60;
+    let mins = total_minutes % 60;
+    let hours = total_minutes / 60;
+
+    if hours > 0 {
+        format!("{hours}:{mins:02}:{secs:02}")
+    } else {
+        format!("{mins:02}:{secs:02}")
+    }
+}
+
+fn now_playing_title(song: &Song) -> String {
+    let title = song.title.trim();
+    if !title.is_empty() {
+        return title.to_string();
+    }
+
+    let path = song.path.to_string_lossy();
+    if !path.is_empty() {
+        return path.into_owned();
+    }
+
+    "Unknown Track".to_string()
+}
+
+fn now_playing_metadata_lines(song: &Song) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+
+    let artist = song.artist.trim();
+    if !artist.is_empty() {
+        lines.push(metadata_line("Artist", artist));
+    }
+
+    let album = song.album_name.trim();
+    if !album.is_empty() {
+        lines.push(metadata_line("Album", album));
+    }
+
+    if let Some(disc_number) = song.disc_number {
+        lines.push(metadata_line("Disc", &disc_number.to_string()));
+    }
+
+    if let Some(track_number) = song.track_number {
+        lines.push(metadata_line("Track", &track_number.to_string()));
+    }
+
+    if let Some(source) = song
+        .stream_service
+        .as_deref()
+        .map(str::trim)
+        .filter(|source| !source.is_empty())
+    {
+        lines.push(metadata_line("Source", source));
+    }
+
+    lines
+}
+
+fn metadata_line(label: &'static str, value: &str) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(format!("{label}: "), Style::default().fg(Color::Gray)),
+        Span::raw(value.to_string()),
+    ])
 }
 
 #[cfg(test)]
 mod tests {
     use ratatui::{backend::TestBackend, Terminal};
+    use std::path::PathBuf;
 
     use crate::{
         players::{PlaybackInfo, PlaybackState},
@@ -182,5 +246,120 @@ mod tests {
         let text = extract_buffer_text(frame.buffer);
 
         assert!(text.contains("Quality: Lossless"));
+    }
+
+    #[test]
+    fn now_playing_widget_shows_artist_and_album_metadata() {
+        let backend = TestBackend::new(60, 7);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let info = PlaybackInfo {
+            state: PlaybackState::Playing,
+            current_song: Some(Song {
+                title: "Blue Monday".to_string(),
+                artist: "New Order".to_string(),
+                album_name: "Substance".to_string(),
+                path: PathBuf::from("/music/blue-monday.flac"),
+                ..Default::default()
+            }),
+            position: 30.0,
+            duration: 120.0,
+            volume: 50,
+            last_error: None,
+            ..Default::default()
+        };
+
+        let frame = terminal
+            .draw(|frame| now_playing_widget(&info, false, frame, frame.area()))
+            .unwrap();
+        let text = extract_buffer_text(frame.buffer);
+
+        assert!(text.contains("Blue Monday"));
+        assert!(text.contains("Artist: New Order"));
+        assert!(text.contains("Album: Substance"));
+    }
+
+    #[test]
+    fn now_playing_widget_shows_disc_and_track_metadata() {
+        let backend = TestBackend::new(60, 9);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let info = PlaybackInfo {
+            state: PlaybackState::Playing,
+            current_song: Some(Song {
+                title: "Second Movement".to_string(),
+                artist: "Performer".to_string(),
+                album_name: "Collected Works".to_string(),
+                disc_number: Some(2),
+                track_number: Some(4),
+                ..Default::default()
+            }),
+            position: 30.0,
+            duration: 120.0,
+            volume: 50,
+            last_error: None,
+            ..Default::default()
+        };
+
+        let frame = terminal
+            .draw(|frame| now_playing_widget(&info, false, frame, frame.area()))
+            .unwrap();
+        let text = extract_buffer_text(frame.buffer);
+
+        assert!(text.contains("Disc: 2"));
+        assert!(text.contains("Track: 4"));
+    }
+
+    #[test]
+    fn now_playing_widget_shows_stream_source_when_available() {
+        let backend = TestBackend::new(60, 8);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let info = PlaybackInfo {
+            state: PlaybackState::Playing,
+            current_song: Some(Song {
+                title: "Night Drive".to_string(),
+                artist: "Streaming Artist".to_string(),
+                album_name: "Late Set".to_string(),
+                stream_service: Some("Qobuz".to_string()),
+                stream_quality: Some("Hi-Res".to_string()),
+                ..Default::default()
+            }),
+            position: 30.0,
+            duration: 120.0,
+            volume: 50,
+            last_error: None,
+            ..Default::default()
+        };
+
+        let frame = terminal
+            .draw(|frame| now_playing_widget(&info, false, frame, frame.area()))
+            .unwrap();
+        let text = extract_buffer_text(frame.buffer);
+
+        assert!(text.contains("Source: Qobuz"));
+        assert!(text.contains("Quality: Hi-Res"));
+    }
+
+    #[test]
+    fn now_playing_widget_formats_hour_long_durations() {
+        let backend = TestBackend::new(80, 5);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let info = PlaybackInfo {
+            state: PlaybackState::Playing,
+            current_song: Some(Song {
+                title: "Long Track".to_string(),
+                ..Default::default()
+            }),
+            position: 3661.0,
+            duration: 4200.0,
+            volume: 50,
+            last_error: None,
+            ..Default::default()
+        };
+
+        let frame = terminal
+            .draw(|frame| now_playing_widget(&info, false, frame, frame.area()))
+            .unwrap();
+        let text = extract_buffer_text(frame.buffer);
+
+        assert!(text.contains("1:01:01 / 1:10:00"));
     }
 }
