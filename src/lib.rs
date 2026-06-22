@@ -2,6 +2,7 @@ pub mod action;
 pub mod app;
 pub mod config;
 pub mod event;
+pub mod history;
 pub mod keymap;
 pub mod players;
 pub mod playlist;
