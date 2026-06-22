@@ -427,6 +427,12 @@ impl QobuzSource {
     }
 }
 
+impl Default for QobuzSource {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StreamingService for QobuzSource {
     fn name(&self) -> &str {
         "Qobuz"

@@ -535,13 +535,13 @@ impl TidalSource {
     }
 
     fn try_refresh(&mut self) -> Result<bool, Box<dyn std::error::Error>> {
-        if self.config.refresh_token.is_empty() {
+        let refresh_token_value = self.config.refresh_token.trim().to_string();
+        if refresh_token_value.is_empty() {
             return Ok(false);
         }
 
         let rt = make_runtime();
-        let token_resp =
-            rt.block_on(refresh_token(&self.http_client, &self.config.refresh_token))?;
+        let token_resp = rt.block_on(refresh_token(&self.http_client, &refresh_token_value))?;
 
         self.config.access_token = token_resp.access_token.clone();
         if let Some(rt) = token_resp.refresh_token {
@@ -568,7 +568,7 @@ impl TidalSource {
             return Ok(());
         }
 
-        if !self.config.access_token.is_empty() && self.is_token_expired() {
+        if self.config.has_access_token() && self.is_token_expired() {
             self.try_refresh()?;
         }
 
@@ -587,19 +587,19 @@ impl StreamingService for TidalSource {
 
     fn authenticate(&mut self) -> Result<AuthStatus, Box<dyn std::error::Error>> {
         // Case 1: Have valid tokens
-        if !self.config.access_token.is_empty() && !self.is_token_expired() {
+        if self.config.has_access_token() && !self.is_token_expired() {
+            let access_token = self.config.access_token.trim().to_string();
+            self.config.access_token = access_token.clone();
             self.api_client = Some(TidalClient::new(
-                self.config.access_token.clone(),
+                access_token,
                 self.config.country_code.clone(),
             ));
             return Ok(AuthStatus::Authenticated);
         }
 
         // Case 2: Have expired tokens - try refresh
-        if !self.config.refresh_token.is_empty() {
-            if self.try_refresh()? {
-                return Ok(AuthStatus::Authenticated);
-            }
+        if self.config.has_refresh_token() && self.try_refresh()? {
+            return Ok(AuthStatus::Authenticated);
         }
 
         // Case 3: No tokens - start device auth flow
@@ -771,8 +771,11 @@ impl std::fmt::Debug for TidalSource {
 mod tests {
     use base64::Engine;
 
-    use super::TidalClient;
-    use crate::sources::streaming::ResolvedStreamSource;
+    use super::{TidalClient, TidalSource};
+    use crate::{
+        config::{MaxStreamQuality, TidalConfig},
+        sources::streaming::{AuthStatus, ResolvedStreamSource, StreamingService},
+    };
 
     #[test]
     fn hi_res_text_manifests_are_preserved_for_mpv() {
@@ -806,5 +809,32 @@ mod tests {
         );
 
         assert!(source.is_none());
+    }
+
+    #[test]
+    fn authenticate_trims_saved_access_token_before_use() {
+        let mut source = TidalSource::new(
+            TidalConfig {
+                access_token: "  access-token  ".to_string(),
+                refresh_token: String::new(),
+                country_code: "US".to_string(),
+                token_expiry: 4_000_000_000,
+            },
+            MaxStreamQuality::HiRes,
+        );
+
+        let status = source
+            .authenticate()
+            .expect("valid token should authenticate");
+
+        assert!(matches!(status, AuthStatus::Authenticated));
+        assert!(source.is_authenticated());
+
+        let persisted = source
+            .persist_data()
+            .expect("authenticated Tidal source should persist config");
+        let config: TidalConfig =
+            serde_json::from_str(&persisted).expect("persisted Tidal config should decode");
+        assert_eq!(config.access_token, "access-token");
     }
 }

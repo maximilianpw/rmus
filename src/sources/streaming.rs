@@ -1,5 +1,7 @@
 use std::fmt::Debug;
 
+use crate::utils::track_count_label;
+
 #[derive(Debug, Clone)]
 pub struct StreamTrack {
     pub id: String,
@@ -10,7 +12,11 @@ pub struct StreamTrack {
 
 impl StreamTrack {
     pub fn display_title(&self) -> String {
-        format!("{} - {}", self.artist, self.title)
+        if self.artist.is_empty() {
+            self.title.clone()
+        } else {
+            format!("{} - {}", self.artist, self.title)
+        }
     }
 }
 
@@ -25,7 +31,12 @@ pub struct StreamAlbum {
 impl StreamAlbum {
     pub fn display_title(&self) -> String {
         match self.track_count {
-            Some(n) => format!("{} - {} ({} tracks)", self.artist, self.title, n),
+            Some(n) => format!(
+                "{} - {} ({})",
+                self.artist,
+                self.title,
+                track_count_label(n as usize)
+            ),
             None => format!("{} - {}", self.artist, self.title),
         }
     }

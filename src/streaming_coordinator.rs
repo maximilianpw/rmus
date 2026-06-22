@@ -15,6 +15,7 @@ use crate::sources::{
 };
 
 pub enum StreamingRequest {
+    Authenticate,
     SearchAlbums {
         query: String,
         limit: u32,
@@ -28,11 +29,18 @@ pub enum StreamingRequest {
         track_id: String,
         title: String,
         enqueue: bool,
+        source_song: Option<Box<Song>>,
     },
     /// Resolve stream URLs for an entire album. Resolves the start track first
     /// for immediate playback, then resolves the rest for enqueueing.
     PlayAlbumStream {
         tracks: Vec<StreamTrack>,
+        start_index: usize,
+    },
+    /// Resolve streaming references inside a saved playlist while preserving
+    /// already-playable local tracks.
+    PlayMixedPlaylist {
+        songs: Vec<Song>,
         start_index: usize,
     },
     SearchArtists {
@@ -52,11 +60,13 @@ pub enum StreamingRequest {
 impl StreamingRequest {
     fn kind(&self) -> StreamingTaskKind {
         match self {
+            Self::Authenticate => StreamingTaskKind::Authenticate,
             Self::SearchAlbums { .. } => StreamingTaskKind::Search,
             Self::GetAlbumTracks { .. } => StreamingTaskKind::GetAlbumTracks,
             Self::PollAuth => StreamingTaskKind::PollAuth,
             Self::GetStreamUrl { .. } => StreamingTaskKind::GetStreamUrl,
             Self::PlayAlbumStream { .. } => StreamingTaskKind::PlayAlbumStream,
+            Self::PlayMixedPlaylist { .. } => StreamingTaskKind::PlayAlbumStream,
             Self::SearchArtists { .. } => StreamingTaskKind::SearchArtists,
             Self::SearchTracks { .. } => StreamingTaskKind::SearchTracks,
             Self::GetArtistAlbums { .. } => StreamingTaskKind::GetArtistAlbums,
@@ -72,11 +82,13 @@ impl StreamingRequest {
 
     fn status(&self, service_id: StreamingServiceId) -> String {
         match self {
+            Self::Authenticate => format!("Authenticating {}...", service_id.as_str()),
             Self::SearchAlbums { .. } => format!("Searching {}...", service_id.as_str()),
             Self::GetAlbumTracks { .. } => "Loading album tracks...".to_string(),
             Self::PollAuth => format!("Authenticating {}...", service_id.as_str()),
             Self::GetStreamUrl { .. } => "Loading stream...".to_string(),
             Self::PlayAlbumStream { .. } => "Resolving album streams...".to_string(),
+            Self::PlayMixedPlaylist { .. } => "Resolving playlist streams...".to_string(),
             Self::SearchArtists { .. } => {
                 format!("Searching {} artists...", service_id.as_str())
             }
@@ -88,6 +100,7 @@ impl StreamingRequest {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StreamingTaskKind {
+    Authenticate,
     Search,
     GetAlbumTracks,
     PollAuth,
@@ -132,6 +145,7 @@ pub enum StreamingTaskOutput {
         title: String,
         stream: Option<ResolvedStream>,
         enqueue: bool,
+        source_song: Option<Box<Song>>,
     },
     AlbumStreamUrls {
         first_song: Option<Song>,
@@ -171,6 +185,7 @@ pub enum StreamingSubmitResult {
     Started { status: String },
     ReplacedSearch { status: String },
     Queued { status: String },
+    Unavailable { status: String },
     Busy,
 }
 
@@ -183,6 +198,8 @@ pub struct StreamingCoordinator {
     next_task_id: u64,
     active_task: Option<ActiveStreamingTask>,
     canceled_task_ids: HashSet<u64>,
+    discarded_task_ids: HashSet<u64>,
+    recovering_service: Option<StreamingServiceId>,
     queued_search: Option<(StreamingServiceId, StreamingRequest)>,
     search_task_timeout: Duration,
     auth_task_timeout: Duration,
@@ -205,6 +222,8 @@ impl StreamingCoordinator {
             next_task_id: 1,
             active_task: None,
             canceled_task_ids: HashSet::new(),
+            discarded_task_ids: HashSet::new(),
+            recovering_service: None,
             queued_search: None,
             search_task_timeout: Duration::from_secs(20),
             auth_task_timeout: Duration::from_secs(10),
@@ -235,6 +254,38 @@ impl StreamingCoordinator {
         self.tidal = tidal;
     }
 
+    pub fn reset_service(
+        &mut self,
+        service_id: StreamingServiceId,
+        replacement: Option<Box<dyn StreamingService>>,
+    ) {
+        if let Some(active) = self.active_task {
+            if active.service == service_id {
+                self.discarded_task_ids.insert(active.id);
+                self.active_task = None;
+                self.busy_service = None;
+            }
+        }
+
+        let _ = self.take_service(service_id);
+
+        if self.recovering_service == Some(service_id) {
+            self.recovering_service = None;
+        }
+
+        if self
+            .queued_search
+            .as_ref()
+            .is_some_and(|(queued_service, _)| *queued_service == service_id)
+        {
+            self.queued_search = None;
+        }
+
+        if let Some(service) = replacement {
+            self.put_service(service_id, service);
+        }
+    }
+
     pub fn persist_data(&self, service_id: StreamingServiceId) -> Option<String> {
         self.service_ref(service_id)
             .and_then(|service| service.persist_data())
@@ -263,13 +314,16 @@ impl StreamingCoordinator {
         }
 
         if self.service_ref(service_id).is_none() {
-            if request.is_search() {
+            if request.is_search() && self.recovering_service == Some(service_id) {
                 self.queued_search = Some((service_id, request));
                 return StreamingSubmitResult::Queued {
                     status: "Waiting for previous request cleanup...".to_string(),
                 };
             }
-            return StreamingSubmitResult::Busy;
+
+            return StreamingSubmitResult::Unavailable {
+                status: format!("Configure {} in Settings", service_id.as_str()),
+            };
         }
 
         let status = self.spawn_task_for_available_service(service_id, request);
@@ -360,15 +414,24 @@ impl StreamingCoordinator {
     ) {
         let kind = request.kind();
         let timeout = match &request {
+            StreamingRequest::Authenticate | StreamingRequest::PollAuth => self.auth_task_timeout,
             StreamingRequest::SearchAlbums { .. }
             | StreamingRequest::GetAlbumTracks { .. }
             | StreamingRequest::SearchArtists { .. }
             | StreamingRequest::SearchTracks { .. }
             | StreamingRequest::GetArtistAlbums { .. } => self.search_task_timeout,
-            StreamingRequest::PollAuth => self.auth_task_timeout,
             StreamingRequest::GetStreamUrl { .. } => self.stream_url_task_timeout,
             StreamingRequest::PlayAlbumStream { tracks, .. } => {
                 Duration::from_secs(self.stream_url_task_timeout.as_secs() * tracks.len() as u64)
+            }
+            StreamingRequest::PlayMixedPlaylist { songs, .. } => {
+                let stream_count = songs
+                    .iter()
+                    .filter(|song| song.has_stream_reference())
+                    .count();
+                Duration::from_secs(
+                    self.stream_url_task_timeout.as_secs() * stream_count.max(1) as u64,
+                )
             }
         };
         let task_id = self.next_task_id;
@@ -383,7 +446,7 @@ impl StreamingCoordinator {
         });
         let tx = self.task_tx.clone();
         thread::spawn(move || {
-            let output = execute_request(&mut service, request);
+            let output = execute_request(service_id, &mut service, request);
             let _ = tx.send(StreamingTaskResult {
                 task_id,
                 service_name: service_id,
@@ -403,6 +466,7 @@ impl StreamingCoordinator {
             .map(|a| a.id == result.task_id)
             .unwrap_or(false);
         let is_canceled = self.canceled_task_ids.remove(&result.task_id);
+        let is_discarded = self.discarded_task_ids.remove(&result.task_id);
         if was_active {
             self.active_task = None;
             self.busy_service = None;
@@ -410,7 +474,14 @@ impl StreamingCoordinator {
         }
 
         let service_id = result.service_name;
+        if is_discarded {
+            return;
+        }
+
         self.put_service(service_id, result.service);
+        if self.recovering_service == Some(service_id) {
+            self.recovering_service = None;
+        }
         events.push(StreamingCoordinatorEvent::ServiceReturned(service_id));
 
         if !is_canceled {
@@ -433,6 +504,8 @@ impl StreamingCoordinator {
         let _ = self.take_service(active.service);
         if let Some(service) = Self::recreate_service(active.service, config) {
             self.put_service(active.service, service);
+        } else {
+            self.recovering_service = Some(active.service);
         }
     }
 
@@ -441,15 +514,21 @@ impl StreamingCoordinator {
         config: &Config,
     ) -> Option<Box<dyn StreamingService>> {
         match service_id {
-            StreamingServiceId::Qobuz => config.qobuz.as_ref().map(|q| {
-                Box::new(QobuzSource::with_credentials(
-                    q.app_id.clone(),
-                    q.app_secret.clone(),
-                    q.email.clone(),
-                    q.password.clone(),
-                    config.audio.max_stream_quality,
-                )) as Box<dyn StreamingService>
-            }),
+            StreamingServiceId::Qobuz => {
+                config
+                    .qobuz
+                    .as_ref()
+                    .filter(|q| q.has_credentials())
+                    .map(|q| {
+                        Box::new(QobuzSource::with_credentials(
+                            q.app_id.clone(),
+                            q.app_secret.clone(),
+                            q.email.clone(),
+                            q.password.clone(),
+                            config.audio.max_stream_quality,
+                        )) as Box<dyn StreamingService>
+                    })
+            }
             StreamingServiceId::Tidal => Some(Box::new(TidalSource::new(
                 config.tidal.clone().unwrap_or_default(),
                 config.audio.max_stream_quality,
@@ -476,10 +555,19 @@ impl StreamingCoordinator {
 }
 
 fn execute_request(
+    service_id: StreamingServiceId,
     service: &mut Box<dyn StreamingService>,
     request: StreamingRequest,
 ) -> StreamingTaskOutput {
     match request {
+        StreamingRequest::Authenticate => match service.authenticate() {
+            Ok(AuthStatus::Authenticated) => StreamingTaskOutput::AuthCompleted,
+            Ok(AuthStatus::PendingUserAction(message)) => StreamingTaskOutput::AuthPending {
+                message,
+                deferred_query: None,
+            },
+            Err(e) => StreamingTaskOutput::Error(format!("Auth failed: {}", e)),
+        },
         StreamingRequest::SearchAlbums { query, limit } => {
             execute_authenticated_search(service, query, |service, query| {
                 match service.search_albums(&query, limit) {
@@ -507,18 +595,23 @@ fn execute_request(
             track_id,
             title,
             enqueue,
+            source_song,
         } => match service.get_stream_url(&track_id) {
             Ok(stream) => StreamingTaskOutput::StreamUrlResult {
                 title,
                 stream,
                 enqueue,
+                source_song,
             },
             Err(e) => StreamingTaskOutput::Error(format!("Stream URL error: {}", e)),
         },
         StreamingRequest::PlayAlbumStream {
             tracks,
             start_index,
-        } => resolve_album_streams(service, tracks, start_index),
+        } => resolve_album_streams(service_id, service, tracks, start_index),
+        StreamingRequest::PlayMixedPlaylist { songs, start_index } => {
+            resolve_mixed_playlist_streams(service, songs, start_index)
+        }
         StreamingRequest::SearchArtists { query, limit } => {
             execute_authenticated_search(service, query, |service, query| {
                 match service.search_artists(&query, limit) {
@@ -567,26 +660,56 @@ fn execute_authenticated_search(
     }
 }
 
-fn song_from_resolved_stream(track: &StreamTrack, stream: ResolvedStream) -> Song {
+fn song_from_resolved_stream(
+    service_id: StreamingServiceId,
+    track: &StreamTrack,
+    stream: ResolvedStream,
+) -> Song {
     let ResolvedStream {
         source,
         quality_label,
     } = stream;
-    match source {
-        ResolvedStreamSource::Url(url) => Song::from_url(track.display_title(), url, quality_label),
+    let mut song = match source {
+        ResolvedStreamSource::Url(url) => Song::from_url(track.title.clone(), url, quality_label),
         ResolvedStreamSource::Manifest {
             contents,
             file_extension,
-        } => Song::from_manifest(
-            track.display_title(),
+        } => Song::from_manifest(track.title.clone(), contents, file_extension, quality_label),
+    };
+
+    song.artist = track.artist.clone();
+    song.album_name = track.album.clone();
+    song.stream_service = Some(service_id.as_str().to_string());
+    song.stream_track_id = Some(track.id.clone());
+    song
+}
+
+fn song_from_playlist_stream(song: &Song, stream: ResolvedStream) -> Song {
+    let ResolvedStream {
+        source,
+        quality_label,
+    } = stream;
+
+    let mut resolved = match source {
+        ResolvedStreamSource::Url(url) => Song::from_url(song.title.clone(), url, quality_label),
+        ResolvedStreamSource::Manifest {
             contents,
             file_extension,
-            quality_label,
-        ),
-    }
+        } => Song::from_manifest(song.title.clone(), contents, file_extension, quality_label),
+    };
+
+    resolved.artist = song.artist.clone();
+    resolved.album_name = song.album_name.clone();
+    resolved.disc_number = song.disc_number;
+    resolved.track_number = song.track_number;
+    resolved.duration_secs = song.duration_secs;
+    resolved.stream_service = song.stream_service.clone();
+    resolved.stream_track_id = song.stream_track_id.clone();
+    resolved
 }
 
 fn resolve_album_streams(
+    service_id: StreamingServiceId,
     service: &mut Box<dyn StreamingService>,
     tracks: Vec<StreamTrack>,
     start_index: usize,
@@ -597,7 +720,9 @@ fn resolve_album_streams(
     for (i, track) in tracks.iter().enumerate() {
         if i == start_index {
             match service.get_stream_url(&track.id) {
-                Ok(Some(stream)) => resolved.push(Some(song_from_resolved_stream(track, stream))),
+                Ok(Some(stream)) => {
+                    resolved.push(Some(song_from_resolved_stream(service_id, track, stream)))
+                }
                 _ => {
                     failed_count += 1;
                     resolved.push(None);
@@ -614,11 +739,61 @@ fn resolve_album_streams(
         }
         match service.get_stream_url(&track.id) {
             Ok(Some(stream)) => {
-                resolved[i] = Some(song_from_resolved_stream(track, stream));
+                resolved[i] = Some(song_from_resolved_stream(service_id, track, stream));
             }
             _ => {
                 failed_count += 1;
             }
+        }
+    }
+
+    let first_song = resolved[start_index].take();
+    let mut remaining_songs = Vec::new();
+    for song in resolved
+        .iter_mut()
+        .skip(start_index + 1)
+        .filter_map(Option::take)
+    {
+        remaining_songs.push(song);
+    }
+    for song in resolved
+        .iter_mut()
+        .take(start_index)
+        .filter_map(Option::take)
+    {
+        remaining_songs.push(song);
+    }
+
+    StreamingTaskOutput::AlbumStreamUrls {
+        first_song,
+        remaining_songs,
+        failed_count,
+    }
+}
+
+fn resolve_mixed_playlist_streams(
+    service: &mut Box<dyn StreamingService>,
+    songs: Vec<Song>,
+    start_index: usize,
+) -> StreamingTaskOutput {
+    if start_index >= songs.len() {
+        return StreamingTaskOutput::Error("Playlist start index out of bounds".to_string());
+    }
+
+    let mut failed_count = 0;
+    let mut resolved: Vec<Option<Song>> = Vec::with_capacity(songs.len());
+
+    for song in &songs {
+        if let Some(track_id) = song.stream_track_id.as_deref() {
+            match service.get_stream_url(track_id) {
+                Ok(Some(stream)) => resolved.push(Some(song_from_playlist_stream(song, stream))),
+                _ => {
+                    failed_count += 1;
+                    resolved.push(None);
+                }
+            }
+        } else {
+            resolved.push(Some(song.clone()));
         }
     }
 
