@@ -30,7 +30,7 @@ impl AppPanel for SettingsPanel {
             return;
         }
 
-        let popup_area = centered_rect(60, 70, area);
+        let popup_area = centered_rect(80, 90, area);
 
         frame.render_widget(Clear, popup_area);
 
@@ -65,11 +65,30 @@ impl SettingsPanel {
         self.opened = !self.opened;
     }
 
-    /// Returns the updated config if account settings changed it.
+    pub fn select_tab(&mut self, tab: SettingsTab) {
+        if let Some(index) = SettingsTab::ALL
+            .iter()
+            .position(|candidate| *candidate == tab)
+        {
+            self.selected_tab = index;
+        }
+    }
+
+    /// Returns the updated config if any settings tab changed it.
     pub fn take_config_update(&mut self) -> Option<Config> {
-        self.source_settings
-            .take_config_update()
-            .or_else(|| self.account_settings.take_config_update())
+        match (
+            self.source_settings.take_config_update(),
+            self.account_settings.take_config_update(),
+        ) {
+            (Some(mut source_config), Some(account_config)) => {
+                source_config.qobuz = account_config.qobuz;
+                source_config.tidal = account_config.tidal;
+                Some(source_config)
+            }
+            (Some(source_config), None) => Some(source_config),
+            (None, Some(account_config)) => Some(account_config),
+            (None, None) => None,
+        }
     }
 
     /// Push an updated config into the settings panel so its copy stays current.
@@ -78,8 +97,38 @@ impl SettingsPanel {
         self.account_settings.update_config(config);
     }
 
+    pub fn take_tidal_clear_requested(&mut self) -> bool {
+        self.account_settings.take_tidal_clear_requested()
+    }
+
+    pub fn take_qobuz_auth_requested(&mut self) -> bool {
+        self.account_settings.take_qobuz_auth_requested()
+    }
+
+    pub fn set_qobuz_status_message(&mut self, text: Option<String>, is_error: bool) {
+        self.account_settings
+            .set_qobuz_status_message(text, is_error);
+    }
+
+    pub fn take_tidal_auth_requested(&mut self) -> bool {
+        self.account_settings.take_tidal_auth_requested()
+    }
+
+    pub fn set_tidal_status_message(&mut self, text: Option<String>, is_error: bool) {
+        self.account_settings
+            .set_tidal_status_message(text, is_error);
+    }
+
     pub fn close(&mut self) {
         self.opened = false;
+    }
+
+    pub fn is_input_active(&self) -> bool {
+        match self.current_tab() {
+            SettingsTab::General => self.source_settings.is_input_active(),
+            SettingsTab::Account => self.account_settings.is_input_active(),
+            SettingsTab::Keybinds => false,
+        }
     }
 
     pub fn handle_events(&mut self, key: KeyEvent) {
@@ -179,54 +228,201 @@ impl SettingsPanel {
             ))
         };
 
-        let text = vec![
+        let left = vec![
             section("Global"),
-            keybind("Esc / q", "Quit application"),
+            keybind("Esc", "Close active view / quit"),
+            keybind("q", "Quit application"),
             keybind("Ctrl+C", "Quit application"),
             keybind("Tab", "Switch focused panel"),
             keybind("s", "Toggle settings"),
+            keybind("?", "Open keybind help"),
+            keybind("Q", "Show queue"),
+            keybind("H", "Show recently played"),
+            keybind("R", "Refresh library"),
+            keybind("n / p", "Next / previous track"),
+            keybind("+ / -", "Adjust volume"),
+            keybind("m", "Mute / restore volume"),
+            keybind("V", "Save current volume as startup"),
+            keybind("z", "Toggle shuffle"),
+            keybind("r", "Cycle repeat (Off/All/One)"),
             Line::from(""),
             section("Album List (Left Panel)"),
-            keybind("Space", "Select album"),
+            keybind("Space/Enter", "Select album"),
+            keybind("P", "Play album/playlist"),
+            keybind("a", "Queue album/playlist"),
+            keybind("F", "Add album/playlist to Favorites"),
+            keybind("U", "Remove album/playlist from Favorites"),
             keybind("j / Down", "Move down"),
             keybind("k / Up", "Move up"),
+            keybind("PageUp / PageDown", "Move by page"),
+            keybind("Home / End", "Jump first / last"),
+            keybind("f", "Filter Local/Playlists list"),
             keybind("C", "Create playlist (Playlists tab)"),
+            keybind("E", "Rename playlist (Playlists tab)"),
+            keybind("Y", "Duplicate playlist (Playlists tab)"),
             keybind("D", "Delete playlist (Playlists tab)"),
             Line::from(""),
             section("Song List (Center Panel)"),
-            keybind("Space", "Play from selected song"),
+            keybind("Space/Enter", "Play from selected song"),
             keybind("a", "Add to queue"),
+            keybind("E", "Queue open collection"),
             keybind("A", "Add to playlist"),
+            keybind("C", "Add collection to playlist"),
+            keybind("F", "Add selected track to Favorites"),
+            keybind("U", "Remove selected track from Favorites"),
+            keybind("d", "Remove track from playlist"),
+            keybind("J / K", "Move playlist track"),
             keybind("j / Down", "Move down"),
             keybind("k / Up", "Move up"),
+            keybind("PageUp / PageDown", "Move by page"),
+            keybind("Home / End", "Jump first / last"),
             Line::from(""),
             section("Search"),
             keybind("/", "Open search"),
+            keybind("Tab", "Cycle search type"),
             keybind("Enter", "Execute search / play"),
+            keybind("PageUp / PageDown", "Move by page"),
+            keybind("Home / End", "Jump first / last result"),
             keybind("Esc", "Close search"),
-            Line::from(""),
+        ];
+
+        let right = vec![
             section("Playback (Right Panel)"),
             keybind("Space", "Toggle pause"),
-            keybind("n", "Next track"),
-            keybind("p", "Previous track"),
             keybind("s", "Stop playback"),
-            keybind("+ / =", "Volume up"),
-            keybind("-", "Volume down"),
+            keybind("A", "Add current track to playlist"),
+            keybind("F", "Add current track to Favorites"),
+            keybind("U", "Remove current track from Favorites"),
             keybind("Left", "Seek backward 5s"),
             keybind("Right", "Seek forward 5s"),
-            keybind("z", "Toggle shuffle"),
-            keybind("r", "Cycle repeat (Off/All/One)"),
-            keybind("Q", "Show queue"),
+            Line::from(""),
+            section("Queue View"),
+            keybind("Space/Enter", "Jump to queue track"),
+            keybind("f", "Filter queue"),
+            keybind("PageUp / PageDown", "Move by page"),
+            keybind("Home / End", "Jump first / last"),
+            keybind("A", "Add queue track to playlist"),
+            keybind("F", "Add queue track to Favorites"),
+            keybind("U", "Remove queue track from Favorites"),
+            keybind("J / K", "Move queue track"),
+            keybind("S", "Save queue as playlist"),
+            keybind("d", "Remove queue track"),
+            keybind("c", "Clear queued tracks"),
+            keybind("Esc", "Close queue"),
+            Line::from(""),
+            section("History View"),
+            keybind("Space/Enter", "Play history track"),
+            keybind("f", "Filter history"),
+            keybind("d", "Remove history track"),
+            keybind("c", "Clear history"),
+            keybind("Esc", "Close history"),
+            Line::from(""),
+            section("Logs Panel"),
+            keybind("j / Down", "Move down"),
+            keybind("k / Up", "Move up"),
+            keybind("PageUp / PageDown", "Move by page"),
+            keybind("Home / End", "Jump first / latest log"),
+            keybind("h / Left", "Scroll log horizontally"),
+            keybind("l / Right", "Scroll log horizontally"),
+            keybind("c", "Clear logs"),
+            Line::from(""),
+            section("Text Inputs"),
+            keybind("Left / Right", "Move cursor"),
+            keybind("Home / End", "Jump cursor start / end"),
+            keybind("Backspace/Delete", "Delete text"),
             Line::from(""),
             section("Settings Panel"),
             keybind("Esc", "Close settings"),
             keybind("Tab / l", "Next tab"),
             keybind("Shift+Tab / h", "Previous tab"),
             keybind("General: q", "Cycle max stream quality"),
+            keybind("General: +/-", "Adjust startup volume"),
+            keybind("General: z", "Toggle startup shuffle"),
+            keybind("General: r", "Cycle startup repeat"),
+            keybind("General: j/k", "Move source selection"),
+            keybind("General: PageUp/PageDown", "Move sources by page"),
+            keybind("General: Home/End", "Jump first / last source"),
             keybind("General: a", "Add local source"),
+            keybind("General: e", "Edit local source"),
+            keybind("General: d", "Remove local source"),
+            keybind("Account: q", "Check Qobuz login"),
+            keybind("Account: t", "Log in to Tidal"),
+            keybind("Account: c", "Clear streaming accounts"),
         ];
 
-        let paragraph = Paragraph::new(text);
-        frame.render_widget(paragraph, area);
+        let [left_area, right_area] =
+            Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .areas(area);
+        frame.render_widget(Paragraph::new(left), left_area);
+        frame.render_widget(Paragraph::new(right), right_area);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyEvent, KeyModifiers};
+    use std::{
+        fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("rmus-settings-panel-{name}-{nanos}"));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn pending_source_and_account_updates_are_merged() {
+        let dir = temp_dir("merged-updates");
+        let mut settings = SettingsPanel::new(Config::default());
+        settings.toggle_open();
+
+        settings.handle_events(key(KeyCode::Char('a')));
+        for c in "Library".chars() {
+            settings.handle_events(key(KeyCode::Char(c)));
+        }
+        settings.handle_events(key(KeyCode::Tab));
+        for c in dir.to_string_lossy().chars() {
+            settings.handle_events(key(KeyCode::Char(c)));
+        }
+        settings.handle_events(key(KeyCode::Enter));
+
+        settings.handle_events(key(KeyCode::Tab));
+        settings.handle_events(key(KeyCode::Char('e')));
+        for c in "user@example.com".chars() {
+            settings.handle_events(key(KeyCode::Char(c)));
+        }
+        settings.handle_events(key(KeyCode::Tab));
+        for c in "secret".chars() {
+            settings.handle_events(key(KeyCode::Char(c)));
+        }
+        settings.handle_events(key(KeyCode::Enter));
+
+        let updated = settings
+            .take_config_update()
+            .expect("pending settings changes should produce one merged update");
+        assert_eq!(updated.local.sources.len(), 1);
+        assert_eq!(updated.local.sources[0].name, "Library");
+        assert_eq!(updated.local.sources[0].path, dir.canonicalize().unwrap());
+        let qobuz = updated.qobuz.expect("qobuz account should be included");
+        assert_eq!(qobuz.email, "user@example.com");
+        assert_eq!(qobuz.password, "secret");
+        assert!(
+            settings.take_config_update().is_none(),
+            "merged tab updates should be consumed together"
+        );
+
+        let _ = fs::remove_dir_all(dir);
     }
 }
