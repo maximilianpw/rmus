@@ -203,7 +203,6 @@ impl Default for LocalAlbumCache {
 }
 
 impl LocalAlbumCache {
-    #[cfg(test)]
     pub(crate) fn with_path(path: PathBuf) -> Self {
         Self::load_from_path(path)
     }

@@ -18,6 +18,11 @@ fn main() -> color_eyre::Result<()> {
             print!("{}", rmus::cli::paths_text());
             return Ok(());
         }
+        Ok(rmus::cli::CliAction::ScanLocal) => {
+            let summary = rmus::cli::scan_local()?;
+            println!("{}", summary.message());
+            return Ok(());
+        }
         Ok(rmus::cli::CliAction::ImportPlaylist { path, name }) => {
             let summary = rmus::cli::import_playlist(&path, name.as_deref())?;
             println!("{}", summary.message());

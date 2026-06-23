@@ -11,6 +11,7 @@ use crate::{
     local_cache::LocalTrackCache,
     playlist::{PlaylistExportSummary, PlaylistImportSummary, PlaylistStore},
     queue::QueueStore,
+    sources::local::LocalFiles,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20,6 +21,7 @@ pub enum CliAction {
     Version,
     Doctor,
     Paths,
+    ScanLocal,
     ImportPlaylist { path: PathBuf, name: Option<String> },
     ExportPlaylist { name: String, path: PathBuf },
     ClearCache,
@@ -43,6 +45,7 @@ where
         "-V" | "--version" => no_more_args(args, CliAction::Version, &first),
         "doctor" => no_more_args(args, CliAction::Doctor, &first),
         "paths" => no_more_args(args, CliAction::Paths, &first),
+        "scan-local" => no_more_args(args, CliAction::ScanLocal, &first),
         "import-playlist" => parse_import_playlist_args(args),
         "export-playlist" => parse_export_playlist_args(args),
         "clear-cache" => no_more_args(args, CliAction::ClearCache, &first),
@@ -130,6 +133,7 @@ pub fn help_text() -> &'static str {
         "Commands:\n",
         "  doctor          Check runtime dependencies and app paths\n",
         "  paths           Print app storage paths\n",
+        "  scan-local      Scan configured local sources into the metadata cache\n",
         "  import-playlist <PATH> [NAME]\n",
         "                  Import a local .m3u/.m3u8 playlist\n",
         "  export-playlist <NAME> <PATH>\n",
@@ -208,6 +212,64 @@ local cache: {}
         options.queue_path.to_string_lossy(),
         options.local_cache_path.to_string_lossy()
     )
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalScanSummary {
+    pub source_count: usize,
+    pub track_count: usize,
+    pub cache_path: PathBuf,
+}
+
+impl LocalScanSummary {
+    pub fn message(&self) -> String {
+        if self.source_count == 0 {
+            return "No local sources configured; add folders in Settings first".to_string();
+        }
+
+        format!(
+            "Scanned {} local {} from {} local {}; cache: {}",
+            self.track_count,
+            plural(self.track_count, "track", "tracks"),
+            self.source_count,
+            plural(self.source_count, "source", "sources"),
+            self.cache_path.to_string_lossy()
+        )
+    }
+}
+
+pub fn scan_local() -> Result<LocalScanSummary, std::io::Error> {
+    scan_local_with_config(Config::load())
+}
+
+fn scan_local_with_config(config: Config) -> Result<LocalScanSummary, std::io::Error> {
+    scan_local_with_cache_path(config, LocalTrackCache::default_path())
+}
+
+fn scan_local_with_cache_path(
+    config: Config,
+    cache_path: PathBuf,
+) -> Result<LocalScanSummary, std::io::Error> {
+    let sources = config.get_local_sources();
+    let track_count = if sources.is_empty() {
+        0
+    } else {
+        LocalFiles::scan_sources_with_cache_path(&sources, cache_path.clone())?
+    };
+
+    Ok(LocalScanSummary {
+        source_count: sources.len(),
+        track_count,
+        cache_path,
+    })
+}
+
+fn plural(count: usize, singular: &'static str, plural: &'static str) -> &'static str {
+    if count == 1 {
+        singular
+    } else {
+        plural
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -501,8 +563,8 @@ fn is_executable_file(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        clear_cache_at, doctor_report_with_options, parse_args, paths_text_with_options, CliAction,
-        DoctorOptions,
+        clear_cache_at, doctor_report_with_options, parse_args, paths_text_with_options,
+        scan_local_with_cache_path, CliAction, DoctorOptions,
     };
     use std::{
         env, fs,
@@ -602,6 +664,53 @@ mod tests {
             "local cache: {}",
             dir.join("local-cache.toml").to_string_lossy()
         )));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn scan_local_command_warms_configured_sources() {
+        assert_eq!(parse_args(["rmus", "scan-local"]), Ok(CliAction::ScanLocal));
+
+        let dir = test_dir("scan-local");
+        fs::write(dir.join("01 - Warmed.flac"), "").unwrap();
+        let cache_path = dir.join("local-cache.toml");
+        let summary = scan_local_with_cache_path(
+            crate::config::Config {
+                local: crate::config::LocalConfig {
+                    sources: vec![crate::config::LocalSource {
+                        name: "Library".to_string(),
+                        path: dir.clone(),
+                    }],
+                },
+                ..crate::config::Config::default()
+            },
+            cache_path.clone(),
+        )
+        .unwrap();
+
+        assert_eq!(summary.source_count, 1);
+        assert_eq!(summary.track_count, 1);
+        assert!(summary.message().contains("Scanned 1 local track"));
+        assert!(cache_path.exists());
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn scan_local_reports_missing_sources() {
+        let dir = test_dir("scan-local-missing");
+        let summary =
+            scan_local_with_cache_path(crate::config::Config::default(), dir.join("cache.toml"))
+                .unwrap();
+
+        assert_eq!(summary.source_count, 0);
+        assert_eq!(summary.track_count, 0);
+        assert_eq!(
+            summary.message(),
+            "No local sources configured; add folders in Settings first"
+        );
+        assert!(!dir.join("cache.toml").exists());
 
         let _ = fs::remove_dir_all(dir);
     }

@@ -131,6 +131,28 @@ fn find_file_named(root: &Path, file_name: &str) -> Option<PathBuf> {
     None
 }
 
+fn state_env(command: &mut Command, state_dir: &Path) {
+    command
+        .env("HOME", state_dir)
+        .env("XDG_CONFIG_HOME", state_dir.join("xdg-config"))
+        .env("APPDATA", state_dir.join("appdata"))
+        .env("LOCALAPPDATA", state_dir.join("localappdata"))
+        .current_dir(state_dir);
+}
+
+fn isolated_config_path(state_dir: &Path) -> PathBuf {
+    let mut command = rmus_binary();
+    state_env(command.arg("paths"), state_dir);
+    let output = command.output().expect("rmus paths should run");
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("config: "))
+        .map(PathBuf::from)
+        .expect("rmus paths should print config path")
+}
+
 #[test]
 fn test_cli_version_prints_without_launching_tui() {
     let output = rmus_binary()
@@ -159,6 +181,7 @@ fn test_cli_help_prints_without_launching_tui() {
     assert!(stdout.contains("keyboard-driven terminal music player"));
     assert!(stdout.contains("doctor"));
     assert!(stdout.contains("paths"));
+    assert!(stdout.contains("scan-local"));
     assert!(stdout.contains("import-playlist"));
     assert!(stdout.contains("export-playlist"));
     assert!(stdout.contains("clear-cache"));
@@ -170,15 +193,9 @@ fn test_cli_paths_prints_storage_paths_without_launching_tui() {
     let state_dir = test_dir("cli-paths");
     std::fs::create_dir_all(&state_dir).unwrap();
 
-    let output = rmus_binary()
-        .arg("paths")
-        .env("HOME", &state_dir)
-        .env("XDG_CONFIG_HOME", state_dir.join("xdg-config"))
-        .env("APPDATA", state_dir.join("appdata"))
-        .env("LOCALAPPDATA", state_dir.join("localappdata"))
-        .current_dir(&state_dir)
-        .output()
-        .expect("rmus paths should run");
+    let mut command = rmus_binary();
+    state_env(command.arg("paths"), &state_dir);
+    let output = command.output().expect("rmus paths should run");
 
     assert!(output.status.success());
     assert!(output.stderr.is_empty());
@@ -195,19 +212,62 @@ fn test_cli_paths_prints_storage_paths_without_launching_tui() {
 }
 
 #[test]
+fn test_cli_scan_local_warms_cache_without_launching_tui() {
+    let state_dir = test_dir("cli-scan-local");
+    let music_dir = state_dir.join("music").join("Album");
+    std::fs::create_dir_all(&music_dir).unwrap();
+    std::fs::write(music_dir.join("01 - First.flac"), "not real audio").unwrap();
+    std::fs::write(music_dir.join("02 - Second.opus"), "not real audio").unwrap();
+
+    let config_path = isolated_config_path(&state_dir);
+    std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &config_path,
+        format!(
+            "\
+[[local.sources]]
+name = \"Library\"
+path = \"{}\"
+
+[audio]
+default_volume = 50
+",
+            state_dir
+                .join("music")
+                .to_string_lossy()
+                .replace('\\', "\\\\")
+        ),
+    )
+    .unwrap();
+
+    let mut command = rmus_binary();
+    state_env(command.arg("scan-local"), &state_dir);
+    let output = command.output().expect("rmus scan-local should run");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Scanned 2 local tracks from 1 local source"));
+    assert!(stdout.contains("local-cache.toml"));
+
+    let cache_path = find_file_named(&state_dir, "local-cache.toml")
+        .expect("scan-local should write the local cache under the isolated state dir");
+    let cache = std::fs::read_to_string(cache_path).unwrap();
+    assert!(cache.contains("01 - First.flac"));
+    assert!(cache.contains("02 - Second.opus"));
+    assert!(cache.contains("[[album_discoveries]]"));
+
+    let _ = std::fs::remove_dir_all(state_dir);
+}
+
+#[test]
 fn test_cli_clear_cache_runs_without_launching_tui() {
     let state_dir = test_dir("cli-clear-cache");
     std::fs::create_dir_all(&state_dir).unwrap();
 
-    let output = rmus_binary()
-        .arg("clear-cache")
-        .env("HOME", &state_dir)
-        .env("XDG_CONFIG_HOME", state_dir.join("xdg-config"))
-        .env("APPDATA", state_dir.join("appdata"))
-        .env("LOCALAPPDATA", state_dir.join("localappdata"))
-        .current_dir(&state_dir)
-        .output()
-        .expect("rmus clear-cache should run");
+    let mut command = rmus_binary();
+    state_env(command.arg("clear-cache"), &state_dir);
+    let output = command.output().expect("rmus clear-cache should run");
 
     assert!(output.status.success());
     assert!(output.stderr.is_empty());

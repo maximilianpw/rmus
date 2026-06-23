@@ -388,6 +388,34 @@ impl LocalFiles {
         Self::songs_from_files(files)
     }
 
+    pub fn scan_sources(sources: &[LocalSource]) -> Result<usize, std::io::Error> {
+        Self::scan_sources_with_cache_path(sources, LocalTrackCache::default_path())
+    }
+
+    pub(crate) fn scan_sources_with_cache_path(
+        sources: &[LocalSource],
+        cache_path: PathBuf,
+    ) -> Result<usize, std::io::Error> {
+        let mut album_cache = LocalAlbumCache::with_path(cache_path.clone());
+        let _ = discover_album_entries_with_cache(sources, &mut album_cache);
+
+        let mut files = Vec::new();
+        for source in sources {
+            collect_audio_files(&source.path, &mut files);
+        }
+        sort_audio_paths(&mut files);
+        files.dedup();
+
+        let track_count = files.len();
+        let mut track_cache = LocalTrackCache::with_path(cache_path);
+        for path in files {
+            let _ = track_cache.song_for_path(&path);
+        }
+        track_cache.save_if_dirty()?;
+
+        Ok(track_count)
+    }
+
     fn songs_directly_from_path(path: PathBuf) -> Vec<Song> {
         let mut files = Vec::new();
         collect_direct_audio_files(&path, &mut files);
@@ -413,16 +441,7 @@ impl LocalFiles {
         #[cfg(test)]
         SONG_SCAN_COUNT.with(|count| count.set(count.get() + files.len()));
 
-        files.sort_by(|a, b| {
-            a.file_name()
-                .map(|name| name.to_string_lossy().to_lowercase())
-                .unwrap_or_default()
-                .cmp(
-                    &b.file_name()
-                        .map(|name| name.to_string_lossy().to_lowercase())
-                        .unwrap_or_default(),
-                )
-        });
+        sort_audio_paths(&mut files);
         let mut songs: Vec<Song> = files
             .into_iter()
             .map(|path| cache.song_for_path(&path))
@@ -435,6 +454,20 @@ impl LocalFiles {
     pub(crate) fn sort_songs_for_playback(songs: &mut [Song]) {
         songs.sort_by(compare_songs_for_playback);
     }
+}
+
+fn sort_audio_paths(files: &mut [PathBuf]) {
+    files.sort_by(|a, b| {
+        a.file_name()
+            .map(|name| name.to_string_lossy().to_lowercase())
+            .unwrap_or_default()
+            .cmp(
+                &b.file_name()
+                    .map(|name| name.to_string_lossy().to_lowercase())
+                    .unwrap_or_default(),
+            )
+            .then_with(|| a.cmp(b))
+    });
 }
 
 fn paths_equivalent(left: &Path, right: &Path) -> bool {
@@ -774,6 +807,33 @@ mod tests {
         assert_eq!(songs.len(), 1);
         assert_eq!(songs[0].title, "01 - Untagged.flac");
         assert_ne!(songs[0].title, "Stale Cached Title");
+
+        let _ = fs::remove_dir_all(dir);
+        let _ = fs::remove_file(cache_path);
+    }
+
+    #[test]
+    fn local_source_scan_warms_album_and_track_cache() {
+        let dir = test_dir("warm-cache");
+        fs::create_dir_all(dir.join("Album")).unwrap();
+        fs::write(dir.join("Album").join("01 - First.flac"), "").unwrap();
+        fs::write(dir.join("Album").join("02 - Second.flac"), "").unwrap();
+        fs::write(dir.join("cover.jpg"), "").unwrap();
+        let cache_path = test_cache_path("warm-cache");
+        let sources = vec![LocalSource {
+            name: "Library".to_string(),
+            path: dir.clone(),
+        }];
+
+        let scanned = LocalFiles::scan_sources_with_cache_path(&sources, cache_path.clone())
+            .expect("scan should warm local cache");
+
+        assert_eq!(scanned, 2);
+        let cache = fs::read_to_string(&cache_path).unwrap();
+        assert!(cache.contains("[[tracks]]"));
+        assert!(cache.contains("01 - First.flac"));
+        assert!(cache.contains("[[album_discoveries]]"));
+        assert!(cache.contains("Album"));
 
         let _ = fs::remove_dir_all(dir);
         let _ = fs::remove_file(cache_path);
