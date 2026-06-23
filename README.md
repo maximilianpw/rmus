@@ -6,8 +6,8 @@ It is focused on fast local-library playback with playlist and queue workflows, 
 
 ## Features
 
-- Local music sources configured from the settings UI, with album-folder discovery under each source.
-- Audio-file filtering, album-aware row labels, disc/track-aware ordering, and best-effort metadata reading via `lofty`.
+- Local music sources configured from the settings UI, with cached album-folder discovery under each source.
+- Audio-file filtering, album-aware row labels, disc/track-aware ordering, and cached best-effort metadata reading via `lofty`.
 - mpv-backed playback with pause, stop, next/previous, seek, volume/mute, shuffle, and repeat controls.
 - Now-playing metadata for artist, album, disc, track, stream source, quality, and duration.
 - Numbered queue view with restart persistence, jump, reorder, remove, clear, playlist add, and save actions.
@@ -46,7 +46,7 @@ cargo clippy --all-targets -- -D warnings
 
 ## Configuration
 
-The app stores config, playlists, playback history, the saved queue, and local track metadata cache under the platform config directory for `com.maximilianpw.rmus`.
+The app stores config, playlists, playback history, the saved queue, and local discovery/track metadata cache under the platform config directory for `com.maximilianpw.rmus`.
 
 Use the in-app settings panel to:
 

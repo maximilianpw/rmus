@@ -112,7 +112,7 @@ impl App {
         let history_store = HistoryStore::default();
         let queue_store = QueueStore::default();
         let restored_queue = queue_store.load();
-        let sources = Self::sources_for_config(&config, playlist_store.clone());
+        let sources = Self::sources_for_config(&config, playlist_store.clone(), false);
         let (log_panel, logger) = LogPanel::new();
         logger.debug(format!("{something}", something = config));
 
@@ -282,7 +282,7 @@ impl App {
         queue_store: QueueStore,
         mut player: Box<dyn MusicPlayer>,
     ) -> Self {
-        let sources = Self::sources_for_config(&config, playlist_store.clone());
+        let sources = Self::sources_for_config(&config, playlist_store.clone(), false);
         let (log_panel, logger) = LogPanel::new();
         let streaming = StreamingCoordinator::new(qobuz, tidal);
         let playback_history = history_store.load();
@@ -330,10 +330,16 @@ impl App {
     fn sources_for_config(
         config: &Config,
         playlist_store: PlaylistStore,
+        force_local_discovery: bool,
     ) -> Vec<Box<dyn MusicSource>> {
         let local_sources: Vec<LocalSource> = config.get_local_sources();
+        let local: Box<dyn MusicSource> = if force_local_discovery {
+            LocalFiles::new_fresh("Local".to_string(), local_sources)
+        } else {
+            LocalFiles::new("Local".to_string(), local_sources)
+        };
         vec![
-            LocalFiles::new("Local".to_string(), local_sources),
+            local,
             Box::new(PlaylistSource::with_store(playlist_store)),
             StreamingTab::boxed("Qobuz"),
             StreamingTab::boxed("Tidal"),
@@ -1547,7 +1553,7 @@ impl App {
                 self.show_history();
             }
             Action::RefreshLibrary => {
-                self.rebuild_left_panel();
+                self.rebuild_left_panel_with_local_discovery(true);
                 let refreshed_local_album = self.refresh_open_local_album();
                 let refreshed_local_library = self.refresh_open_local_library();
                 if !refreshed_local_album && !refreshed_local_library {
@@ -1774,8 +1780,16 @@ impl App {
     }
 
     fn rebuild_left_panel(&mut self) {
+        self.rebuild_left_panel_with_local_discovery(false);
+    }
+
+    fn rebuild_left_panel_with_local_discovery(&mut self, force_local_discovery: bool) {
         let active_tab = self.left_panel.active_tab_name();
-        let sources = Self::sources_for_config(&self.config, self.playlist_store.clone());
+        let sources = Self::sources_for_config(
+            &self.config,
+            self.playlist_store.clone(),
+            force_local_discovery,
+        );
         let mut left_panel = LeftPanel::new(sources, self.logger.clone());
         left_panel.select_tab_by_name(&active_tab);
         self.left_panel = left_panel;

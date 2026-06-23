@@ -9,7 +9,10 @@ use std::{
 
 use crate::{
     config::LocalSource,
-    local_cache::LocalTrackCache,
+    local_cache::{
+        CachedLocalAlbumEntry, CachedLocalAlbumScope, LocalAlbumCache, LocalDirectorySnapshot,
+        LocalTrackCache,
+    },
     sources::{song::Song, MusicSource},
 };
 
@@ -26,6 +29,8 @@ const SUPPORTED_AUDIO_EXTENSIONS: &[&str] = &[
 
 #[cfg(test)]
 static SONG_SCAN_COUNT: AtomicUsize = AtomicUsize::new(0);
+#[cfg(test)]
+static ALBUM_DISCOVERY_SCAN_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 #[cfg(test)]
 pub(crate) fn reset_song_scan_count() {
@@ -35,6 +40,16 @@ pub(crate) fn reset_song_scan_count() {
 #[cfg(test)]
 pub(crate) fn song_scan_count() -> usize {
     SONG_SCAN_COUNT.load(AtomicOrdering::SeqCst)
+}
+
+#[cfg(test)]
+pub(crate) fn reset_album_discovery_scan_count() {
+    ALBUM_DISCOVERY_SCAN_COUNT.store(0, AtomicOrdering::SeqCst);
+}
+
+#[cfg(test)]
+pub(crate) fn album_discovery_scan_count() -> usize {
+    ALBUM_DISCOVERY_SCAN_COUNT.load(AtomicOrdering::SeqCst)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,6 +63,12 @@ struct LocalAlbumEntry {
 enum LocalAlbumScope {
     Direct,
     Recursive,
+}
+
+#[derive(Debug, Clone)]
+struct LocalAlbumDiscoveryResult {
+    entries: Vec<LocalAlbumEntry>,
+    directories: Vec<LocalDirectorySnapshot>,
 }
 
 fn is_supported_audio_file(path: &Path) -> bool {
@@ -95,8 +116,23 @@ fn collect_direct_audio_files(path: &Path, songs: &mut Vec<PathBuf>) {
     }
 }
 
-fn directory_contains_direct_audio(path: &Path) -> bool {
-    let Ok(entries) = fs::read_dir(path) else {
+fn read_album_discovery_dir(
+    path: &Path,
+    snapshots: &mut Vec<LocalDirectorySnapshot>,
+) -> Option<fs::ReadDir> {
+    if let Some(snapshot) = LocalDirectorySnapshot::from_path(path) {
+        snapshots.push(snapshot);
+    }
+    #[cfg(test)]
+    ALBUM_DISCOVERY_SCAN_COUNT.fetch_add(1, AtomicOrdering::SeqCst);
+    fs::read_dir(path).ok()
+}
+
+fn directory_contains_direct_audio(
+    path: &Path,
+    snapshots: &mut Vec<LocalDirectorySnapshot>,
+) -> bool {
+    let Some(entries) = read_album_discovery_dir(path, snapshots) else {
         return false;
     };
 
@@ -129,8 +165,9 @@ fn collect_child_album_entries(
     source_root: &Path,
     path: &Path,
     entries: &mut Vec<LocalAlbumEntry>,
+    snapshots: &mut Vec<LocalDirectorySnapshot>,
 ) {
-    let Ok(read_dir) = fs::read_dir(path) else {
+    let Some(read_dir) = read_album_discovery_dir(path, snapshots) else {
         return;
     };
 
@@ -157,23 +194,24 @@ fn collect_child_album_entries(
     });
 
     for child_dir in child_dirs {
-        if directory_contains_direct_audio(&child_dir) {
+        if directory_contains_direct_audio(&child_dir, snapshots) {
             entries.push(LocalAlbumEntry {
                 name: local_album_entry_name(source_root, &child_dir),
                 path: child_dir.clone(),
                 scope: LocalAlbumScope::Direct,
             });
         }
-        collect_child_album_entries(source_root, &child_dir, entries);
+        collect_child_album_entries(source_root, &child_dir, entries, snapshots);
     }
 }
 
-fn discover_album_entries(sources: &[LocalSource]) -> Vec<LocalAlbumEntry> {
+fn discover_album_entries_uncached(sources: &[LocalSource]) -> LocalAlbumDiscoveryResult {
     let mut discovered = Vec::new();
+    let mut directories = Vec::new();
 
     for source in sources {
         let mut source_entries = Vec::new();
-        if directory_contains_direct_audio(&source.path) {
+        if directory_contains_direct_audio(&source.path, &mut directories) {
             source_entries.push(LocalAlbumEntry {
                 name: source.name.clone(),
                 path: source.path.clone(),
@@ -181,7 +219,12 @@ fn discover_album_entries(sources: &[LocalSource]) -> Vec<LocalAlbumEntry> {
             });
         }
 
-        collect_child_album_entries(&source.path, &source.path, &mut source_entries);
+        collect_child_album_entries(
+            &source.path,
+            &source.path,
+            &mut source_entries,
+            &mut directories,
+        );
 
         if source_entries.is_empty() {
             source_entries.push(LocalAlbumEntry {
@@ -194,7 +237,72 @@ fn discover_album_entries(sources: &[LocalSource]) -> Vec<LocalAlbumEntry> {
         discovered.extend(source_entries);
     }
 
-    discovered
+    LocalAlbumDiscoveryResult {
+        entries: discovered,
+        directories,
+    }
+}
+
+fn discover_album_entries(sources: &[LocalSource]) -> Vec<LocalAlbumEntry> {
+    let mut cache = LocalAlbumCache::default();
+    discover_album_entries_with_cache(sources, &mut cache)
+}
+
+fn discover_album_entries_with_cache(
+    sources: &[LocalSource],
+    cache: &mut LocalAlbumCache,
+) -> Vec<LocalAlbumEntry> {
+    if let Some(entries) = cache.album_entries_for_sources(sources) {
+        return entries
+            .into_iter()
+            .map(LocalAlbumEntry::from_cached)
+            .collect();
+    }
+
+    let result = discover_album_entries_uncached(sources);
+    let cached_entries: Vec<_> = result
+        .entries
+        .iter()
+        .map(LocalAlbumEntry::to_cached)
+        .collect();
+    let _ = cache.save_album_entries(sources, &cached_entries, &result.directories);
+    result.entries
+}
+
+fn discover_album_entries_fresh(sources: &[LocalSource]) -> Vec<LocalAlbumEntry> {
+    let result = discover_album_entries_uncached(sources);
+    let mut cache = LocalAlbumCache::default();
+    let cached_entries: Vec<_> = result
+        .entries
+        .iter()
+        .map(LocalAlbumEntry::to_cached)
+        .collect();
+    let _ = cache.save_album_entries(sources, &cached_entries, &result.directories);
+    result.entries
+}
+
+impl LocalAlbumEntry {
+    fn from_cached(entry: CachedLocalAlbumEntry) -> Self {
+        Self {
+            name: entry.name,
+            path: entry.path,
+            scope: match entry.scope {
+                CachedLocalAlbumScope::Direct => LocalAlbumScope::Direct,
+                CachedLocalAlbumScope::Recursive => LocalAlbumScope::Recursive,
+            },
+        }
+    }
+
+    fn to_cached(&self) -> CachedLocalAlbumEntry {
+        CachedLocalAlbumEntry {
+            name: self.name.clone(),
+            path: self.path.clone(),
+            scope: match self.scope {
+                LocalAlbumScope::Direct => CachedLocalAlbumScope::Direct,
+                LocalAlbumScope::Recursive => CachedLocalAlbumScope::Recursive,
+            },
+        }
+    }
 }
 
 impl MusicSource for LocalFiles {
@@ -227,6 +335,29 @@ impl MusicSource for LocalFiles {
 impl LocalFiles {
     pub fn new(name: String, files: Vec<LocalSource>) -> Box<Self> {
         let album_entries = discover_album_entries(&files);
+        Box::new(LocalFiles {
+            name,
+            files,
+            album_entries,
+        })
+    }
+
+    pub fn new_fresh(name: String, files: Vec<LocalSource>) -> Box<Self> {
+        let album_entries = discover_album_entries_fresh(&files);
+        Box::new(LocalFiles {
+            name,
+            files,
+            album_entries,
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_with_album_cache(
+        name: String,
+        files: Vec<LocalSource>,
+        cache: &mut LocalAlbumCache,
+    ) -> Box<Self> {
+        let album_entries = discover_album_entries_with_cache(&files, cache);
         Box::new(LocalFiles {
             name,
             files,
@@ -359,8 +490,11 @@ fn song_title_sort_key(song: &Song) -> String {
 mod tests {
     use super::*;
     use crate::config::LocalSource;
-    use crate::local_cache::LocalTrackCache;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use crate::local_cache::{LocalAlbumCache, LocalTrackCache};
+    use std::{
+        thread,
+        time::{Duration, SystemTime, UNIX_EPOCH},
+    };
 
     fn test_dir(name: &str) -> PathBuf {
         let nanos = SystemTime::now()
@@ -525,6 +659,79 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn local_source_uses_cached_album_discovery_for_unchanged_sources() {
+        let dir = test_dir("cached-album-discovery");
+        fs::create_dir_all(dir.join("Alpha")).unwrap();
+        fs::write(dir.join("Alpha").join("01 - Alpha.flac"), "").unwrap();
+        let sources = vec![LocalSource {
+            name: "Library".to_string(),
+            path: dir.clone(),
+        }];
+        let cache_path = test_cache_path("album-discovery");
+
+        let mut cache = LocalAlbumCache::with_path(cache_path.clone());
+        reset_album_discovery_scan_count();
+        let first =
+            LocalFiles::new_with_album_cache("Local".to_string(), sources.clone(), &mut cache);
+        assert_eq!(first.get_albums(), vec!["Alpha".to_string()]);
+        assert!(
+            album_discovery_scan_count() > 0,
+            "first discovery should walk local directories"
+        );
+
+        let mut cache = LocalAlbumCache::with_path(cache_path.clone());
+        reset_album_discovery_scan_count();
+        let second = LocalFiles::new_with_album_cache("Local".to_string(), sources, &mut cache);
+
+        assert_eq!(second.get_albums(), vec!["Alpha".to_string()]);
+        assert_eq!(
+            album_discovery_scan_count(),
+            0,
+            "unchanged sources should reuse cached album entries without walking directories"
+        );
+
+        let _ = fs::remove_dir_all(dir);
+        let _ = fs::remove_file(cache_path);
+    }
+
+    #[test]
+    fn local_source_invalidates_cached_album_discovery_when_directory_changes() {
+        let dir = test_dir("cached-album-discovery-invalidated");
+        fs::create_dir_all(dir.join("Alpha")).unwrap();
+        fs::write(dir.join("Alpha").join("01 - Alpha.flac"), "").unwrap();
+        let sources = vec![LocalSource {
+            name: "Library".to_string(),
+            path: dir.clone(),
+        }];
+        let cache_path = test_cache_path("album-discovery-invalidated");
+
+        let mut cache = LocalAlbumCache::with_path(cache_path.clone());
+        let first =
+            LocalFiles::new_with_album_cache("Local".to_string(), sources.clone(), &mut cache);
+        assert_eq!(first.get_albums(), vec!["Alpha".to_string()]);
+
+        thread::sleep(Duration::from_millis(10));
+        fs::create_dir_all(dir.join("Beta")).unwrap();
+        fs::write(dir.join("Beta").join("01 - Beta.flac"), "").unwrap();
+
+        let mut cache = LocalAlbumCache::with_path(cache_path.clone());
+        reset_album_discovery_scan_count();
+        let refreshed = LocalFiles::new_with_album_cache("Local".to_string(), sources, &mut cache);
+
+        assert!(
+            album_discovery_scan_count() > 0,
+            "directory changes should invalidate cached album discovery"
+        );
+        assert_eq!(
+            refreshed.get_albums(),
+            vec!["Alpha".to_string(), "Beta".to_string()]
+        );
+
+        let _ = fs::remove_dir_all(dir);
+        let _ = fs::remove_file(cache_path);
     }
 
     #[test]
