@@ -34,9 +34,12 @@ cargo run
 
 ```sh
 rmus doctor
+rmus paths
 ```
 
 The doctor command checks the installed `rmus` version, whether `mpv` is available on `PATH`, where config/playlists/history/queue/local-cache files are stored, and whether configured local source folders still exist.
+
+The paths command prints only the app storage paths, which is useful when inspecting config, playlists, playback state, or the local metadata cache directly.
 
 ## Import Playlists
 

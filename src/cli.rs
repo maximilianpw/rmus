@@ -19,6 +19,7 @@ pub enum CliAction {
     Help,
     Version,
     Doctor,
+    Paths,
     ImportPlaylist { path: PathBuf, name: Option<String> },
     ExportPlaylist { name: String, path: PathBuf },
     ClearCache,
@@ -41,6 +42,7 @@ where
         "-h" | "--help" => no_more_args(args, CliAction::Help, &first),
         "-V" | "--version" => no_more_args(args, CliAction::Version, &first),
         "doctor" => no_more_args(args, CliAction::Doctor, &first),
+        "paths" => no_more_args(args, CliAction::Paths, &first),
         "import-playlist" => parse_import_playlist_args(args),
         "export-playlist" => parse_export_playlist_args(args),
         "clear-cache" => no_more_args(args, CliAction::ClearCache, &first),
@@ -127,6 +129,7 @@ pub fn help_text() -> &'static str {
         "\n",
         "Commands:\n",
         "  doctor          Check runtime dependencies and app paths\n",
+        "  paths           Print app storage paths\n",
         "  import-playlist <PATH> [NAME]\n",
         "                  Import a local .m3u/.m3u8 playlist\n",
         "  export-playlist <NAME> <PATH>\n",
@@ -183,6 +186,28 @@ fn clear_cache_at(path: &Path) -> Result<CacheClearSummary, std::io::Error> {
         }),
         Err(error) => Err(error),
     }
+}
+
+pub fn paths_text() -> String {
+    paths_text_with_options(DoctorOptions::current())
+}
+
+fn paths_text_with_options(options: DoctorOptions) -> String {
+    format!(
+        "\
+rmus paths
+config: {}
+playlists: {}
+history: {}
+queue: {}
+local cache: {}
+",
+        options.config_path.to_string_lossy(),
+        options.playlists_dir.to_string_lossy(),
+        options.history_path.to_string_lossy(),
+        options.queue_path.to_string_lossy(),
+        options.local_cache_path.to_string_lossy()
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -475,7 +500,10 @@ fn is_executable_file(path: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{clear_cache_at, doctor_report_with_options, parse_args, CliAction, DoctorOptions};
+    use super::{
+        clear_cache_at, doctor_report_with_options, parse_args, paths_text_with_options, CliAction,
+        DoctorOptions,
+    };
     use std::{
         env, fs,
         path::PathBuf,
@@ -537,6 +565,45 @@ mod tests {
     #[test]
     fn doctor_command_runs_diagnostics() {
         assert_eq!(parse_args(["rmus", "doctor"]), Ok(CliAction::Doctor));
+    }
+
+    #[test]
+    fn paths_command_prints_storage_paths() {
+        assert_eq!(parse_args(["rmus", "paths"]), Ok(CliAction::Paths));
+
+        let dir = test_dir("paths");
+        let text = paths_text_with_options(DoctorOptions {
+            path_env: None,
+            config_path: dir.join("config.toml"),
+            playlists_dir: dir.join("playlists"),
+            history_path: dir.join("history.toml"),
+            queue_path: dir.join("queue.toml"),
+            local_cache_path: dir.join("local-cache.toml"),
+        });
+
+        assert!(text.contains("rmus paths"));
+        assert!(text.contains(&format!(
+            "config: {}",
+            dir.join("config.toml").to_string_lossy()
+        )));
+        assert!(text.contains(&format!(
+            "playlists: {}",
+            dir.join("playlists").to_string_lossy()
+        )));
+        assert!(text.contains(&format!(
+            "history: {}",
+            dir.join("history.toml").to_string_lossy()
+        )));
+        assert!(text.contains(&format!(
+            "queue: {}",
+            dir.join("queue.toml").to_string_lossy()
+        )));
+        assert!(text.contains(&format!(
+            "local cache: {}",
+            dir.join("local-cache.toml").to_string_lossy()
+        )));
+
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

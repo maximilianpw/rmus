@@ -158,10 +158,40 @@ fn test_cli_help_prints_without_launching_tui() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("keyboard-driven terminal music player"));
     assert!(stdout.contains("doctor"));
+    assert!(stdout.contains("paths"));
     assert!(stdout.contains("import-playlist"));
     assert!(stdout.contains("export-playlist"));
     assert!(stdout.contains("clear-cache"));
     assert!(stdout.contains("--version"));
+}
+
+#[test]
+fn test_cli_paths_prints_storage_paths_without_launching_tui() {
+    let state_dir = test_dir("cli-paths");
+    std::fs::create_dir_all(&state_dir).unwrap();
+
+    let output = rmus_binary()
+        .arg("paths")
+        .env("HOME", &state_dir)
+        .env("XDG_CONFIG_HOME", state_dir.join("xdg-config"))
+        .env("APPDATA", state_dir.join("appdata"))
+        .env("LOCALAPPDATA", state_dir.join("localappdata"))
+        .current_dir(&state_dir)
+        .output()
+        .expect("rmus paths should run");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("rmus paths"));
+    assert!(stdout.contains("config:"));
+    assert!(stdout.contains("playlists:"));
+    assert!(stdout.contains("history:"));
+    assert!(stdout.contains("queue:"));
+    assert!(stdout.contains("local cache:"));
+    assert!(stdout.contains("local-cache.toml"));
+
+    let _ = std::fs::remove_dir_all(state_dir);
 }
 
 #[test]

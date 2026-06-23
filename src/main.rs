@@ -14,6 +14,10 @@ fn main() -> color_eyre::Result<()> {
             print!("{}", report.to_text());
             std::process::exit(report.exit_code());
         }
+        Ok(rmus::cli::CliAction::Paths) => {
+            print!("{}", rmus::cli::paths_text());
+            return Ok(());
+        }
         Ok(rmus::cli::CliAction::ImportPlaylist { path, name }) => {
             let summary = rmus::cli::import_playlist(&path, name.as_deref())?;
             println!("{}", summary.message());
