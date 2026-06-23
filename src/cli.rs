@@ -29,6 +29,7 @@ pub enum CliAction {
     AddSource { name: String, path: PathBuf },
     RemoveSource { name: String },
     ShowPlaylist { name: String },
+    DeletePlaylist { name: String },
     ImportPlaylist { path: PathBuf, name: Option<String> },
     ExportPlaylist { name: String, path: PathBuf },
     ClearCache,
@@ -59,6 +60,7 @@ where
         "add-source" => parse_add_source_args(args),
         "remove-source" => parse_remove_source_args(args),
         "show-playlist" => parse_show_playlist_args(args),
+        "delete-playlist" => parse_delete_playlist_args(args),
         "import-playlist" => parse_import_playlist_args(args),
         "export-playlist" => parse_export_playlist_args(args),
         "clear-cache" => no_more_args(args, CliAction::ClearCache, &first),
@@ -154,6 +156,26 @@ where
     Ok(CliAction::ShowPlaylist { name })
 }
 
+fn parse_delete_playlist_args<I>(mut args: I) -> Result<CliAction, String>
+where
+    I: Iterator<Item = String>,
+{
+    let Some(name) = args.next() else {
+        return Err(format!(
+            "missing playlist name for delete-playlist\n\n{}",
+            help_text()
+        ));
+    };
+    if args.next().is_some() {
+        return Err(format!(
+            "unexpected argument after playlist name\n\n{}",
+            help_text()
+        ));
+    }
+
+    Ok(CliAction::DeletePlaylist { name })
+}
+
 fn parse_import_playlist_args<I>(mut args: I) -> Result<CliAction, String>
 where
     I: Iterator<Item = String>,
@@ -232,6 +254,8 @@ pub fn help_text() -> &'static str {
         "                  Remove a local music folder from config\n",
         "  show-playlist <NAME>\n",
         "                  Print saved tracks in a playlist\n",
+        "  delete-playlist <NAME>\n",
+        "                  Delete a saved playlist\n",
         "  import-playlist <PATH> [NAME]\n",
         "                  Import a local .m3u/.m3u8 playlist\n",
         "  export-playlist <NAME> <PATH>\n",
@@ -440,6 +464,55 @@ fn nonblank(value: &str) -> Option<&str> {
     } else {
         Some(value)
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlaylistDeleteSummary {
+    pub name: String,
+    pub track_count: usize,
+}
+
+impl PlaylistDeleteSummary {
+    pub fn message(&self) -> String {
+        format!(
+            "Deleted playlist '{}' ({})",
+            self.name,
+            track_count_label(self.track_count)
+        )
+    }
+}
+
+pub fn delete_playlist(name: &str) -> Result<PlaylistDeleteSummary, String> {
+    delete_playlist_with_store(PlaylistStore::default(), name)
+}
+
+fn delete_playlist_with_store(
+    store: PlaylistStore,
+    name: &str,
+) -> Result<PlaylistDeleteSummary, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("Playlist name is required".to_string());
+    }
+
+    let playlists = store.load_all();
+    let Some((index, playlist)) = playlists
+        .iter()
+        .enumerate()
+        .find(|(_, playlist)| playlist.name.eq_ignore_ascii_case(name))
+    else {
+        return Err(format!("Playlist '{name}' not found"));
+    };
+
+    let summary = PlaylistDeleteSummary {
+        name: playlist.name.clone(),
+        track_count: playlist.tracks.len(),
+    };
+    store
+        .delete_at(index)
+        .map_err(|error| format!("failed to delete playlist '{}': {error}", summary.name))?;
+
+    Ok(summary)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1155,10 +1228,11 @@ fn is_executable_file(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        add_source_to_config, clear_cache_at, doctor_report_with_options,
-        list_playlists_with_store, list_sources_from_config, local_stats_with_cache_path,
-        parse_args, paths_text_with_options, remove_source_from_config, scan_local_with_cache_path,
-        show_playlist_with_store, CliAction, DoctorOptions,
+        add_source_to_config, clear_cache_at, delete_playlist_with_store,
+        doctor_report_with_options, list_playlists_with_store, list_sources_from_config,
+        local_stats_with_cache_path, parse_args, paths_text_with_options,
+        remove_source_from_config, scan_local_with_cache_path, show_playlist_with_store, CliAction,
+        DoctorOptions,
     };
     use std::{
         env, fs,
@@ -1449,6 +1523,65 @@ tracks = []
         assert_eq!(blank, "Playlist name is required");
         let missing =
             show_playlist_with_store(store, "Missing").expect_err("unknown playlists should fail");
+        assert_eq!(missing, "Playlist 'Missing' not found");
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn delete_playlist_command_removes_saved_playlist() {
+        assert_eq!(
+            parse_args(["rmus", "delete-playlist", "Road Mix"]),
+            Ok(CliAction::DeletePlaylist {
+                name: "Road Mix".to_string()
+            })
+        );
+        let missing_name =
+            parse_args(["rmus", "delete-playlist"]).expect_err("name should be required");
+        assert!(missing_name.contains("missing playlist name for delete-playlist"));
+        let extra = parse_args(["rmus", "delete-playlist", "Road Mix", "extra"])
+            .expect_err("extra args should fail");
+        assert!(extra.contains("unexpected argument after playlist name"));
+
+        let dir = test_dir("delete-playlist");
+        let playlists_dir = dir.join("playlists");
+        fs::create_dir_all(&playlists_dir).unwrap();
+        fs::write(
+            playlists_dir.join("Road Mix.toml"),
+            r#"
+name = "Road Mix"
+
+[[tracks]]
+title = "First"
+
+[[tracks]]
+title = "Second"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            playlists_dir.join("Keep.toml"),
+            r#"
+name = "Keep"
+tracks = []
+"#,
+        )
+        .unwrap();
+        let store = crate::playlist::PlaylistStore::with_dir(playlists_dir.clone());
+
+        let summary = delete_playlist_with_store(store.clone(), "road mix").unwrap();
+
+        assert_eq!(summary.name, "Road Mix");
+        assert_eq!(summary.track_count, 2);
+        assert_eq!(summary.message(), "Deleted playlist 'Road Mix' (2 tracks)");
+        assert!(!playlists_dir.join("Road Mix.toml").exists());
+        assert!(playlists_dir.join("Keep.toml").exists());
+
+        let blank = delete_playlist_with_store(store.clone(), " ")
+            .expect_err("blank names should be rejected");
+        assert_eq!(blank, "Playlist name is required");
+        let missing = delete_playlist_with_store(store, "Missing")
+            .expect_err("unknown playlists should fail");
         assert_eq!(missing, "Playlist 'Missing' not found");
 
         let _ = fs::remove_dir_all(dir);

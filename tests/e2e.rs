@@ -197,6 +197,7 @@ fn test_cli_help_prints_without_launching_tui() {
     assert!(stdout.contains("add-source"));
     assert!(stdout.contains("remove-source"));
     assert!(stdout.contains("show-playlist"));
+    assert!(stdout.contains("delete-playlist"));
     assert!(stdout.contains("import-playlist"));
     assert!(stdout.contains("export-playlist"));
     assert!(stdout.contains("clear-cache"));
@@ -492,6 +493,70 @@ stream_track_id = "qbz-1"
     let missing_output = missing_command
         .output()
         .expect("missing rmus show-playlist should run");
+    assert!(!missing_output.status.success());
+    let stderr = String::from_utf8(missing_output.stderr).unwrap();
+    assert!(stderr.contains("Playlist 'Missing' not found"));
+
+    let _ = std::fs::remove_dir_all(state_dir);
+}
+
+#[test]
+fn test_cli_delete_playlist_removes_saved_playlist_without_launching_tui() {
+    let state_dir = test_dir("cli-delete-playlist");
+    std::fs::create_dir_all(&state_dir).unwrap();
+    let playlists_dir = isolated_playlists_dir(&state_dir);
+    std::fs::create_dir_all(&playlists_dir).unwrap();
+    std::fs::write(
+        playlists_dir.join("Road Mix.toml"),
+        r#"
+name = "Road Mix"
+
+[[tracks]]
+title = "First"
+
+[[tracks]]
+title = "Second"
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        playlists_dir.join("Keep.toml"),
+        r#"
+name = "Keep"
+tracks = []
+"#,
+    )
+    .unwrap();
+
+    let mut command = rmus_binary();
+    state_env(command.args(["delete-playlist", "road mix"]), &state_dir);
+    let output = command.output().expect("rmus delete-playlist should run");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Deleted playlist 'Road Mix' (2 tracks)"));
+    assert!(!playlists_dir.join("Road Mix.toml").exists());
+    assert!(playlists_dir.join("Keep.toml").exists());
+
+    let mut list_command = rmus_binary();
+    state_env(list_command.arg("list-playlists"), &state_dir);
+    let list_output = list_command
+        .output()
+        .expect("rmus list-playlists should run after delete");
+    assert!(list_output.status.success());
+    let list_stdout = String::from_utf8(list_output.stdout).unwrap();
+    assert!(list_stdout.contains("- Keep (0 tracks)"));
+    assert!(!list_stdout.contains("Road Mix"));
+
+    let mut missing_command = rmus_binary();
+    state_env(
+        missing_command.args(["delete-playlist", "Missing"]),
+        &state_dir,
+    );
+    let missing_output = missing_command
+        .output()
+        .expect("missing rmus delete-playlist should run");
     assert!(!missing_output.status.success());
     let stderr = String::from_utf8(missing_output.stderr).unwrap();
     assert!(stderr.contains("Playlist 'Missing' not found"));
