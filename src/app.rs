@@ -1793,6 +1793,12 @@ impl App {
             }
 
             let local_changed = self.config.local != new_config.local;
+            let should_auto_warm_local_cache = local_changed
+                && self.running
+                && Self::local_sources_include_new_paths(
+                    &self.config.local.sources,
+                    &new_config.local.sources,
+                );
             let stream_quality_changed =
                 self.config.audio.max_stream_quality != new_config.audio.max_stream_quality;
             let removed_local_source_paths: Vec<_> = if local_changed {
@@ -1862,6 +1868,9 @@ impl App {
                 if !refreshed_local_library && !refreshed_local_album {
                     self.center_panel
                         .clear_album_if_under_any_path(&removed_local_source_paths);
+                }
+                if should_auto_warm_local_cache {
+                    self.start_local_cache_scan();
                 }
             }
             self.settings_panel.update_config(&self.config);
@@ -2132,6 +2141,17 @@ impl App {
             (left.canonicalize(), right.canonicalize()),
             (Ok(left), Ok(right)) if left == right
         )
+    }
+
+    fn local_sources_include_new_paths(
+        current_sources: &[LocalSource],
+        next_sources: &[LocalSource],
+    ) -> bool {
+        next_sources.iter().any(|next_source| {
+            !current_sources.iter().any(|current_source| {
+                Self::paths_equivalent(&current_source.path, &next_source.path)
+            })
+        })
     }
 
     fn poll_pending_auth(&mut self) {
@@ -3430,6 +3450,62 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn source_update_auto_warms_cache_in_running_app() {
+        let dir = temp_dir("auto-warm-source-update");
+        fs::write(dir.join("01 - Ready.flac"), "audio").unwrap();
+        let cache_dir = temp_dir("auto-warm-source-update-cache");
+        let cache_path = cache_dir.join("cache.toml");
+        let mut app = App::new_for_test(default_config(), None, None);
+        app.local_cache_path = cache_path.clone();
+        app.running = true;
+
+        app.settings_panel.toggle_open();
+        app.settings_panel.handle_events(key(KeyCode::Char('a')));
+        for c in "Library".chars() {
+            app.settings_panel.handle_events(key(KeyCode::Char(c)));
+        }
+        app.settings_panel.handle_events(key(KeyCode::Tab));
+        for c in dir.to_string_lossy().chars() {
+            app.settings_panel.handle_events(key(KeyCode::Char(c)));
+        }
+        app.settings_panel.handle_events(key(KeyCode::Enter));
+
+        app.sync_config_from_settings();
+
+        assert!(app.local_scan_result.is_some());
+        wait_for_local_scan(&mut app);
+
+        let cache = fs::read_to_string(&cache_path).unwrap();
+        assert!(cache.contains("[[album_discoveries]]"));
+        assert!(cache.contains("01 - Ready.flac"));
+
+        let _ = fs::remove_dir_all(dir);
+        let _ = fs::remove_dir_all(cache_dir);
+    }
+
+    #[test]
+    fn local_source_path_detection_ignores_renames_and_detects_new_paths() {
+        let original = vec![LocalSource {
+            name: "Old Name".to_string(),
+            path: PathBuf::from("/music/library"),
+        }];
+        let renamed = vec![LocalSource {
+            name: "New Name".to_string(),
+            path: PathBuf::from("/music/library"),
+        }];
+        let added = vec![
+            renamed[0].clone(),
+            LocalSource {
+                name: "Second".to_string(),
+                path: PathBuf::from("/music/second"),
+            },
+        ];
+
+        assert!(!App::local_sources_include_new_paths(&original, &renamed));
+        assert!(App::local_sources_include_new_paths(&original, &added));
     }
 
     #[test]
