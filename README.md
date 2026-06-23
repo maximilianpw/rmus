@@ -39,10 +39,13 @@ cargo run
 ## Diagnostics
 
 ```sh
+rmus add-source "Music" ~/Documents/Music
 rmus doctor
 rmus paths
 rmus local-stats
 ```
+
+The add-source command validates and stores a local music folder without opening the TUI. It canonicalizes the path and rejects duplicate source names or paths.
 
 The doctor command checks the installed `rmus` version, whether `mpv` is available on `PATH`, where config/playlists/history/queue/local-cache files are stored, and whether configured local source folders still exist.
 

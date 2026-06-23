@@ -23,6 +23,7 @@ pub enum CliAction {
     Paths,
     LocalStats,
     ScanLocal,
+    AddSource { name: String, path: PathBuf },
     ImportPlaylist { path: PathBuf, name: Option<String> },
     ExportPlaylist { name: String, path: PathBuf },
     ClearCache,
@@ -48,6 +49,7 @@ where
         "paths" => no_more_args(args, CliAction::Paths, &first),
         "local-stats" => no_more_args(args, CliAction::LocalStats, &first),
         "scan-local" => no_more_args(args, CliAction::ScanLocal, &first),
+        "add-source" => parse_add_source_args(args),
         "import-playlist" => parse_import_playlist_args(args),
         "export-playlist" => parse_export_playlist_args(args),
         "clear-cache" => no_more_args(args, CliAction::ClearCache, &first),
@@ -66,6 +68,29 @@ where
         ));
     }
     Ok(action)
+}
+
+fn parse_add_source_args<I>(mut args: I) -> Result<CliAction, String>
+where
+    I: Iterator<Item = String>,
+{
+    let Some(name) = args.next() else {
+        return Err(format!("missing name for add-source\n\n{}", help_text()));
+    };
+    let Some(path) = args.next() else {
+        return Err(format!("missing path for add-source\n\n{}", help_text()));
+    };
+    if args.next().is_some() {
+        return Err(format!(
+            "unexpected argument after source path\n\n{}",
+            help_text()
+        ));
+    }
+
+    Ok(CliAction::AddSource {
+        name,
+        path: PathBuf::from(path),
+    })
 }
 
 fn parse_import_playlist_args<I>(mut args: I) -> Result<CliAction, String>
@@ -137,6 +162,8 @@ pub fn help_text() -> &'static str {
         "  paths           Print app storage paths\n",
         "  local-stats     Count configured local sources, albums, and tracks\n",
         "  scan-local      Scan configured local sources into the metadata cache\n",
+        "  add-source <NAME> <PATH>\n",
+        "                  Add a local music folder to config\n",
         "  import-playlist <PATH> [NAME]\n",
         "                  Import a local .m3u/.m3u8 playlist\n",
         "  export-playlist <NAME> <PATH>\n",
@@ -147,6 +174,98 @@ pub fn help_text() -> &'static str {
         "  -h, --help       Print help\n",
         "  -V, --version    Print version\n"
     )
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalSourceAddSummary {
+    pub name: String,
+    pub path: PathBuf,
+    pub source_count: usize,
+}
+
+impl LocalSourceAddSummary {
+    pub fn message(&self) -> String {
+        format!(
+            "Added local source '{}' at {}; {} configured {}",
+            self.name,
+            self.path.to_string_lossy(),
+            self.source_count,
+            plural(self.source_count, "source", "sources")
+        )
+    }
+}
+
+pub fn add_source(name: &str, path: &Path) -> Result<LocalSourceAddSummary, String> {
+    let mut config = Config::load();
+    let summary = add_source_to_config(&mut config, name, path)?;
+    config
+        .save()
+        .map_err(|error| format!("failed to save config: {error}"))?;
+    Ok(summary)
+}
+
+fn add_source_to_config(
+    config: &mut Config,
+    name: &str,
+    path: &Path,
+) -> Result<LocalSourceAddSummary, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("source name is required".to_string());
+    }
+
+    let path = expand_home_path(path);
+    if !path.is_dir() {
+        return Err(format!(
+            "source path must be an existing directory: {}",
+            path.to_string_lossy()
+        ));
+    }
+    let path = path.canonicalize().unwrap_or(path);
+
+    if config
+        .local
+        .sources
+        .iter()
+        .any(|source| source.name.eq_ignore_ascii_case(name))
+    {
+        return Err(format!("source name already exists: {name}"));
+    }
+
+    if config.local.sources.iter().any(|source| {
+        source
+            .path
+            .canonicalize()
+            .map_or(source.path == path, |existing| existing == path)
+    }) {
+        return Err(format!(
+            "source path already exists: {}",
+            path.to_string_lossy()
+        ));
+    }
+
+    config.add_local_source(name.to_string(), path.clone());
+    Ok(LocalSourceAddSummary {
+        name: name.to_string(),
+        path,
+        source_count: config.local.sources.len(),
+    })
+}
+
+fn expand_home_path(path: &Path) -> PathBuf {
+    let path_text = path.to_string_lossy();
+    if path_text == "~" {
+        return env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| path.to_path_buf());
+    }
+    if let Some(rest) = path_text.strip_prefix("~/") {
+        return env::var_os("HOME")
+            .map(PathBuf::from)
+            .map(|home| home.join(rest))
+            .unwrap_or_else(|| path.to_path_buf());
+    }
+    path.to_path_buf()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -646,8 +765,9 @@ fn is_executable_file(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        clear_cache_at, doctor_report_with_options, local_stats_with_cache_path, parse_args,
-        paths_text_with_options, scan_local_with_cache_path, CliAction, DoctorOptions,
+        add_source_to_config, clear_cache_at, doctor_report_with_options,
+        local_stats_with_cache_path, parse_args, paths_text_with_options,
+        scan_local_with_cache_path, CliAction, DoctorOptions,
     };
     use std::{
         env, fs,
@@ -816,6 +936,77 @@ mod tests {
             summary.message(),
             "No local sources configured; add folders in Settings first"
         );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn add_source_command_accepts_name_and_path() {
+        assert_eq!(
+            parse_args(["rmus", "add-source", "Library", "/music"]),
+            Ok(CliAction::AddSource {
+                name: "Library".to_string(),
+                path: PathBuf::from("/music"),
+            })
+        );
+    }
+
+    #[test]
+    fn add_source_command_requires_name_and_path() {
+        let error = parse_args(["rmus", "add-source"]).expect_err("name should be required");
+        assert!(error.contains("missing name for add-source"));
+
+        let error =
+            parse_args(["rmus", "add-source", "Library"]).expect_err("path should be required");
+        assert!(error.contains("missing path for add-source"));
+    }
+
+    #[test]
+    fn add_source_to_config_validates_and_canonicalizes_path() {
+        let dir = test_dir("add-source");
+        let entered = dir.join(".");
+        let mut config = crate::config::Config::default();
+
+        let summary = add_source_to_config(&mut config, " Library ", &entered).unwrap();
+
+        assert_eq!(summary.name, "Library");
+        assert_eq!(summary.path, dir.canonicalize().unwrap());
+        assert_eq!(summary.source_count, 1);
+        assert_eq!(config.local.sources[0].name, "Library");
+        assert_eq!(config.local.sources[0].path, dir.canonicalize().unwrap());
+        assert!(summary.message().contains("Added local source 'Library'"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn add_source_to_config_rejects_duplicate_names_and_paths() {
+        let dir = test_dir("add-source-duplicates");
+        let mut config = crate::config::Config::default();
+        add_source_to_config(&mut config, "Library", &dir).unwrap();
+
+        let name_error = add_source_to_config(&mut config, "library", &dir.join("."))
+            .expect_err("case-insensitive duplicate names should be rejected");
+        assert!(name_error.contains("source name already exists"));
+
+        let path_error = add_source_to_config(&mut config, "Other", &dir.join("."))
+            .expect_err("canonical duplicate paths should be rejected");
+        assert!(path_error.contains("source path already exists"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn add_source_to_config_rejects_missing_directories() {
+        let dir = test_dir("add-source-missing");
+        let missing = dir.join("Missing");
+        let mut config = crate::config::Config::default();
+
+        let error =
+            add_source_to_config(&mut config, "Missing", &missing).expect_err("path should exist");
+
+        assert!(error.contains("source path must be an existing directory"));
+        assert!(config.local.sources.is_empty());
 
         let _ = fs::remove_dir_all(dir);
     }

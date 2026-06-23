@@ -183,6 +183,7 @@ fn test_cli_help_prints_without_launching_tui() {
     assert!(stdout.contains("paths"));
     assert!(stdout.contains("local-stats"));
     assert!(stdout.contains("scan-local"));
+    assert!(stdout.contains("add-source"));
     assert!(stdout.contains("import-playlist"));
     assert!(stdout.contains("export-playlist"));
     assert!(stdout.contains("clear-cache"));
@@ -208,6 +209,64 @@ fn test_cli_paths_prints_storage_paths_without_launching_tui() {
     assert!(stdout.contains("queue:"));
     assert!(stdout.contains("local cache:"));
     assert!(stdout.contains("local-cache.toml"));
+
+    let _ = std::fs::remove_dir_all(state_dir);
+}
+
+#[test]
+fn test_cli_add_source_updates_config_without_launching_tui() {
+    let state_dir = test_dir("cli-add-source");
+    let music_dir = state_dir.join("music");
+    std::fs::create_dir_all(&music_dir).unwrap();
+    std::fs::write(music_dir.join("01 - First.flac"), "not real audio").unwrap();
+
+    let mut add_command = rmus_binary();
+    state_env(
+        add_command.args([
+            "add-source",
+            "Library",
+            music_dir.join(".").to_str().unwrap(),
+        ]),
+        &state_dir,
+    );
+    let add_output = add_command.output().expect("rmus add-source should run");
+
+    assert!(add_output.status.success());
+    assert!(add_output.stderr.is_empty());
+    let add_stdout = String::from_utf8(add_output.stdout).unwrap();
+    assert!(add_stdout.contains("Added local source 'Library'"));
+    assert!(add_stdout.contains("1 configured source"));
+
+    let config_path = isolated_config_path(&state_dir);
+    let config = std::fs::read_to_string(&config_path).unwrap();
+    assert!(config.contains("name = \"Library\""));
+    assert!(config.contains(
+        &music_dir
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .to_string()
+    ));
+
+    let mut stats_command = rmus_binary();
+    state_env(stats_command.arg("local-stats"), &state_dir);
+    let stats_output = stats_command.output().expect("rmus local-stats should run");
+    assert!(stats_output.status.success());
+    let stats_stdout = String::from_utf8(stats_output.stdout).unwrap();
+    assert!(stats_stdout.contains("Local library: 1 configured source"));
+    assert!(stats_stdout.contains("1 playable track"));
+
+    let mut duplicate_command = rmus_binary();
+    state_env(
+        duplicate_command.args(["add-source", "Other", music_dir.to_str().unwrap()]),
+        &state_dir,
+    );
+    let duplicate_output = duplicate_command
+        .output()
+        .expect("duplicate rmus add-source should run");
+    assert!(!duplicate_output.status.success());
+    let duplicate_stderr = String::from_utf8(duplicate_output.stderr).unwrap();
+    assert!(duplicate_stderr.contains("source path already exists"));
 
     let _ = std::fs::remove_dir_all(state_dir);
 }
