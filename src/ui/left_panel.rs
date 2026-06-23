@@ -123,8 +123,8 @@ impl LeftPanel {
         match key.code {
             KeyCode::Char('j') | KeyCode::Down => self.next_item(),
             KeyCode::Char('k') | KeyCode::Up => self.previous_item(),
-            KeyCode::Home => self.first_item(),
-            KeyCode::End => self.last_item(),
+            KeyCode::Home | KeyCode::Char('g') => self.first_item(),
+            KeyCode::End | KeyCode::Char('G') => self.last_item(),
             KeyCode::PageDown => self.next_page(),
             KeyCode::PageUp => self.previous_page(),
             KeyCode::Char('l') | KeyCode::Right => self.next_tab(),
@@ -421,7 +421,7 @@ mod tests {
     }
 
     #[test]
-    fn home_and_end_jump_to_first_and_last_left_panel_items() {
+    fn top_and_bottom_keys_jump_to_first_and_last_left_panel_items() {
         let (_log_panel, logger) = crate::ui::log_panel::LogPanel::new();
         let mut panel = LeftPanel::new(
             vec![Box::new(FakeSource::new(
@@ -435,6 +435,12 @@ mod tests {
         assert_eq!(panel.selected_item_index(), Some(2));
 
         panel.handle_events(KeyEvent::from(KeyCode::Home));
+        assert_eq!(panel.selected_item_index(), Some(0));
+
+        panel.handle_events(KeyEvent::from(KeyCode::Char('G')));
+        assert_eq!(panel.selected_item_index(), Some(2));
+
+        panel.handle_events(KeyEvent::from(KeyCode::Char('g')));
         assert_eq!(panel.selected_item_index(), Some(0));
     }
 

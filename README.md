@@ -126,7 +126,7 @@ Left panel:
 - `h` / `l` or arrow keys: switch source tabs.
 - `j` / `k` or arrow keys: move selection.
 - `PageUp` / `PageDown`: move selection by 10 rows.
-- `Home` / `End`: jump to first/last item.
+- `g` / `G` or `Home` / `End`: jump to first/last item.
 - Mouse wheel: scroll the list under the pointer.
 - `f`: filter the focused Local or Playlists list.
 - `Space` / `Enter`: open selected album or playlist.
@@ -152,7 +152,7 @@ Center panel:
 - `J` / `K`: move selected track down/up inside an opened playlist.
 - `j` / `k` or arrow keys: move selection.
 - `PageUp` / `PageDown`: move selection by 10 rows.
-- `Home` / `End`: jump to first/last item.
+- `g` / `G` or `Home` / `End`: jump to first/last item.
 - `Enter`: open selected streaming album or artist result.
 
 Search:
@@ -165,7 +165,7 @@ Search:
 - `Home` / `End`: jump the text cursor to the start/end.
 - `Backspace` / `Delete`: remove text around the cursor.
 - `PageUp` / `PageDown`: move result selection by 10 rows.
-- `Home` / `End`: jump to first/last result.
+- `g` / `G` or `Home` / `End`: jump to first/last result.
 - `Esc`: close search.
 
 Right panel:
@@ -181,7 +181,7 @@ Queue view:
 
 - `j` / `k` or arrow keys: move queue selection.
 - `PageUp` / `PageDown`: move queue selection by 10 rows.
-- `Home` / `End`: jump to first/last queue track.
+- `g` / `G` or `Home` / `End`: jump to first/last queue track.
 - `f`: filter queue tracks.
 - `Space` / `Enter`: jump to selected queue track.
 - `A`: add selected queue track to playlist.
@@ -197,7 +197,7 @@ History view:
 
 - `j` / `k` or arrow keys: move history selection.
 - `PageUp` / `PageDown`: move history selection by 10 rows.
-- `Home` / `End`: jump to first/last history track.
+- `g` / `G` or `Home` / `End`: jump to first/last history track.
 - `f`: filter recently played tracks.
 - `Space` / `Enter`: play selected history track.
 - `d`: remove selected history track.
@@ -208,7 +208,7 @@ Logs panel:
 
 - `j` / `k` or arrow keys: move log selection.
 - `PageUp` / `PageDown`: move log selection by 10 rows.
-- `Home` / `End`: jump to first/latest log entry.
+- `g` / `G` or `Home` / `End`: jump to first/latest log entry.
 - `h` / `l` or arrow keys: scroll the selected log message horizontally.
 - `c`: clear log history.
 
@@ -220,7 +220,7 @@ Settings panel:
 - `General: +/-`: adjust startup volume.
 - `General: z`: toggle startup shuffle.
 - `General: r`: cycle startup repeat mode.
-- `General: j/k`, `PageUp/PageDown`, `Home/End`: move local source selection.
+- `General: j/k`, `PageUp/PageDown`, `g/G`, `Home/End`: move local source selection.
 - `General: a`: add local source.
 - `General: e`: edit selected local source.
 - `General: d`: remove selected local source.

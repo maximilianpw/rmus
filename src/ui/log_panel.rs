@@ -243,8 +243,8 @@ impl LogPanel {
             KeyCode::Up | KeyCode::Char('k') => self.scroll_up(),
             KeyCode::PageDown => self.page_down(),
             KeyCode::PageUp => self.page_up(),
-            KeyCode::Home => self.first(),
-            KeyCode::End => self.last(),
+            KeyCode::Home | KeyCode::Char('g') => self.first(),
+            KeyCode::End | KeyCode::Char('G') => self.last(),
             KeyCode::Right | KeyCode::Char('l') => self.scroll_right(),
             KeyCode::Left | KeyCode::Char('h') => self.scroll_left(),
             KeyCode::Char('c') => self.clear(),
@@ -324,7 +324,7 @@ mod tests {
     }
 
     #[test]
-    fn home_and_end_jump_to_first_and_last_log_entries() {
+    fn top_and_bottom_keys_jump_to_first_and_last_log_entries() {
         let (mut panel, logger) = LogPanel::new();
         for n in 1..=3 {
             logger.info(format!("message {n}"));
@@ -338,6 +338,16 @@ mod tests {
 
         panel.scroll_right();
         panel.handle_events(KeyEvent::from(KeyCode::End));
+        assert_eq!(panel.list_state.selected(), Some(2));
+        assert_eq!(panel.h_scroll, 0);
+
+        panel.scroll_right();
+        panel.handle_events(KeyEvent::from(KeyCode::Char('g')));
+        assert_eq!(panel.list_state.selected(), Some(0));
+        assert_eq!(panel.h_scroll, 0);
+
+        panel.scroll_right();
+        panel.handle_events(KeyEvent::from(KeyCode::Char('G')));
         assert_eq!(panel.list_state.selected(), Some(2));
         assert_eq!(panel.h_scroll, 0);
     }

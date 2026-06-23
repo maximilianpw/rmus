@@ -1370,8 +1370,12 @@ impl CenterPanel {
         match key.code {
             KeyCode::Char('j') | KeyCode::Down => self.next_item(),
             KeyCode::Char('k') | KeyCode::Up => self.previous_item(),
-            KeyCode::Home => Self::select_first(&mut self.list_state, self.songs.len()),
-            KeyCode::End => Self::select_last(&mut self.list_state, self.songs.len()),
+            KeyCode::Home | KeyCode::Char('g') => {
+                Self::select_first(&mut self.list_state, self.songs.len())
+            }
+            KeyCode::End | KeyCode::Char('G') => {
+                Self::select_last(&mut self.list_state, self.songs.len())
+            }
             KeyCode::PageDown => Self::select_next_page(&mut self.list_state, self.songs.len()),
             KeyCode::PageUp => Self::select_previous_page(&mut self.list_state, self.songs.len()),
             KeyCode::Enter => {
@@ -1399,8 +1403,12 @@ impl CenterPanel {
         match key.code {
             KeyCode::Char('j') | KeyCode::Down => self.next_item(),
             KeyCode::Char('k') | KeyCode::Up => self.previous_item(),
-            KeyCode::Home => Self::select_first(&mut self.list_state, self.songs.len()),
-            KeyCode::End => Self::select_last(&mut self.list_state, self.songs.len()),
+            KeyCode::Home | KeyCode::Char('g') => {
+                Self::select_first(&mut self.list_state, self.songs.len())
+            }
+            KeyCode::End | KeyCode::Char('G') => {
+                Self::select_last(&mut self.list_state, self.songs.len())
+            }
             KeyCode::PageDown => Self::select_next_page(&mut self.list_state, self.songs.len()),
             KeyCode::PageUp => Self::select_previous_page(&mut self.list_state, self.songs.len()),
             KeyCode::Enter => {
@@ -1446,10 +1454,10 @@ impl CenterPanel {
         match key.code {
             KeyCode::Char('j') | KeyCode::Down => self.next_album_item(),
             KeyCode::Char('k') | KeyCode::Up => self.previous_album_item(),
-            KeyCode::Home => {
+            KeyCode::Home | KeyCode::Char('g') => {
                 Self::select_first(&mut self.album_list_state, self.album_display_titles.len())
             }
-            KeyCode::End => {
+            KeyCode::End | KeyCode::Char('G') => {
                 Self::select_last(&mut self.album_list_state, self.album_display_titles.len())
             }
             KeyCode::PageDown => {
@@ -1479,8 +1487,12 @@ impl CenterPanel {
         match key.code {
             KeyCode::Char('j') | KeyCode::Down => self.next_item(),
             KeyCode::Char('k') | KeyCode::Up => self.previous_item(),
-            KeyCode::Home => Self::select_first(&mut self.list_state, self.songs.len()),
-            KeyCode::End => Self::select_last(&mut self.list_state, self.songs.len()),
+            KeyCode::Home | KeyCode::Char('g') => {
+                Self::select_first(&mut self.list_state, self.songs.len())
+            }
+            KeyCode::End | KeyCode::Char('G') => {
+                Self::select_last(&mut self.list_state, self.songs.len())
+            }
             KeyCode::PageDown => Self::select_next_page(&mut self.list_state, self.songs.len()),
             KeyCode::PageUp => Self::select_previous_page(&mut self.list_state, self.songs.len()),
             KeyCode::Enter => {
@@ -1503,11 +1515,11 @@ impl CenterPanel {
         match key.code {
             KeyCode::Char('j') | KeyCode::Down => self.next_artist_item(),
             KeyCode::Char('k') | KeyCode::Up => self.previous_artist_item(),
-            KeyCode::Home => Self::select_first(
+            KeyCode::Home | KeyCode::Char('g') => Self::select_first(
                 &mut self.artist_list_state,
                 self.artist_display_titles.len(),
             ),
-            KeyCode::End => Self::select_last(
+            KeyCode::End | KeyCode::Char('G') => Self::select_last(
                 &mut self.artist_list_state,
                 self.artist_display_titles.len(),
             ),
@@ -1776,11 +1788,11 @@ impl CenterPanel {
                 };
                 self.playlist_picker_state.select(Some(i));
             }
-            KeyCode::Home => Self::select_first(
+            KeyCode::Home | KeyCode::Char('g') => Self::select_first(
                 &mut self.playlist_picker_state,
                 self.playlist_picker_names.len(),
             ),
-            KeyCode::End => Self::select_last(
+            KeyCode::End | KeyCode::Char('G') => Self::select_last(
                 &mut self.playlist_picker_state,
                 self.playlist_picker_names.len(),
             ),
@@ -1823,10 +1835,10 @@ impl CenterPanel {
         match key.code {
             KeyCode::Char('j') | KeyCode::Down => self.next_queue_item(),
             KeyCode::Char('k') | KeyCode::Up => self.previous_queue_item(),
-            KeyCode::Home => {
+            KeyCode::Home | KeyCode::Char('g') => {
                 Self::select_first(&mut self.queue_list_state, self.queue_visible_indices.len())
             }
-            KeyCode::End => {
+            KeyCode::End | KeyCode::Char('G') => {
                 Self::select_last(&mut self.queue_list_state, self.queue_visible_indices.len())
             }
             KeyCode::PageDown => {
@@ -1932,11 +1944,11 @@ impl CenterPanel {
         match key.code {
             KeyCode::Char('j') | KeyCode::Down => self.next_history_item(),
             KeyCode::Char('k') | KeyCode::Up => self.previous_history_item(),
-            KeyCode::Home => Self::select_first(
+            KeyCode::Home | KeyCode::Char('g') => Self::select_first(
                 &mut self.history_list_state,
                 self.history_visible_indices.len(),
             ),
-            KeyCode::End => Self::select_last(
+            KeyCode::End | KeyCode::Char('G') => Self::select_last(
                 &mut self.history_list_state,
                 self.history_visible_indices.len(),
             ),
@@ -2388,7 +2400,7 @@ mod tests {
     }
 
     #[test]
-    fn home_and_end_jump_to_first_and_last_song_rows() {
+    fn top_and_bottom_keys_jump_to_first_and_last_song_rows() {
         let mut panel = CenterPanel::new();
         panel.set_album(
             PathBuf::from("/music/album"),
@@ -2400,10 +2412,16 @@ mod tests {
 
         panel.handle_events(KeyEvent::from(KeyCode::Home));
         assert_eq!(panel.get_selected_index(), Some(0));
+
+        panel.handle_events(KeyEvent::from(KeyCode::Char('G')));
+        assert_eq!(panel.get_selected_index(), Some(2));
+
+        panel.handle_events(KeyEvent::from(KeyCode::Char('g')));
+        assert_eq!(panel.get_selected_index(), Some(0));
     }
 
     #[test]
-    fn home_and_end_jump_to_first_and_last_result_rows() {
+    fn top_and_bottom_keys_jump_to_first_and_last_result_rows() {
         let mut panel = CenterPanel::new();
         panel.set_album_results(vec![
             "First Album".to_string(),
@@ -2417,6 +2435,12 @@ mod tests {
         panel.handle_events(KeyEvent::from(KeyCode::Home));
         assert_eq!(panel.album_list_state.selected(), Some(0));
 
+        panel.handle_events(KeyEvent::from(KeyCode::Char('G')));
+        assert_eq!(panel.album_list_state.selected(), Some(2));
+
+        panel.handle_events(KeyEvent::from(KeyCode::Char('g')));
+        assert_eq!(panel.album_list_state.selected(), Some(0));
+
         panel.set_artist_results(vec![
             "First Artist".to_string(),
             "Second Artist".to_string(),
@@ -2428,10 +2452,16 @@ mod tests {
 
         panel.handle_events(KeyEvent::from(KeyCode::Home));
         assert_eq!(panel.artist_list_state.selected(), Some(0));
+
+        panel.handle_events(KeyEvent::from(KeyCode::Char('G')));
+        assert_eq!(panel.artist_list_state.selected(), Some(2));
+
+        panel.handle_events(KeyEvent::from(KeyCode::Char('g')));
+        assert_eq!(panel.artist_list_state.selected(), Some(0));
     }
 
     #[test]
-    fn home_and_end_jump_to_first_and_last_queue_rows() {
+    fn top_and_bottom_keys_jump_to_first_and_last_queue_rows() {
         let mut panel = CenterPanel::new();
         panel.set_queue(vec![song("First"), song("Second"), song("Third")], 0);
         panel.show_queue();
@@ -2441,6 +2471,41 @@ mod tests {
 
         panel.handle_events(KeyEvent::from(KeyCode::Home));
         assert_eq!(panel.selected_queue_index(), Some(0));
+
+        panel.handle_events(KeyEvent::from(KeyCode::Char('G')));
+        assert_eq!(panel.selected_queue_index(), Some(2));
+
+        panel.handle_events(KeyEvent::from(KeyCode::Char('g')));
+        assert_eq!(panel.selected_queue_index(), Some(0));
+    }
+
+    #[test]
+    fn top_and_bottom_keys_jump_to_first_and_last_history_rows() {
+        let mut panel = CenterPanel::new();
+        panel.set_history(vec![song("First"), song("Second"), song("Third")]);
+        panel.show_history();
+
+        panel.handle_events(KeyEvent::from(KeyCode::Char('G')));
+        assert_eq!(panel.selected_history_index(), Some(2));
+
+        panel.handle_events(KeyEvent::from(KeyCode::Char('g')));
+        assert_eq!(panel.selected_history_index(), Some(0));
+    }
+
+    #[test]
+    fn top_and_bottom_keys_jump_to_first_and_last_playlist_picker_rows() {
+        let mut panel = CenterPanel::new();
+        panel.open_playlist_picker(vec![
+            "First".to_string(),
+            "Second".to_string(),
+            "Third".to_string(),
+        ]);
+
+        panel.handle_events(KeyEvent::from(KeyCode::Char('G')));
+        assert_eq!(panel.playlist_picker_state.selected(), Some(2));
+
+        panel.handle_events(KeyEvent::from(KeyCode::Char('g')));
+        assert_eq!(panel.playlist_picker_state.selected(), Some(0));
     }
 
     #[test]

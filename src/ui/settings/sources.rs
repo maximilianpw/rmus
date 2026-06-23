@@ -211,11 +211,11 @@ impl SourceSettings {
                     self.scroll_up();
                     false
                 }
-                KeyCode::Home => {
+                KeyCode::Home | KeyCode::Char('g') => {
                     self.select_first_source();
                     false
                 }
-                KeyCode::End => {
+                KeyCode::End | KeyCode::Char('G') => {
                     self.select_last_source();
                     false
                 }
@@ -818,7 +818,7 @@ mod tests {
     }
 
     #[test]
-    fn home_and_end_jump_to_first_and_last_source_rows() {
+    fn top_and_bottom_keys_jump_to_first_and_last_source_rows() {
         let mut config = default_config();
         for n in 1..=3 {
             config.add_local_source(format!("Source {n}"), PathBuf::from(format!("/music/{n}")));
@@ -829,6 +829,12 @@ mod tests {
         assert_eq!(settings.list_state.selected(), Some(2));
 
         settings.handle_events(key(KeyCode::Home));
+        assert_eq!(settings.list_state.selected(), Some(0));
+
+        settings.handle_events(key(KeyCode::Char('G')));
+        assert_eq!(settings.list_state.selected(), Some(2));
+
+        settings.handle_events(key(KeyCode::Char('g')));
         assert_eq!(settings.list_state.selected(), Some(0));
     }
 
