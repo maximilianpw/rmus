@@ -18,6 +18,11 @@ fn main() -> color_eyre::Result<()> {
             print!("{}", rmus::cli::paths_text());
             return Ok(());
         }
+        Ok(rmus::cli::CliAction::LocalStats) => {
+            let summary = rmus::cli::local_stats();
+            println!("{}", summary.message());
+            return Ok(());
+        }
         Ok(rmus::cli::CliAction::ScanLocal) => {
             let summary = rmus::cli::scan_local()?;
             println!("{}", summary.message());

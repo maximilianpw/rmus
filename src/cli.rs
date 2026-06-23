@@ -11,7 +11,7 @@ use crate::{
     local_cache::LocalTrackCache,
     playlist::{PlaylistExportSummary, PlaylistImportSummary, PlaylistStore},
     queue::QueueStore,
-    sources::local::LocalFiles,
+    sources::local::{LocalFiles, LocalLibraryStats},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,6 +21,7 @@ pub enum CliAction {
     Version,
     Doctor,
     Paths,
+    LocalStats,
     ScanLocal,
     ImportPlaylist { path: PathBuf, name: Option<String> },
     ExportPlaylist { name: String, path: PathBuf },
@@ -45,6 +46,7 @@ where
         "-V" | "--version" => no_more_args(args, CliAction::Version, &first),
         "doctor" => no_more_args(args, CliAction::Doctor, &first),
         "paths" => no_more_args(args, CliAction::Paths, &first),
+        "local-stats" => no_more_args(args, CliAction::LocalStats, &first),
         "scan-local" => no_more_args(args, CliAction::ScanLocal, &first),
         "import-playlist" => parse_import_playlist_args(args),
         "export-playlist" => parse_export_playlist_args(args),
@@ -133,6 +135,7 @@ pub fn help_text() -> &'static str {
         "Commands:\n",
         "  doctor          Check runtime dependencies and app paths\n",
         "  paths           Print app storage paths\n",
+        "  local-stats     Count configured local sources, albums, and tracks\n",
         "  scan-local      Scan configured local sources into the metadata cache\n",
         "  import-playlist <PATH> [NAME]\n",
         "                  Import a local .m3u/.m3u8 playlist\n",
@@ -144,6 +147,86 @@ pub fn help_text() -> &'static str {
         "  -h, --help       Print help\n",
         "  -V, --version    Print version\n"
     )
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalStatsSummary {
+    pub source_count: usize,
+    pub missing_source_count: usize,
+    pub album_count: usize,
+    pub album_discovery_complete: bool,
+    pub track_count: usize,
+    pub cache_path: PathBuf,
+    pub cache_exists: bool,
+}
+
+impl LocalStatsSummary {
+    pub fn message(&self) -> String {
+        if self.source_count == 0 {
+            return "No local sources configured; add folders in Settings first".to_string();
+        }
+
+        let discovery_note = if self.album_discovery_complete {
+            "complete"
+        } else {
+            "partial; run `rmus scan-local` to warm the full cache"
+        };
+        let cache_state = if self.cache_exists {
+            "present"
+        } else {
+            "missing"
+        };
+
+        format!(
+            "Local library: {} configured {}, {} missing, {} discovered {}, {} playable {}; album discovery: {}; cache: {} ({})",
+            self.source_count,
+            plural(self.source_count, "source", "sources"),
+            self.missing_source_count,
+            self.album_count,
+            plural(self.album_count, "album", "albums"),
+            self.track_count,
+            plural(self.track_count, "track", "tracks"),
+            discovery_note,
+            self.cache_path.to_string_lossy(),
+            cache_state
+        )
+    }
+}
+
+pub fn local_stats() -> LocalStatsSummary {
+    local_stats_with_config(Config::load())
+}
+
+fn local_stats_with_config(config: Config) -> LocalStatsSummary {
+    local_stats_with_cache_path(config, LocalTrackCache::default_path())
+}
+
+fn local_stats_with_cache_path(config: Config, cache_path: PathBuf) -> LocalStatsSummary {
+    let sources = config.get_local_sources();
+    let missing_source_count = sources
+        .iter()
+        .filter(|source| !source.path.is_dir())
+        .count();
+    let stats = if sources.is_empty() {
+        LocalLibraryStats {
+            album_count: 0,
+            track_count: 0,
+            album_discovery_complete: true,
+        }
+    } else {
+        LocalFiles::library_stats_with_cache_path(&sources, cache_path.clone())
+    };
+    let cache_exists = cache_path.exists();
+
+    LocalStatsSummary {
+        source_count: sources.len(),
+        missing_source_count,
+        album_count: stats.album_count,
+        album_discovery_complete: stats.album_discovery_complete,
+        track_count: stats.track_count,
+        cache_path,
+        cache_exists,
+    }
 }
 
 pub fn import_playlist(
@@ -563,8 +646,8 @@ fn is_executable_file(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        clear_cache_at, doctor_report_with_options, parse_args, paths_text_with_options,
-        scan_local_with_cache_path, CliAction, DoctorOptions,
+        clear_cache_at, doctor_report_with_options, local_stats_with_cache_path, parse_args,
+        paths_text_with_options, scan_local_with_cache_path, CliAction, DoctorOptions,
     };
     use std::{
         env, fs,
@@ -664,6 +747,75 @@ mod tests {
             "local cache: {}",
             dir.join("local-cache.toml").to_string_lossy()
         )));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn local_stats_command_counts_configured_library_without_warming_cache() {
+        assert_eq!(
+            parse_args(["rmus", "local-stats"]),
+            Ok(CliAction::LocalStats)
+        );
+
+        let dir = test_dir("local-stats");
+        let album = dir.join("Album");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("01 - First.flac"), "not real audio").unwrap();
+        fs::write(album.join("02 - Second.opus"), "not real audio").unwrap();
+        fs::write(album.join("cover.jpg"), "not audio").unwrap();
+        let missing = dir.join("Missing");
+        let cache_path = dir.join("local-cache.toml");
+
+        let summary = local_stats_with_cache_path(
+            crate::config::Config {
+                local: crate::config::LocalConfig {
+                    sources: vec![
+                        crate::config::LocalSource {
+                            name: "Library".to_string(),
+                            path: dir.clone(),
+                        },
+                        crate::config::LocalSource {
+                            name: "Missing".to_string(),
+                            path: missing,
+                        },
+                    ],
+                },
+                ..crate::config::Config::default()
+            },
+            cache_path.clone(),
+        );
+
+        assert_eq!(summary.source_count, 2);
+        assert_eq!(summary.missing_source_count, 1);
+        assert_eq!(summary.album_count, 1);
+        assert_eq!(summary.track_count, 2);
+        assert!(summary.album_discovery_complete);
+        assert!(!summary.cache_exists);
+        assert!(!cache_path.exists());
+        let message = summary.message();
+        assert!(message.contains("2 configured sources"));
+        assert!(message.contains("1 missing"));
+        assert!(message.contains("1 discovered album"));
+        assert!(message.contains("2 playable tracks"));
+        assert!(message.contains("cache:"));
+        assert!(message.contains("(missing)"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn local_stats_reports_missing_sources() {
+        let dir = test_dir("local-stats-missing");
+        let summary =
+            local_stats_with_cache_path(crate::config::Config::default(), dir.join("cache.toml"));
+
+        assert_eq!(summary.source_count, 0);
+        assert_eq!(summary.track_count, 0);
+        assert_eq!(
+            summary.message(),
+            "No local sources configured; add folders in Settings first"
+        );
 
         let _ = fs::remove_dir_all(dir);
     }

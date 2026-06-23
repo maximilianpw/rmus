@@ -181,6 +181,7 @@ fn test_cli_help_prints_without_launching_tui() {
     assert!(stdout.contains("keyboard-driven terminal music player"));
     assert!(stdout.contains("doctor"));
     assert!(stdout.contains("paths"));
+    assert!(stdout.contains("local-stats"));
     assert!(stdout.contains("scan-local"));
     assert!(stdout.contains("import-playlist"));
     assert!(stdout.contains("export-playlist"));
@@ -207,6 +208,58 @@ fn test_cli_paths_prints_storage_paths_without_launching_tui() {
     assert!(stdout.contains("queue:"));
     assert!(stdout.contains("local cache:"));
     assert!(stdout.contains("local-cache.toml"));
+
+    let _ = std::fs::remove_dir_all(state_dir);
+}
+
+#[test]
+fn test_cli_local_stats_reports_configured_library_without_launching_tui() {
+    let state_dir = test_dir("cli-local-stats");
+    let music_dir = state_dir.join("music").join("Album");
+    std::fs::create_dir_all(&music_dir).unwrap();
+    std::fs::write(music_dir.join("01 - First.flac"), "not real audio").unwrap();
+    std::fs::write(music_dir.join("02 - Second.opus"), "not real audio").unwrap();
+    std::fs::write(music_dir.join("cover.jpg"), "not audio").unwrap();
+
+    let config_path = isolated_config_path(&state_dir);
+    std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &config_path,
+        format!(
+            "\
+[[local.sources]]
+name = \"Library\"
+path = \"{}\"
+
+[audio]
+default_volume = 50
+",
+            state_dir
+                .join("music")
+                .to_string_lossy()
+                .replace('\\', "\\\\")
+        ),
+    )
+    .unwrap();
+
+    let mut command = rmus_binary();
+    state_env(command.arg("local-stats"), &state_dir);
+    let output = command.output().expect("rmus local-stats should run");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Local library: 1 configured source"));
+    assert!(stdout.contains("0 missing"));
+    assert!(stdout.contains("1 discovered album"));
+    assert!(stdout.contains("2 playable tracks"));
+    assert!(stdout.contains("album discovery: complete"));
+    assert!(stdout.contains("local-cache.toml"));
+    assert!(stdout.contains("(missing)"));
+    assert!(
+        find_file_named(&state_dir, "local-cache.toml").is_none(),
+        "local-stats should not warm or write the local metadata cache"
+    );
 
     let _ = std::fs::remove_dir_all(state_dir);
 }

@@ -78,6 +78,13 @@ struct LocalAlbumDiscoveryResult {
     complete: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LocalLibraryStats {
+    pub album_count: usize,
+    pub track_count: usize,
+    pub album_discovery_complete: bool,
+}
+
 #[derive(Debug, Clone)]
 struct AlbumDiscoveryBudget {
     remaining_directories: Option<usize>,
@@ -563,6 +570,44 @@ impl LocalFiles {
 
     pub fn scan_sources(sources: &[LocalSource]) -> Result<usize, std::io::Error> {
         Self::scan_sources_with_cache_path(sources, LocalTrackCache::default_path())
+    }
+
+    pub fn library_stats(sources: &[LocalSource]) -> LocalLibraryStats {
+        Self::library_stats_with_cache_path(sources, LocalTrackCache::default_path())
+    }
+
+    pub(crate) fn library_stats_with_cache_path(
+        sources: &[LocalSource],
+        cache_path: PathBuf,
+    ) -> LocalLibraryStats {
+        let existing_sources: Vec<_> = sources
+            .iter()
+            .filter(|source| source.path.is_dir())
+            .cloned()
+            .collect();
+        let sources = existing_sources.as_slice();
+        let cache = LocalAlbumCache::with_path(cache_path);
+        let (album_count, album_discovery_complete) = match cache.album_entries_for_sources(sources)
+        {
+            Some(entries) => (entries.len(), true),
+            None => {
+                let result = discover_album_entries_uncached(sources);
+                (result.entries.len(), result.complete)
+            }
+        };
+
+        let mut files = Vec::new();
+        for source in sources {
+            collect_audio_files(&source.path, &mut files);
+        }
+        sort_audio_paths(&mut files);
+        files.dedup();
+
+        LocalLibraryStats {
+            album_count,
+            track_count: files.len(),
+            album_discovery_complete,
+        }
     }
 
     pub(crate) fn scan_sources_with_cache_path(
@@ -1157,6 +1202,40 @@ mod tests {
         assert!(cache.contains("01 - First.flac"));
         assert!(cache.contains("[[album_discoveries]]"));
         assert!(cache.contains("Album"));
+
+        let _ = fs::remove_dir_all(dir);
+        let _ = fs::remove_file(cache_path);
+    }
+
+    #[test]
+    fn local_source_library_stats_count_tracks_and_albums_without_metadata_reads() {
+        let dir = test_dir("library-stats");
+        fs::create_dir_all(dir.join("Child Album")).unwrap();
+        fs::write(dir.join("00 - Root Track.flac"), "not real audio").unwrap();
+        fs::write(
+            dir.join("Child Album").join("01 - Child Track.opus"),
+            "not real audio",
+        )
+        .unwrap();
+        fs::write(dir.join("cover.jpg"), "not audio").unwrap();
+        let cache_path = test_cache_path("library-stats");
+        let sources = vec![LocalSource {
+            name: "Library".to_string(),
+            path: dir.clone(),
+        }];
+
+        crate::sources::song::reset_metadata_read_count();
+        let stats = LocalFiles::library_stats_with_cache_path(&sources, cache_path.clone());
+
+        assert_eq!(
+            stats,
+            LocalLibraryStats {
+                album_count: 2,
+                track_count: 2,
+                album_discovery_complete: true,
+            }
+        );
+        assert_eq!(crate::sources::song::metadata_read_count(), 0);
 
         let _ = fs::remove_dir_all(dir);
         let _ = fs::remove_file(cache_path);
