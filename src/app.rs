@@ -5,7 +5,8 @@ use ratatui::{
 };
 use std::{
     collections::VecDeque,
-    path::Path,
+    path::{Path, PathBuf},
+    sync::mpsc::{self, Receiver, TryRecvError},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -13,6 +14,7 @@ use crate::{
     action::Action,
     config::{Config, LocalSource, TidalConfig},
     history::HistoryStore,
+    local_cache::LocalTrackCache,
     players::{MusicPlayer, PlaybackState, SafePlayer},
     playlist::{PlaylistAddSummary, PlaylistRemoveSummary, PlaylistSource, PlaylistStore},
     queue::{QueueState, QueueStore},
@@ -117,6 +119,8 @@ pub struct App {
     search_source: Option<StreamingServiceId>,
     config: Config,
     logger: Logger,
+    local_scan_result: Option<Receiver<Result<usize, String>>>,
+    local_scan_cache_path: PathBuf,
     /// Which service has a pending auth flow.
     pending_auth_service: Option<StreamingServiceId>,
     deferred_search: Option<String>,
@@ -199,6 +203,8 @@ impl App {
             search_source: None,
             config,
             logger,
+            local_scan_result: None,
+            local_scan_cache_path: LocalTrackCache::default_path(),
             pending_auth_service: None,
             deferred_search: None,
             last_player_poll_error: None,
@@ -280,6 +286,17 @@ impl App {
         ))
     }
 
+    fn test_local_cache_path() -> std::path::PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "rmus-test-local-cache-{}-{nanos}.toml",
+            std::process::id()
+        ))
+    }
+
     pub fn new_for_test_with_stores_and_player(
         config: Config,
         qobuz: Option<Box<dyn StreamingService>>,
@@ -343,6 +360,8 @@ impl App {
             search_source: None,
             config,
             logger,
+            local_scan_result: None,
+            local_scan_cache_path: Self::test_local_cache_path(),
             pending_auth_service: None,
             deferred_search: None,
             last_player_poll_error: None,
@@ -397,6 +416,7 @@ impl App {
         self.sync_tidal_auth_request_from_settings();
         self.check_active_streaming_task_timeout();
         self.poll_streaming_task_results();
+        self.poll_local_scan_result();
         self.poll_pending_auth();
         self.poll_streaming_task_results();
         self.process_center_panel_events();
@@ -416,6 +436,7 @@ impl App {
             // Process completed background tasks
             self.check_active_streaming_task_timeout();
             self.poll_streaming_task_results();
+            self.poll_local_scan_result();
 
             // Poll pending auth (e.g. Tidal device code flow)
             self.poll_pending_auth();
@@ -1596,6 +1617,9 @@ impl App {
                 }
                 self.logger.info("Library refreshed".to_string());
             }
+            Action::WarmLocalCache => {
+                self.start_local_cache_scan();
+            }
             Action::CreatePlaylist => {
                 if self.left_panel.active_tab_name() == "Playlists" {
                     self.pending_playlist_add_songs.clear();
@@ -1872,6 +1896,65 @@ impl App {
         let mut left_panel = LeftPanel::new(sources, self.logger.clone());
         left_panel.select_tab_by_name(&active_tab);
         self.left_panel = left_panel;
+    }
+
+    fn start_local_cache_scan(&mut self) {
+        if self.local_scan_result.is_some() {
+            self.logger
+                .info("Local cache scan is already running".to_string());
+            return;
+        }
+
+        let sources = self.config.get_local_sources();
+        if sources.is_empty() {
+            self.logger
+                .info("No local sources configured; add folders in Settings first".to_string());
+            return;
+        }
+
+        let cache_path = self.local_scan_cache_path.clone();
+        let source_count = sources.len();
+        let source_label = if source_count == 1 {
+            "1 local source".to_string()
+        } else {
+            format!("{source_count} local sources")
+        };
+        let (sender, receiver) = mpsc::channel();
+        self.local_scan_result = Some(receiver);
+        self.logger
+            .info(format!("Scanning {source_label} in background..."));
+
+        std::thread::spawn(move || {
+            let result = LocalFiles::scan_sources_with_cache_path(&sources, cache_path)
+                .map_err(|error| error.to_string());
+            let _ = sender.send(result);
+        });
+    }
+
+    fn poll_local_scan_result(&mut self) {
+        let Some(receiver) = self.local_scan_result.take() else {
+            return;
+        };
+
+        match receiver.try_recv() {
+            Ok(Ok(track_count)) => {
+                self.logger.info(format!(
+                    "Scanned {} into local cache",
+                    track_count_label(track_count)
+                ));
+            }
+            Ok(Err(error)) => {
+                self.logger
+                    .error(format!("Local cache scan failed: {error}"));
+            }
+            Err(TryRecvError::Empty) => {
+                self.local_scan_result = Some(receiver);
+            }
+            Err(TryRecvError::Disconnected) => {
+                self.logger
+                    .error("Local cache scan failed: worker disconnected".to_string());
+            }
+        }
     }
 
     fn refresh_open_playlist_by_name(&mut self, playlist_name: &str) {
@@ -2939,7 +3022,8 @@ mod tests {
     use std::{
         fs,
         path::PathBuf,
-        time::{SystemTime, UNIX_EPOCH},
+        thread,
+        time::{Duration, SystemTime, UNIX_EPOCH},
     };
 
     use crate::{
@@ -2975,6 +3059,18 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("rmus-app-{name}-{nanos}"));
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    fn wait_for_local_scan(app: &mut App) {
+        for _ in 0..100 {
+            app.tick();
+            if app.local_scan_result.is_none() {
+                return;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        panic!("local scan did not finish");
     }
 
     fn default_config() -> Config {
@@ -3289,6 +3385,58 @@ mod tests {
             "opening a local source should use cached metadata and filename fallback without parsing every uncached file"
         );
         assert_eq!(app.center_panel.get_songs().len(), 20);
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn warm_local_cache_without_sources_shows_feedback() {
+        let mut app = App::new_for_test(default_config(), None, None);
+
+        app.execute(Action::WarmLocalCache);
+
+        assert!(app.local_scan_result.is_none());
+        app.right_panel.log_panel.poll();
+        assert!(app
+            .right_panel
+            .log_panel
+            .messages()
+            .iter()
+            .any(|message| message.contains("No local sources configured")));
+    }
+
+    #[test]
+    fn warm_local_cache_runs_in_background_and_writes_cache() {
+        let dir = temp_dir("background-local-cache");
+        fs::create_dir_all(dir.join("Album")).unwrap();
+        fs::write(dir.join("Album").join("01 - First.flac"), "audio").unwrap();
+        fs::write(dir.join("Album").join("02 - Second.flac"), "audio").unwrap();
+        let cache_path = dir.join("cache.toml");
+        let mut config = default_config();
+        config.local.sources.push(LocalSource {
+            name: "Library".to_string(),
+            path: dir.clone(),
+        });
+        let mut app = App::new_for_test(config, None, None);
+        app.local_scan_cache_path = cache_path.clone();
+
+        app.execute(Action::WarmLocalCache);
+
+        assert!(app.local_scan_result.is_some());
+        wait_for_local_scan(&mut app);
+
+        let cache = fs::read_to_string(&cache_path).unwrap();
+        assert!(cache.contains("[[album_discoveries]]"));
+        assert!(cache.contains("01 - First.flac"));
+        assert!(cache.contains("02 - Second.flac"));
+
+        app.right_panel.log_panel.poll();
+        assert!(app
+            .right_panel
+            .log_panel
+            .messages()
+            .iter()
+            .any(|message| message == &"Scanned 2 tracks into local cache"));
 
         let _ = fs::remove_dir_all(dir);
     }

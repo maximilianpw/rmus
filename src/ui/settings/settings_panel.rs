@@ -230,6 +230,7 @@ impl SettingsPanel {
             keybind("Q", "Show queue"),
             keybind("H", "Show recently played"),
             keybind("R", "Refresh library"),
+            keybind("W", "Warm local metadata cache"),
             keybind("n / p", "Next / previous track"),
             keybind("+ / -", "Adjust volume"),
             keybind("m", "Mute / restore volume"),

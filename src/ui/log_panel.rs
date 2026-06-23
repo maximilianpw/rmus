@@ -229,6 +229,14 @@ impl LogPanel {
         self.h_scroll = 0;
     }
 
+    #[cfg(test)]
+    pub(crate) fn messages(&self) -> Vec<&str> {
+        self.log_list
+            .iter()
+            .map(|item| item.message.as_str())
+            .collect()
+    }
+
     pub fn handle_events(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Down | KeyCode::Char('j') => self.scroll_down(),

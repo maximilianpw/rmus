@@ -25,6 +25,7 @@ pub enum Action {
     ShowQueue,
     ShowHistory,
     RefreshLibrary,
+    WarmLocalCache,
     CreatePlaylist,
     AddToPlaylist,
     AddOpenCollectionToPlaylist,

@@ -59,6 +59,7 @@ pub fn resolve_key(
         (_, KeyCode::Char('Q')) => return KeyAction::Execute(Action::ShowQueue),
         (_, KeyCode::Char('H')) => return KeyAction::Execute(Action::ShowHistory),
         (_, KeyCode::Char('R')) => return KeyAction::Execute(Action::RefreshLibrary),
+        (_, KeyCode::Char('W')) => return KeyAction::Execute(Action::WarmLocalCache),
         (_, KeyCode::Char('n')) => return KeyAction::Execute(Action::NextTrack),
         (_, KeyCode::Char('p')) => return KeyAction::Execute(Action::PreviousTrack),
         (_, KeyCode::Char('+') | KeyCode::Char('=')) => {
@@ -415,6 +416,20 @@ mod tests {
             let action = resolve_key(key(KeyCode::Char('R')), focus, false, false, false, false);
 
             assert!(matches!(action, KeyAction::Execute(Action::RefreshLibrary)));
+        }
+    }
+
+    #[test]
+    fn uppercase_w_warms_local_cache_from_main_panels() {
+        for focus in [
+            FocusedWindow::Left,
+            FocusedWindow::Center,
+            FocusedWindow::Right,
+            FocusedWindow::Logs,
+        ] {
+            let action = resolve_key(key(KeyCode::Char('W')), focus, false, false, false, false);
+
+            assert!(matches!(action, KeyAction::Execute(Action::WarmLocalCache)));
         }
     }
 
