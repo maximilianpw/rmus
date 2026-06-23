@@ -46,6 +46,14 @@ use crate::event::handle_crossterm_events;
 
 const FAVORITES_PLAYLIST_NAME: &str = "Favorites";
 const PLAYBACK_HISTORY_LIMIT: usize = 50;
+const SOURCE_SAVE_ALBUM_DISCOVERY_DIRECTORIES: usize = 256;
+
+#[derive(Debug, Clone, Copy)]
+enum LocalDiscoveryMode {
+    Cached,
+    Fresh,
+    Bounded(usize),
+}
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub enum FocusedWindow {
@@ -128,7 +136,8 @@ impl App {
         let history_store = HistoryStore::default();
         let queue_store = QueueStore::default();
         let restored_queue = queue_store.load();
-        let sources = Self::sources_for_config(&config, playlist_store.clone(), false);
+        let sources =
+            Self::sources_for_config(&config, playlist_store.clone(), LocalDiscoveryMode::Cached);
         let (log_panel, logger) = LogPanel::new();
         logger.debug(format!("{something}", something = config));
 
@@ -299,7 +308,8 @@ impl App {
         queue_store: QueueStore,
         mut player: Box<dyn MusicPlayer>,
     ) -> Self {
-        let sources = Self::sources_for_config(&config, playlist_store.clone(), false);
+        let sources =
+            Self::sources_for_config(&config, playlist_store.clone(), LocalDiscoveryMode::Cached);
         let (log_panel, logger) = LogPanel::new();
         let streaming = StreamingCoordinator::new(qobuz, tidal);
         let playback_history = history_store.load();
@@ -348,13 +358,19 @@ impl App {
     fn sources_for_config(
         config: &Config,
         playlist_store: PlaylistStore,
-        force_local_discovery: bool,
+        local_discovery: LocalDiscoveryMode,
     ) -> Vec<Box<dyn MusicSource>> {
         let local_sources: Vec<LocalSource> = config.get_local_sources();
-        let local: Box<dyn MusicSource> = if force_local_discovery {
-            LocalFiles::new_fresh("Local".to_string(), local_sources)
-        } else {
-            LocalFiles::new("Local".to_string(), local_sources)
+        let local: Box<dyn MusicSource> = match local_discovery {
+            LocalDiscoveryMode::Cached => LocalFiles::new("Local".to_string(), local_sources),
+            LocalDiscoveryMode::Fresh => LocalFiles::new_fresh("Local".to_string(), local_sources),
+            LocalDiscoveryMode::Bounded(max_directories) => {
+                LocalFiles::new_with_album_discovery_limit(
+                    "Local".to_string(),
+                    local_sources,
+                    max_directories,
+                )
+            }
         };
         vec![
             local,
@@ -1572,7 +1588,7 @@ impl App {
                 self.show_history();
             }
             Action::RefreshLibrary => {
-                self.rebuild_left_panel_with_local_discovery(true);
+                self.rebuild_left_panel_with_local_discovery(LocalDiscoveryMode::Fresh);
                 let refreshed_local_album = self.refresh_open_local_album();
                 let refreshed_local_library = self.refresh_open_local_library();
                 if !refreshed_local_album && !refreshed_local_library {
@@ -1793,7 +1809,7 @@ impl App {
             }
             self.config = new_config;
             if local_changed {
-                self.rebuild_left_panel();
+                self.rebuild_left_panel_for_source_save();
                 self.left_panel.select_tab_by_name("Local");
                 self.previous_focus_before_settings = Some(FocusedWindow::Left);
                 let refreshed_local_library = self.refresh_open_local_library();
@@ -1840,16 +1856,19 @@ impl App {
     }
 
     fn rebuild_left_panel(&mut self) {
-        self.rebuild_left_panel_with_local_discovery(false);
+        self.rebuild_left_panel_with_local_discovery(LocalDiscoveryMode::Cached);
     }
 
-    fn rebuild_left_panel_with_local_discovery(&mut self, force_local_discovery: bool) {
+    fn rebuild_left_panel_for_source_save(&mut self) {
+        self.rebuild_left_panel_with_local_discovery(LocalDiscoveryMode::Bounded(
+            SOURCE_SAVE_ALBUM_DISCOVERY_DIRECTORIES,
+        ));
+    }
+
+    fn rebuild_left_panel_with_local_discovery(&mut self, local_discovery: LocalDiscoveryMode) {
         let active_tab = self.left_panel.active_tab_name();
-        let sources = Self::sources_for_config(
-            &self.config,
-            self.playlist_store.clone(),
-            force_local_discovery,
-        );
+        let sources =
+            Self::sources_for_config(&self.config, self.playlist_store.clone(), local_discovery);
         let mut left_panel = LeftPanel::new(sources, self.logger.clone());
         left_panel.select_tab_by_name(&active_tab);
         self.left_panel = left_panel;
@@ -2933,12 +2952,15 @@ mod tests {
         },
         playlist::PlaylistStore,
         sources::{
-            local::{reset_song_scan_count, song_scan_count},
+            local::{
+                album_discovery_scan_count, reset_album_discovery_scan_count,
+                reset_song_scan_count, song_scan_count,
+            },
             song::{metadata_read_count, reset_metadata_read_count, Song},
         },
     };
 
-    use super::{App, FocusedWindow};
+    use super::{App, FocusedWindow, SOURCE_SAVE_ALBUM_DISCOVERY_DIRECTORIES};
     use crate::action::Action;
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -3182,6 +3204,38 @@ mod tests {
             song_scan_count(),
             0,
             "saving a local source should rebuild the list without eagerly parsing every track"
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn source_update_bounds_album_discovery_when_library_view_is_closed() {
+        let dir = temp_dir("bounded-source-update");
+        for index in 0..(SOURCE_SAVE_ALBUM_DISCOVERY_DIRECTORIES + 32) {
+            let album = dir.join(format!("Album {index:03}"));
+            fs::create_dir_all(&album).unwrap();
+            fs::write(album.join("01 - Track.flac"), "").unwrap();
+        }
+        let mut app = App::new_for_test(default_config(), None, None);
+
+        app.settings_panel.toggle_open();
+        app.settings_panel.handle_events(key(KeyCode::Char('a')));
+        for c in "Large Library".chars() {
+            app.settings_panel.handle_events(key(KeyCode::Char(c)));
+        }
+        app.settings_panel.handle_events(key(KeyCode::Tab));
+        for c in dir.to_string_lossy().chars() {
+            app.settings_panel.handle_events(key(KeyCode::Char(c)));
+        }
+        app.settings_panel.handle_events(key(KeyCode::Enter));
+
+        reset_album_discovery_scan_count();
+        app.sync_config_from_settings();
+
+        assert!(
+            album_discovery_scan_count() <= SOURCE_SAVE_ALBUM_DISCOVERY_DIRECTORIES,
+            "saving a local source should not recursively discover more than the source-save budget"
         );
 
         let _ = fs::remove_dir_all(dir);

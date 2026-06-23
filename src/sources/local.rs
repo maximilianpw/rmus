@@ -454,6 +454,21 @@ impl LocalFiles {
         })
     }
 
+    pub(crate) fn new_with_album_discovery_limit(
+        name: String,
+        files: Vec<LocalSource>,
+        max_directories: usize,
+    ) -> Box<Self> {
+        let mut cache = LocalAlbumCache::default();
+        let album_entries =
+            discover_album_entries_with_cache_and_limit(&files, &mut cache, Some(max_directories));
+        Box::new(LocalFiles {
+            name,
+            files,
+            album_entries,
+        })
+    }
+
     #[cfg(test)]
     pub(crate) fn new_with_album_cache(
         name: String,
