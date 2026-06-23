@@ -120,6 +120,7 @@ pub struct App {
     config: Config,
     logger: Logger,
     local_scan_result: Option<Receiver<Result<usize, String>>>,
+    local_scan_restart_requested: bool,
     local_cache_path: PathBuf,
     /// Which service has a pending auth flow.
     pending_auth_service: Option<StreamingServiceId>,
@@ -209,6 +210,7 @@ impl App {
             config,
             logger,
             local_scan_result: None,
+            local_scan_restart_requested: false,
             local_cache_path,
             pending_auth_service: None,
             deferred_search: None,
@@ -371,6 +373,7 @@ impl App {
             config,
             logger,
             local_scan_result: None,
+            local_scan_restart_requested: false,
             local_cache_path,
             pending_auth_service: None,
             deferred_search: None,
@@ -1933,8 +1936,11 @@ impl App {
 
     fn start_local_cache_scan(&mut self) {
         if self.local_scan_result.is_some() {
-            self.logger
-                .info("Local cache scan is already running".to_string());
+            self.local_scan_restart_requested = true;
+            self.logger.info(
+                "Local cache scan is already running; another scan will start afterward"
+                    .to_string(),
+            );
             return;
         }
 
@@ -1982,10 +1988,12 @@ impl App {
                     "Scanned {} into local cache",
                     track_count_label(track_count)
                 ));
+                self.start_queued_local_cache_scan();
             }
             Ok(Err(error)) => {
                 self.logger
                     .error(format!("Local cache scan failed: {error}"));
+                self.start_queued_local_cache_scan();
             }
             Err(TryRecvError::Empty) => {
                 self.local_scan_result = Some(receiver);
@@ -1993,8 +2001,18 @@ impl App {
             Err(TryRecvError::Disconnected) => {
                 self.logger
                     .error("Local cache scan failed: worker disconnected".to_string());
+                self.start_queued_local_cache_scan();
             }
         }
+    }
+
+    fn start_queued_local_cache_scan(&mut self) {
+        if !self.local_scan_restart_requested {
+            return;
+        }
+
+        self.local_scan_restart_requested = false;
+        self.start_local_cache_scan();
     }
 
     fn refresh_open_playlist_by_name(&mut self, playlist_name: &str) {
@@ -3609,6 +3627,39 @@ mod tests {
             .messages()
             .iter()
             .any(|message| message == &"Scanned 2 tracks into local cache"));
+
+        let _ = fs::remove_dir_all(dir);
+        let _ = fs::remove_dir_all(cache_dir);
+    }
+
+    #[test]
+    fn warm_local_cache_queues_follow_up_scan_when_already_running() {
+        let dir = temp_dir("background-local-cache-follow-up");
+        fs::write(dir.join("01 - Follow Up.flac"), "audio").unwrap();
+        let cache_dir = temp_dir("background-local-cache-follow-up-cache");
+        let cache_path = cache_dir.join("cache.toml");
+        let mut config = default_config();
+        config.local.sources.push(LocalSource {
+            name: "Library".to_string(),
+            path: dir.clone(),
+        });
+        let mut app = App::new_for_test(config, None, None);
+        app.local_cache_path = cache_path.clone();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        app.local_scan_result = Some(receiver);
+
+        app.execute(Action::WarmLocalCache);
+
+        assert!(app.local_scan_restart_requested);
+        sender.send(Ok(0)).unwrap();
+        app.poll_local_scan_result();
+
+        assert!(app.local_scan_result.is_some());
+        assert!(!app.local_scan_restart_requested);
+        wait_for_local_scan(&mut app);
+
+        let cache = fs::read_to_string(&cache_path).unwrap();
+        assert!(cache.contains("01 - Follow Up.flac"));
 
         let _ = fs::remove_dir_all(dir);
         let _ = fs::remove_dir_all(cache_dir);
