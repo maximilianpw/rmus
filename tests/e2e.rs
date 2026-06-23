@@ -184,6 +184,7 @@ fn test_cli_help_prints_without_launching_tui() {
     assert!(stdout.contains("local-stats"));
     assert!(stdout.contains("scan-local"));
     assert!(stdout.contains("add-source"));
+    assert!(stdout.contains("remove-source"));
     assert!(stdout.contains("import-playlist"));
     assert!(stdout.contains("export-playlist"));
     assert!(stdout.contains("clear-cache"));
@@ -267,6 +268,62 @@ fn test_cli_add_source_updates_config_without_launching_tui() {
     assert!(!duplicate_output.status.success());
     let duplicate_stderr = String::from_utf8(duplicate_output.stderr).unwrap();
     assert!(duplicate_stderr.contains("source path already exists"));
+
+    let _ = std::fs::remove_dir_all(state_dir);
+}
+
+#[test]
+fn test_cli_remove_source_updates_config_without_launching_tui() {
+    let state_dir = test_dir("cli-remove-source");
+    let music_dir = state_dir.join("music");
+    std::fs::create_dir_all(&music_dir).unwrap();
+    std::fs::write(music_dir.join("01 - First.flac"), "not real audio").unwrap();
+
+    let mut add_command = rmus_binary();
+    state_env(
+        add_command.args(["add-source", "Library", music_dir.to_str().unwrap()]),
+        &state_dir,
+    );
+    let add_output = add_command.output().expect("rmus add-source should run");
+    assert!(add_output.status.success());
+
+    let mut remove_command = rmus_binary();
+    state_env(
+        remove_command.args(["remove-source", "library"]),
+        &state_dir,
+    );
+    let remove_output = remove_command
+        .output()
+        .expect("rmus remove-source should run");
+
+    assert!(remove_output.status.success());
+    assert!(remove_output.stderr.is_empty());
+    let remove_stdout = String::from_utf8(remove_output.stdout).unwrap();
+    assert!(remove_stdout.contains("Removed local source 'Library'"));
+    assert!(remove_stdout.contains("0 configured sources"));
+
+    let config_path = isolated_config_path(&state_dir);
+    let config = std::fs::read_to_string(&config_path).unwrap();
+    assert!(!config.contains("name = \"Library\""));
+
+    let mut stats_command = rmus_binary();
+    state_env(stats_command.arg("local-stats"), &state_dir);
+    let stats_output = stats_command.output().expect("rmus local-stats should run");
+    assert!(stats_output.status.success());
+    let stats_stdout = String::from_utf8(stats_output.stdout).unwrap();
+    assert!(stats_stdout.contains("No local sources configured"));
+
+    let mut missing_command = rmus_binary();
+    state_env(
+        missing_command.args(["remove-source", "Library"]),
+        &state_dir,
+    );
+    let missing_output = missing_command
+        .output()
+        .expect("missing rmus remove-source should run");
+    assert!(!missing_output.status.success());
+    let missing_stderr = String::from_utf8(missing_output.stderr).unwrap();
+    assert!(missing_stderr.contains("source not found: Library"));
 
     let _ = std::fs::remove_dir_all(state_dir);
 }

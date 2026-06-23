@@ -40,6 +40,16 @@ fn main() -> color_eyre::Result<()> {
                 }
             }
         }
+        Ok(rmus::cli::CliAction::RemoveSource { name }) => match rmus::cli::remove_source(&name) {
+            Ok(summary) => {
+                println!("{}", summary.message());
+                return Ok(());
+            }
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(2);
+            }
+        },
         Ok(rmus::cli::CliAction::ImportPlaylist { path, name }) => {
             let summary = rmus::cli::import_playlist(&path, name.as_deref())?;
             println!("{}", summary.message());

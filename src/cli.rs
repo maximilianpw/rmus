@@ -24,6 +24,7 @@ pub enum CliAction {
     LocalStats,
     ScanLocal,
     AddSource { name: String, path: PathBuf },
+    RemoveSource { name: String },
     ImportPlaylist { path: PathBuf, name: Option<String> },
     ExportPlaylist { name: String, path: PathBuf },
     ClearCache,
@@ -50,6 +51,7 @@ where
         "local-stats" => no_more_args(args, CliAction::LocalStats, &first),
         "scan-local" => no_more_args(args, CliAction::ScanLocal, &first),
         "add-source" => parse_add_source_args(args),
+        "remove-source" => parse_remove_source_args(args),
         "import-playlist" => parse_import_playlist_args(args),
         "export-playlist" => parse_export_playlist_args(args),
         "clear-cache" => no_more_args(args, CliAction::ClearCache, &first),
@@ -91,6 +93,23 @@ where
         name,
         path: PathBuf::from(path),
     })
+}
+
+fn parse_remove_source_args<I>(mut args: I) -> Result<CliAction, String>
+where
+    I: Iterator<Item = String>,
+{
+    let Some(name) = args.next() else {
+        return Err(format!("missing name for remove-source\n\n{}", help_text()));
+    };
+    if args.next().is_some() {
+        return Err(format!(
+            "unexpected argument after source name\n\n{}",
+            help_text()
+        ));
+    }
+
+    Ok(CliAction::RemoveSource { name })
 }
 
 fn parse_import_playlist_args<I>(mut args: I) -> Result<CliAction, String>
@@ -164,6 +183,8 @@ pub fn help_text() -> &'static str {
         "  scan-local      Scan configured local sources into the metadata cache\n",
         "  add-source <NAME> <PATH>\n",
         "                  Add a local music folder to config\n",
+        "  remove-source <NAME>\n",
+        "                  Remove a local music folder from config\n",
         "  import-playlist <PATH> [NAME]\n",
         "                  Import a local .m3u/.m3u8 playlist\n",
         "  export-playlist <NAME> <PATH>\n",
@@ -174,6 +195,60 @@ pub fn help_text() -> &'static str {
         "  -h, --help       Print help\n",
         "  -V, --version    Print version\n"
     )
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalSourceRemoveSummary {
+    pub name: String,
+    pub path: PathBuf,
+    pub source_count: usize,
+}
+
+impl LocalSourceRemoveSummary {
+    pub fn message(&self) -> String {
+        format!(
+            "Removed local source '{}' at {}; {} configured {}",
+            self.name,
+            self.path.to_string_lossy(),
+            self.source_count,
+            plural(self.source_count, "source", "sources")
+        )
+    }
+}
+
+pub fn remove_source(name: &str) -> Result<LocalSourceRemoveSummary, String> {
+    let mut config = Config::load();
+    let summary = remove_source_from_config(&mut config, name)?;
+    config
+        .save()
+        .map_err(|error| format!("failed to save config: {error}"))?;
+    Ok(summary)
+}
+
+fn remove_source_from_config(
+    config: &mut Config,
+    name: &str,
+) -> Result<LocalSourceRemoveSummary, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("source name is required".to_string());
+    }
+
+    let Some(index) = config
+        .local
+        .sources
+        .iter()
+        .position(|source| source.name.eq_ignore_ascii_case(name))
+    else {
+        return Err(format!("source not found: {name}"));
+    };
+
+    let removed = config.local.sources.remove(index);
+    Ok(LocalSourceRemoveSummary {
+        name: removed.name,
+        path: removed.path,
+        source_count: config.local.sources.len(),
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -767,7 +842,7 @@ mod tests {
     use super::{
         add_source_to_config, clear_cache_at, doctor_report_with_options,
         local_stats_with_cache_path, parse_args, paths_text_with_options,
-        scan_local_with_cache_path, CliAction, DoctorOptions,
+        remove_source_from_config, scan_local_with_cache_path, CliAction, DoctorOptions,
     };
     use std::{
         env, fs,
@@ -1007,6 +1082,62 @@ mod tests {
 
         assert!(error.contains("source path must be an existing directory"));
         assert!(config.local.sources.is_empty());
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn remove_source_command_accepts_name() {
+        assert_eq!(
+            parse_args(["rmus", "remove-source", "Library"]),
+            Ok(CliAction::RemoveSource {
+                name: "Library".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn remove_source_command_requires_name() {
+        let error = parse_args(["rmus", "remove-source"]).expect_err("name should be required");
+        assert!(error.contains("missing name for remove-source"));
+
+        let error = parse_args(["rmus", "remove-source", "Library", "extra"])
+            .expect_err("extra args should fail");
+        assert!(error.contains("unexpected argument after source name"));
+    }
+
+    #[test]
+    fn remove_source_from_config_removes_source_by_name_case_insensitively() {
+        let first = test_dir("remove-source-first");
+        let second = test_dir("remove-source-second");
+        let mut config = crate::config::Config::default();
+        add_source_to_config(&mut config, "First", &first).unwrap();
+        add_source_to_config(&mut config, "Second", &second).unwrap();
+
+        let summary = remove_source_from_config(&mut config, " second ").unwrap();
+
+        assert_eq!(summary.name, "Second");
+        assert_eq!(summary.path, second.canonicalize().unwrap());
+        assert_eq!(summary.source_count, 1);
+        assert_eq!(config.local.sources.len(), 1);
+        assert_eq!(config.local.sources[0].name, "First");
+        assert!(summary.message().contains("Removed local source 'Second'"));
+
+        let _ = fs::remove_dir_all(first);
+        let _ = fs::remove_dir_all(second);
+    }
+
+    #[test]
+    fn remove_source_from_config_rejects_missing_source_names() {
+        let dir = test_dir("remove-source-missing");
+        let mut config = crate::config::Config::default();
+        add_source_to_config(&mut config, "Library", &dir).unwrap();
+
+        let error = remove_source_from_config(&mut config, "Other")
+            .expect_err("unknown source should fail");
+
+        assert!(error.contains("source not found: Other"));
+        assert_eq!(config.local.sources.len(), 1);
 
         let _ = fs::remove_dir_all(dir);
     }
