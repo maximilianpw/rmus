@@ -181,6 +181,7 @@ fn test_cli_help_prints_without_launching_tui() {
     assert!(stdout.contains("keyboard-driven terminal music player"));
     assert!(stdout.contains("doctor"));
     assert!(stdout.contains("paths"));
+    assert!(stdout.contains("list-sources"));
     assert!(stdout.contains("local-stats"));
     assert!(stdout.contains("scan-local"));
     assert!(stdout.contains("add-source"));
@@ -324,6 +325,54 @@ fn test_cli_remove_source_updates_config_without_launching_tui() {
     assert!(!missing_output.status.success());
     let missing_stderr = String::from_utf8(missing_output.stderr).unwrap();
     assert!(missing_stderr.contains("source not found: Library"));
+
+    let _ = std::fs::remove_dir_all(state_dir);
+}
+
+#[test]
+fn test_cli_list_sources_reports_configured_sources_without_launching_tui() {
+    let state_dir = test_dir("cli-list-sources");
+    let music_dir = state_dir.join("music");
+    let missing_dir = state_dir.join("missing");
+    std::fs::create_dir_all(&music_dir).unwrap();
+
+    let config_path = isolated_config_path(&state_dir);
+    std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &config_path,
+        format!(
+            "\
+[[local.sources]]
+name = \"Library\"
+path = \"{}\"
+
+[[local.sources]]
+name = \"Missing\"
+path = \"{}\"
+
+[audio]
+default_volume = 50
+",
+            music_dir.to_string_lossy().replace('\\', "\\\\"),
+            missing_dir.to_string_lossy().replace('\\', "\\\\")
+        ),
+    )
+    .unwrap();
+
+    let mut command = rmus_binary();
+    state_env(command.arg("list-sources"), &state_dir);
+    let output = command.output().expect("rmus list-sources should run");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Local sources (2):"));
+    assert!(stdout.contains("Library"));
+    assert!(stdout.contains(&music_dir.to_string_lossy().to_string()));
+    assert!(stdout.contains("[ok]"));
+    assert!(stdout.contains("Missing"));
+    assert!(stdout.contains(&missing_dir.to_string_lossy().to_string()));
+    assert!(stdout.contains("[missing]"));
 
     let _ = std::fs::remove_dir_all(state_dir);
 }

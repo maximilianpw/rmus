@@ -21,6 +21,7 @@ pub enum CliAction {
     Version,
     Doctor,
     Paths,
+    ListSources,
     LocalStats,
     ScanLocal,
     AddSource { name: String, path: PathBuf },
@@ -48,6 +49,7 @@ where
         "-V" | "--version" => no_more_args(args, CliAction::Version, &first),
         "doctor" => no_more_args(args, CliAction::Doctor, &first),
         "paths" => no_more_args(args, CliAction::Paths, &first),
+        "list-sources" => no_more_args(args, CliAction::ListSources, &first),
         "local-stats" => no_more_args(args, CliAction::LocalStats, &first),
         "scan-local" => no_more_args(args, CliAction::ScanLocal, &first),
         "add-source" => parse_add_source_args(args),
@@ -179,6 +181,7 @@ pub fn help_text() -> &'static str {
         "Commands:\n",
         "  doctor          Check runtime dependencies and app paths\n",
         "  paths           Print app storage paths\n",
+        "  list-sources    Print configured local music folders\n",
         "  local-stats     Count configured local sources, albums, and tracks\n",
         "  scan-local      Scan configured local sources into the metadata cache\n",
         "  add-source <NAME> <PATH>\n",
@@ -195,6 +198,56 @@ pub fn help_text() -> &'static str {
         "  -h, --help       Print help\n",
         "  -V, --version    Print version\n"
     )
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalSourceListEntry {
+    pub name: String,
+    pub path: PathBuf,
+    pub exists: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalSourceListSummary {
+    pub sources: Vec<LocalSourceListEntry>,
+}
+
+impl LocalSourceListSummary {
+    pub fn message(&self) -> String {
+        if self.sources.is_empty() {
+            return "No local sources configured; add folders in Settings first".to_string();
+        }
+
+        let mut text = format!("Local sources ({}):\n", self.sources.len());
+        for source in &self.sources {
+            let status = if source.exists { "ok" } else { "missing" };
+            text.push_str(&format!(
+                "- {}: {} [{}]\n",
+                source.name,
+                source.path.to_string_lossy(),
+                status
+            ));
+        }
+        text
+    }
+}
+
+pub fn list_sources() -> LocalSourceListSummary {
+    list_sources_from_config(Config::load())
+}
+
+fn list_sources_from_config(config: Config) -> LocalSourceListSummary {
+    LocalSourceListSummary {
+        sources: config
+            .get_local_sources()
+            .into_iter()
+            .map(|source| LocalSourceListEntry {
+                exists: source.path.is_dir(),
+                name: source.name,
+                path: source.path,
+            })
+            .collect(),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -840,7 +893,7 @@ fn is_executable_file(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        add_source_to_config, clear_cache_at, doctor_report_with_options,
+        add_source_to_config, clear_cache_at, doctor_report_with_options, list_sources_from_config,
         local_stats_with_cache_path, parse_args, paths_text_with_options,
         remove_source_from_config, scan_local_with_cache_path, CliAction, DoctorOptions,
     };
@@ -944,6 +997,59 @@ mod tests {
         )));
 
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn list_sources_command_prints_configured_sources() {
+        assert_eq!(
+            parse_args(["rmus", "list-sources"]),
+            Ok(CliAction::ListSources)
+        );
+
+        let dir = test_dir("list-sources");
+        let missing = dir.join("Missing");
+        let summary = list_sources_from_config(crate::config::Config {
+            local: crate::config::LocalConfig {
+                sources: vec![
+                    crate::config::LocalSource {
+                        name: "Library".to_string(),
+                        path: dir.clone(),
+                    },
+                    crate::config::LocalSource {
+                        name: "Missing".to_string(),
+                        path: missing.clone(),
+                    },
+                ],
+            },
+            ..crate::config::Config::default()
+        });
+
+        assert_eq!(summary.sources.len(), 2);
+        assert_eq!(summary.sources[0].name, "Library");
+        assert_eq!(summary.sources[0].path, dir);
+        assert!(summary.sources[0].exists);
+        assert_eq!(summary.sources[1].name, "Missing");
+        assert_eq!(summary.sources[1].path, missing);
+        assert!(!summary.sources[1].exists);
+        let message = summary.message();
+        assert!(message.contains("Local sources (2):"));
+        assert!(message.contains("- Library:"));
+        assert!(message.contains("[ok]"));
+        assert!(message.contains("- Missing:"));
+        assert!(message.contains("[missing]"));
+
+        let _ = fs::remove_dir_all(summary.sources[0].path.clone());
+    }
+
+    #[test]
+    fn list_sources_reports_empty_config() {
+        let summary = list_sources_from_config(crate::config::Config::default());
+
+        assert!(summary.sources.is_empty());
+        assert_eq!(
+            summary.message(),
+            "No local sources configured; add folders in Settings first"
+        );
     }
 
     #[test]
