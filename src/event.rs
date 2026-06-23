@@ -1,6 +1,8 @@
 use std::time::Duration;
 
-use crossterm::event::{self, Event, KeyEventKind};
+use crossterm::event::{
+    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEventKind,
+};
 
 use crate::app::App;
 use crate::keymap::{resolve_key, KeyAction};
@@ -27,8 +29,46 @@ pub fn handle_crossterm_events(app: &mut App) -> color_eyre::Result<()> {
                     KeyAction::None => {}
                 }
             }
+            Event::Mouse(mouse) => {
+                if let Some(key) = mouse_scroll_key(mouse.kind) {
+                    app.delegate_key_to_panel(key);
+                }
+            }
             _ => {}
         }
     }
     Ok(())
+}
+
+fn mouse_scroll_key(kind: MouseEventKind) -> Option<KeyEvent> {
+    match kind {
+        MouseEventKind::ScrollUp => Some(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)),
+        MouseEventKind::ScrollDown => Some(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crossterm::event::{KeyCode, MouseButton, MouseEventKind};
+
+    use super::mouse_scroll_key;
+
+    #[test]
+    fn mouse_scroll_events_map_to_vertical_navigation_keys() {
+        assert_eq!(
+            mouse_scroll_key(MouseEventKind::ScrollDown).map(|key| key.code),
+            Some(KeyCode::Down)
+        );
+        assert_eq!(
+            mouse_scroll_key(MouseEventKind::ScrollUp).map(|key| key.code),
+            Some(KeyCode::Up)
+        );
+    }
+
+    #[test]
+    fn non_scroll_mouse_events_are_ignored() {
+        assert!(mouse_scroll_key(MouseEventKind::Down(MouseButton::Left)).is_none());
+        assert!(mouse_scroll_key(MouseEventKind::Moved).is_none());
+    }
 }

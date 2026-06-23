@@ -124,6 +124,7 @@ Left panel:
 - `j` / `k` or arrow keys: move selection.
 - `PageUp` / `PageDown`: move selection by 10 rows.
 - `Home` / `End`: jump to first/last item.
+- Mouse wheel: scroll the focused list.
 - `f`: filter the focused Local or Playlists list.
 - `Space` / `Enter`: open selected album or playlist.
 - `P`: play selected album or playlist.
