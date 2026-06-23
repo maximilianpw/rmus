@@ -431,7 +431,7 @@ impl MusicSource for LocalFiles {
             .iter()
             .find(|entry| paths_equivalent(&entry.path, &path))
             .map(Self::songs_for_entry)
-            .unwrap_or_else(|| Self::songs_from_path(path))
+            .unwrap_or_else(|| Self::songs_from_path_using_cached_metadata(path))
     }
 }
 
@@ -1046,6 +1046,27 @@ mod tests {
 
         let _ = fs::remove_dir_all(dir);
         let _ = fs::remove_file(cache_path);
+    }
+
+    #[test]
+    fn local_source_unknown_album_path_uses_cached_metadata_fallback() {
+        let dir = test_dir("unknown-album-path-cache");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("01 - Track.flac"), "audio").unwrap();
+        let source = LocalFiles {
+            name: "Local".to_string(),
+            files: Vec::new(),
+            album_entries: Vec::new(),
+        };
+
+        crate::sources::song::reset_metadata_read_count();
+        let songs = source.get_songs_from_album(dir.clone());
+
+        assert_eq!(crate::sources::song::metadata_read_count(), 0);
+        assert_eq!(songs.len(), 1);
+        assert_eq!(songs[0].title, "01 - Track.flac");
+
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
