@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -93,6 +94,53 @@ fn make_app(
     tidal: Option<Box<dyn StreamingService>>,
 ) -> App {
     App::new_for_test(default_config(), qobuz, tidal)
+}
+
+fn rmus_binary() -> Command {
+    Command::new(env!("CARGO_BIN_EXE_rmus"))
+}
+
+#[test]
+fn test_cli_version_prints_without_launching_tui() {
+    let output = rmus_binary()
+        .arg("--version")
+        .output()
+        .expect("rmus --version should run");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        format!("rmus {}\n", env!("CARGO_PKG_VERSION"))
+    );
+}
+
+#[test]
+fn test_cli_help_prints_without_launching_tui() {
+    let output = rmus_binary()
+        .arg("--help")
+        .output()
+        .expect("rmus --help should run");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("keyboard-driven terminal music player"));
+    assert!(stdout.contains("--version"));
+}
+
+#[test]
+fn test_cli_unknown_flag_exits_with_usage() {
+    let output = rmus_binary()
+        .arg("--unknown")
+        .output()
+        .expect("rmus unknown flag should run");
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("unknown argument '--unknown'"));
+    assert!(stderr.contains("Usage:"));
 }
 
 fn mock_albums() -> Vec<StreamAlbum> {
