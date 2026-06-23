@@ -1405,6 +1405,45 @@ fn test_added_local_source_returns_focus_to_browsable_local_list() {
 }
 
 #[test]
+fn test_opening_local_source_focuses_center_for_enter_playback() {
+    let dir = test_dir("open-local-source-enter-playback");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("01 - First.flac"), "").unwrap();
+    std::fs::write(dir.join("02 - Second.flac"), "").unwrap();
+
+    let config = Config {
+        local: LocalConfig {
+            sources: vec![LocalSource {
+                name: "Library".to_string(),
+                path: dir.clone(),
+            }],
+        },
+        ..default_config()
+    };
+    let (player, played, _enqueued) = MockPlayer::new();
+    let mut app = App::new_for_test_with_playlist_store_and_player(
+        config,
+        None,
+        None,
+        PlaylistStore::with_dir(test_dir("open-local-source-enter-playback-playlists")),
+        Box::new(player),
+    );
+
+    dispatch_key(&mut app, make_key(KeyCode::Enter));
+
+    assert_eq!(app.focused_window, FocusedWindow::Center);
+
+    dispatch_key(&mut app, make_key(KeyCode::Enter));
+    app.tick();
+
+    let played = played.lock().unwrap();
+    assert_eq!(played.len(), 1);
+    assert_eq!(played[0].title, "01 - First.flac");
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn test_editing_local_source_updates_left_panel_immediately() {
     let old_dir = test_dir("edit-local-source-old");
     let new_dir = test_dir("edit-local-source-new");

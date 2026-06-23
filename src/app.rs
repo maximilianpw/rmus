@@ -1309,6 +1309,7 @@ impl App {
                     } else {
                         self.center_panel.set_album(path, songs);
                     }
+                    self.focused_window = FocusedWindow::Center;
                 } else {
                     self.log_empty_left_selection();
                 }
