@@ -26,6 +26,7 @@ pub struct LocalFiles {
 const SUPPORTED_AUDIO_EXTENSIONS: &[&str] = &[
     "mp3", "flac", "ogg", "opus", "wav", "m4a", "aac", "wma", "alac", "aiff", "ape", "mka", "wv",
 ];
+const MAX_ALBUM_DISCOVERY_DIRECTORIES: usize = 10_000;
 
 #[cfg(test)]
 thread_local! {
@@ -73,6 +74,43 @@ enum LocalAlbumScope {
 struct LocalAlbumDiscoveryResult {
     entries: Vec<LocalAlbumEntry>,
     directories: Vec<LocalDirectorySnapshot>,
+    complete: bool,
+}
+
+#[derive(Debug, Clone)]
+struct AlbumDiscoveryBudget {
+    remaining_directories: Option<usize>,
+    exhausted: bool,
+}
+
+impl AlbumDiscoveryBudget {
+    fn limited(max_directories: usize) -> Self {
+        Self {
+            remaining_directories: Some(max_directories),
+            exhausted: false,
+        }
+    }
+
+    fn unlimited() -> Self {
+        Self {
+            remaining_directories: None,
+            exhausted: false,
+        }
+    }
+
+    fn take_directory(&mut self) -> bool {
+        match self.remaining_directories {
+            Some(0) => {
+                self.exhausted = true;
+                false
+            }
+            Some(remaining) => {
+                self.remaining_directories = Some(remaining - 1);
+                true
+            }
+            None => true,
+        }
+    }
 }
 
 fn is_supported_audio_file(path: &Path) -> bool {
@@ -123,7 +161,12 @@ fn collect_direct_audio_files(path: &Path, songs: &mut Vec<PathBuf>) {
 fn read_album_discovery_dir(
     path: &Path,
     snapshots: &mut Vec<LocalDirectorySnapshot>,
+    budget: &mut AlbumDiscoveryBudget,
 ) -> Option<fs::ReadDir> {
+    if !budget.take_directory() {
+        return None;
+    }
+
     if let Some(snapshot) = LocalDirectorySnapshot::from_path(path) {
         snapshots.push(snapshot);
     }
@@ -135,8 +178,9 @@ fn read_album_discovery_dir(
 fn directory_contains_direct_audio(
     path: &Path,
     snapshots: &mut Vec<LocalDirectorySnapshot>,
+    budget: &mut AlbumDiscoveryBudget,
 ) -> bool {
-    let Some(entries) = read_album_discovery_dir(path, snapshots) else {
+    let Some(entries) = read_album_discovery_dir(path, snapshots, budget) else {
         return false;
     };
 
@@ -170,8 +214,9 @@ fn collect_child_album_entries(
     path: &Path,
     entries: &mut Vec<LocalAlbumEntry>,
     snapshots: &mut Vec<LocalDirectorySnapshot>,
+    budget: &mut AlbumDiscoveryBudget,
 ) {
-    let Some(read_dir) = read_album_discovery_dir(path, snapshots) else {
+    let Some(read_dir) = read_album_discovery_dir(path, snapshots, budget) else {
         return;
     };
 
@@ -198,24 +243,55 @@ fn collect_child_album_entries(
     });
 
     for child_dir in child_dirs {
-        if directory_contains_direct_audio(&child_dir, snapshots) {
+        if budget.exhausted {
+            break;
+        }
+        if directory_contains_direct_audio(&child_dir, snapshots, budget) {
             entries.push(LocalAlbumEntry {
                 name: local_album_entry_name(source_root, &child_dir),
                 path: child_dir.clone(),
                 scope: LocalAlbumScope::Direct,
             });
         }
-        collect_child_album_entries(source_root, &child_dir, entries, snapshots);
+        collect_child_album_entries(source_root, &child_dir, entries, snapshots, budget);
     }
 }
 
 fn discover_album_entries_uncached(sources: &[LocalSource]) -> LocalAlbumDiscoveryResult {
+    discover_album_entries_uncached_with_budget(
+        sources,
+        AlbumDiscoveryBudget::limited(MAX_ALBUM_DISCOVERY_DIRECTORIES),
+    )
+}
+
+fn discover_album_entries_uncached_unbounded(sources: &[LocalSource]) -> LocalAlbumDiscoveryResult {
+    discover_album_entries_uncached_with_budget(sources, AlbumDiscoveryBudget::unlimited())
+}
+
+fn discover_album_entries_uncached_with_limit(
+    sources: &[LocalSource],
+    max_directories: usize,
+) -> LocalAlbumDiscoveryResult {
+    discover_album_entries_uncached_with_budget(
+        sources,
+        AlbumDiscoveryBudget::limited(max_directories),
+    )
+}
+
+fn discover_album_entries_uncached_with_budget(
+    sources: &[LocalSource],
+    mut budget: AlbumDiscoveryBudget,
+) -> LocalAlbumDiscoveryResult {
     let mut discovered = Vec::new();
     let mut directories = Vec::new();
 
     for source in sources {
+        if budget.exhausted {
+            break;
+        }
+
         let mut source_entries = Vec::new();
-        if directory_contains_direct_audio(&source.path, &mut directories) {
+        if directory_contains_direct_audio(&source.path, &mut directories, &mut budget) {
             source_entries.push(LocalAlbumEntry {
                 name: source.name.clone(),
                 path: source.path.clone(),
@@ -228,6 +304,7 @@ fn discover_album_entries_uncached(sources: &[LocalSource]) -> LocalAlbumDiscove
             &source.path,
             &mut source_entries,
             &mut directories,
+            &mut budget,
         );
 
         if source_entries.is_empty() {
@@ -244,6 +321,7 @@ fn discover_album_entries_uncached(sources: &[LocalSource]) -> LocalAlbumDiscove
     LocalAlbumDiscoveryResult {
         entries: discovered,
         directories,
+        complete: !budget.exhausted,
     }
 }
 
@@ -256,6 +334,18 @@ fn discover_album_entries_with_cache(
     sources: &[LocalSource],
     cache: &mut LocalAlbumCache,
 ) -> Vec<LocalAlbumEntry> {
+    discover_album_entries_with_cache_and_limit(
+        sources,
+        cache,
+        Some(MAX_ALBUM_DISCOVERY_DIRECTORIES),
+    )
+}
+
+fn discover_album_entries_with_cache_and_limit(
+    sources: &[LocalSource],
+    cache: &mut LocalAlbumCache,
+    max_directories: Option<usize>,
+) -> Vec<LocalAlbumEntry> {
     if let Some(entries) = cache.album_entries_for_sources(sources) {
         return entries
             .into_iter()
@@ -263,25 +353,34 @@ fn discover_album_entries_with_cache(
             .collect();
     }
 
-    let result = discover_album_entries_uncached(sources);
-    let cached_entries: Vec<_> = result
-        .entries
-        .iter()
-        .map(LocalAlbumEntry::to_cached)
-        .collect();
-    let _ = cache.save_album_entries(sources, &cached_entries, &result.directories);
+    let result = match max_directories {
+        Some(max_directories) => {
+            discover_album_entries_uncached_with_limit(sources, max_directories)
+        }
+        None => discover_album_entries_uncached_unbounded(sources),
+    };
+    if result.complete {
+        let cached_entries: Vec<_> = result
+            .entries
+            .iter()
+            .map(LocalAlbumEntry::to_cached)
+            .collect();
+        let _ = cache.save_album_entries(sources, &cached_entries, &result.directories);
+    }
     result.entries
 }
 
 fn discover_album_entries_fresh(sources: &[LocalSource]) -> Vec<LocalAlbumEntry> {
     let result = discover_album_entries_uncached(sources);
     let mut cache = LocalAlbumCache::default();
-    let cached_entries: Vec<_> = result
-        .entries
-        .iter()
-        .map(LocalAlbumEntry::to_cached)
-        .collect();
-    let _ = cache.save_album_entries(sources, &cached_entries, &result.directories);
+    if result.complete {
+        let cached_entries: Vec<_> = result
+            .entries
+            .iter()
+            .map(LocalAlbumEntry::to_cached)
+            .collect();
+        let _ = cache.save_album_entries(sources, &cached_entries, &result.directories);
+    }
     result.entries
 }
 
@@ -404,7 +503,13 @@ impl LocalFiles {
         cache_path: PathBuf,
     ) -> Result<usize, std::io::Error> {
         let mut album_cache = LocalAlbumCache::with_path(cache_path.clone());
-        let _ = discover_album_entries_with_cache(sources, &mut album_cache);
+        let result = discover_album_entries_uncached_unbounded(sources);
+        let cached_entries: Vec<_> = result
+            .entries
+            .iter()
+            .map(LocalAlbumEntry::to_cached)
+            .collect();
+        let _ = album_cache.save_album_entries(sources, &cached_entries, &result.directories);
 
         let mut files = Vec::new();
         for source in sources {
@@ -790,6 +895,66 @@ mod tests {
             refreshed.get_albums(),
             vec!["Alpha".to_string(), "Beta".to_string()]
         );
+
+        let _ = fs::remove_dir_all(dir);
+        let _ = fs::remove_file(cache_path);
+    }
+
+    #[test]
+    fn local_source_bounds_uncached_album_discovery() {
+        let dir = test_dir("bounded-album-discovery");
+        for index in 0..12 {
+            let album = dir.join(format!("Album {index:02}"));
+            fs::create_dir_all(&album).unwrap();
+            fs::write(album.join("01 - Track.flac"), "").unwrap();
+        }
+        let sources = vec![LocalSource {
+            name: "Library".to_string(),
+            path: dir.clone(),
+        }];
+
+        reset_album_discovery_scan_count();
+        let result = discover_album_entries_uncached_with_limit(&sources, 3);
+
+        assert!(
+            !result.complete,
+            "discovery should report incomplete results when the directory budget is exhausted"
+        );
+        assert!(
+            album_discovery_scan_count() <= 3,
+            "album discovery should not read more directories than the configured budget"
+        );
+        assert!(
+            !result.entries.is_empty(),
+            "bounded discovery should still return a browsable partial or fallback entry"
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn local_source_does_not_cache_incomplete_album_discovery() {
+        let dir = test_dir("incomplete-album-discovery-cache");
+        for index in 0..6 {
+            let album = dir.join(format!("Album {index:02}"));
+            fs::create_dir_all(&album).unwrap();
+            fs::write(album.join("01 - Track.flac"), "").unwrap();
+        }
+        let sources = vec![LocalSource {
+            name: "Library".to_string(),
+            path: dir.clone(),
+        }];
+        let cache_path = test_cache_path("incomplete-album-discovery-cache");
+        let mut cache = LocalAlbumCache::with_path(cache_path.clone());
+
+        let entries = discover_album_entries_with_cache_and_limit(&sources, &mut cache, Some(1));
+
+        assert!(!entries.is_empty());
+        assert!(
+            cache.album_entries_for_sources(&sources).is_none(),
+            "incomplete album discovery should not be cached as a complete source snapshot"
+        );
+        assert!(!cache_path.exists());
 
         let _ = fs::remove_dir_all(dir);
         let _ = fs::remove_file(cache_path);

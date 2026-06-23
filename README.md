@@ -70,6 +70,8 @@ The scan-local command walks configured local music folders and warms the local 
 
 The clear-cache command removes cached local album discovery and track metadata. It leaves config, playlists, playback history, queue state, and streaming account tokens untouched.
 
+Automatic in-app album discovery is bounded so very large folders stay responsive; use `rmus scan-local` when you want to rescan and warm the full local cache deliberately.
+
 ## Test
 
 ```sh
