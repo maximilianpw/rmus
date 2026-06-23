@@ -21,6 +21,7 @@ pub enum CliAction {
     Doctor,
     ImportPlaylist { path: PathBuf, name: Option<String> },
     ExportPlaylist { name: String, path: PathBuf },
+    ClearCache,
 }
 
 pub fn parse_args<I, S>(args: I) -> Result<CliAction, String>
@@ -42,6 +43,7 @@ where
         "doctor" => no_more_args(args, CliAction::Doctor, &first),
         "import-playlist" => parse_import_playlist_args(args),
         "export-playlist" => parse_export_playlist_args(args),
+        "clear-cache" => no_more_args(args, CliAction::ClearCache, &first),
         _ => Err(format!("unknown argument '{first}'\n\n{}", help_text())),
     }
 }
@@ -129,6 +131,7 @@ pub fn help_text() -> &'static str {
         "                  Import a local .m3u/.m3u8 playlist\n",
         "  export-playlist <NAME> <PATH>\n",
         "                  Export a playlist to .m3u8\n",
+        "  clear-cache     Remove cached local discovery and metadata\n",
         "\n",
         "Options:\n",
         "  -h, --help       Print help\n",
@@ -145,6 +148,41 @@ pub fn import_playlist(
 
 pub fn export_playlist(name: &str, path: &Path) -> Result<PlaylistExportSummary, std::io::Error> {
     PlaylistStore::default().export_m3u(name, path)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CacheClearSummary {
+    pub path: PathBuf,
+    pub removed: bool,
+}
+
+impl CacheClearSummary {
+    pub fn message(&self) -> String {
+        let path = self.path.to_string_lossy();
+        if self.removed {
+            format!("Removed local cache at {path}")
+        } else {
+            format!("Local cache already absent at {path}")
+        }
+    }
+}
+
+pub fn clear_cache() -> Result<CacheClearSummary, std::io::Error> {
+    clear_cache_at(&LocalTrackCache::default_path())
+}
+
+fn clear_cache_at(path: &Path) -> Result<CacheClearSummary, std::io::Error> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(CacheClearSummary {
+            path: path.to_path_buf(),
+            removed: true,
+        }),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(CacheClearSummary {
+            path: path.to_path_buf(),
+            removed: false,
+        }),
+        Err(error) => Err(error),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -437,7 +475,7 @@ fn is_executable_file(path: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{doctor_report_with_options, parse_args, CliAction, DoctorOptions};
+    use super::{clear_cache_at, doctor_report_with_options, parse_args, CliAction, DoctorOptions};
     use std::{
         env, fs,
         path::PathBuf,
@@ -502,6 +540,14 @@ mod tests {
     }
 
     #[test]
+    fn clear_cache_command_runs_maintenance_action() {
+        assert_eq!(
+            parse_args(["rmus", "clear-cache"]),
+            Ok(CliAction::ClearCache)
+        );
+    }
+
+    #[test]
     fn import_playlist_command_accepts_path_and_optional_name() {
         assert_eq!(
             parse_args(["rmus", "import-playlist", "/music/mix.m3u"]),
@@ -528,6 +574,24 @@ mod tests {
                 path: PathBuf::from("/music/road.m3u8"),
             })
         );
+    }
+
+    #[test]
+    fn clear_cache_removes_cache_file_and_accepts_missing_file() {
+        let dir = test_dir("clear-cache");
+        let cache_path = dir.join("local-cache.toml");
+        fs::write(&cache_path, "tracks = []").unwrap();
+
+        let summary = clear_cache_at(&cache_path).unwrap();
+
+        assert_eq!(summary.path, cache_path);
+        assert!(summary.removed);
+        assert!(!summary.path.exists());
+
+        let summary = clear_cache_at(&summary.path).unwrap();
+        assert!(!summary.removed);
+
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

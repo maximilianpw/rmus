@@ -24,6 +24,11 @@ fn main() -> color_eyre::Result<()> {
             println!("{}", summary.message());
             return Ok(());
         }
+        Ok(rmus::cli::CliAction::ClearCache) => {
+            let summary = rmus::cli::clear_cache()?;
+            println!("{}", summary.message());
+            return Ok(());
+        }
         Err(error) => {
             eprintln!("{error}");
             std::process::exit(2);

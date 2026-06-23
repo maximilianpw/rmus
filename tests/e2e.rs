@@ -160,7 +160,32 @@ fn test_cli_help_prints_without_launching_tui() {
     assert!(stdout.contains("doctor"));
     assert!(stdout.contains("import-playlist"));
     assert!(stdout.contains("export-playlist"));
+    assert!(stdout.contains("clear-cache"));
     assert!(stdout.contains("--version"));
+}
+
+#[test]
+fn test_cli_clear_cache_runs_without_launching_tui() {
+    let state_dir = test_dir("cli-clear-cache");
+    std::fs::create_dir_all(&state_dir).unwrap();
+
+    let output = rmus_binary()
+        .arg("clear-cache")
+        .env("HOME", &state_dir)
+        .env("XDG_CONFIG_HOME", state_dir.join("xdg-config"))
+        .env("APPDATA", state_dir.join("appdata"))
+        .env("LOCALAPPDATA", state_dir.join("localappdata"))
+        .current_dir(&state_dir)
+        .output()
+        .expect("rmus clear-cache should run");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Local cache already absent"));
+    assert!(stdout.contains("local-cache.toml"));
+
+    let _ = std::fs::remove_dir_all(state_dir);
 }
 
 #[test]

@@ -50,6 +50,14 @@ The import command creates a new rmus playlist from local file entries in `.m3u`
 
 The export command writes local tracks from an rmus playlist to `.m3u8`, including `#EXTINF` title and duration rows when metadata is available. Streaming-only saved references are skipped because they need fresh service resolution before playback.
 
+## Maintenance
+
+```sh
+rmus clear-cache
+```
+
+The clear-cache command removes cached local album discovery and track metadata. It leaves config, playlists, playback history, queue state, and streaming account tokens untouched.
+
 ## Test
 
 ```sh
