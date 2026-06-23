@@ -8,6 +8,7 @@ use std::{
 use crate::{
     config::{config_path, Config},
     history::HistoryStore,
+    local_cache::LocalTrackCache,
     playlist::PlaylistStore,
     queue::QueueStore,
 };
@@ -93,6 +94,7 @@ struct DoctorOptions {
     playlists_dir: PathBuf,
     history_path: PathBuf,
     queue_path: PathBuf,
+    local_cache_path: PathBuf,
 }
 
 impl DoctorOptions {
@@ -103,6 +105,7 @@ impl DoctorOptions {
             playlists_dir: PlaylistStore::default().dir().to_path_buf(),
             history_path: HistoryStore::default().path().to_path_buf(),
             queue_path: QueueStore::default().path().to_path_buf(),
+            local_cache_path: LocalTrackCache::default_path(),
         }
     }
 }
@@ -199,6 +202,12 @@ fn storage_checks(options: &DoctorOptions) -> Vec<DoctorCheck> {
         &options.queue_path,
         options.queue_path.exists(),
         "missing; playback queue will be created after queue changes",
+    ));
+    checks.push(path_check(
+        "local cache",
+        &options.local_cache_path,
+        options.local_cache_path.exists(),
+        "missing; local track metadata will be cached after browsing local music",
     ));
 
     if config_exists {
@@ -387,6 +396,7 @@ mod tests {
             playlists_dir: dir.join("playlists"),
             history_path: dir.join("history.toml"),
             queue_path: dir.join("queue.toml"),
+            local_cache_path: dir.join("local-cache.toml"),
         }
     }
 
@@ -439,6 +449,7 @@ mod tests {
         assert!(text.contains("[ok] mpv:"));
         assert!(text.contains("[warn] config:"));
         assert!(text.contains("[warn] queue:"));
+        assert!(text.contains("[warn] local cache:"));
         assert!(text.contains("[warn] local sources: config missing"));
     }
 
@@ -466,6 +477,7 @@ mod tests {
             playlists_dir: dir.join("playlists"),
             history_path: dir.join("history.toml"),
             queue_path: dir.join("queue.toml"),
+            local_cache_path: dir.join("local-cache.toml"),
         });
         let text = report.to_text();
 

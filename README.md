@@ -34,7 +34,7 @@ cargo run
 rmus doctor
 ```
 
-The doctor command checks the installed `rmus` version, whether `mpv` is available on `PATH`, where config/playlists/history/queue are stored, and whether configured local source folders still exist.
+The doctor command checks the installed `rmus` version, whether `mpv` is available on `PATH`, where config/playlists/history/queue/local-cache files are stored, and whether configured local source folders still exist.
 
 ## Test
 
@@ -46,7 +46,7 @@ cargo clippy --all-targets -- -D warnings
 
 ## Configuration
 
-The app stores config, playlists, playback history, and the saved queue under the platform config directory for `com.maximilianpw.rmus`.
+The app stores config, playlists, playback history, the saved queue, and local track metadata cache under the platform config directory for `com.maximilianpw.rmus`.
 
 Use the in-app settings panel to:
 

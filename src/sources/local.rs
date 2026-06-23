@@ -9,6 +9,7 @@ use std::{
 
 use crate::{
     config::LocalSource,
+    local_cache::LocalTrackCache,
     sources::{song::Song, MusicSource},
 };
 
@@ -265,7 +266,15 @@ impl LocalFiles {
         }
     }
 
-    fn songs_from_files(mut files: Vec<PathBuf>) -> Vec<Song> {
+    fn songs_from_files(files: Vec<PathBuf>) -> Vec<Song> {
+        let mut cache = LocalTrackCache::default();
+        Self::songs_from_files_with_cache(files, &mut cache)
+    }
+
+    pub(crate) fn songs_from_files_with_cache(
+        mut files: Vec<PathBuf>,
+        cache: &mut LocalTrackCache,
+    ) -> Vec<Song> {
         #[cfg(test)]
         SONG_SCAN_COUNT.fetch_add(files.len(), AtomicOrdering::SeqCst);
 
@@ -279,7 +288,11 @@ impl LocalFiles {
                         .unwrap_or_default(),
                 )
         });
-        let mut songs: Vec<Song> = files.into_iter().map(Song::from_path).collect();
+        let mut songs: Vec<Song> = files
+            .into_iter()
+            .map(|path| cache.song_for_path(&path))
+            .collect();
+        let _ = cache.save_if_dirty();
         Self::sort_songs_for_playback(&mut songs);
         songs
     }
@@ -346,6 +359,7 @@ fn song_title_sort_key(song: &Song) -> String {
 mod tests {
     use super::*;
     use crate::config::LocalSource;
+    use crate::local_cache::LocalTrackCache;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn test_dir(name: &str) -> PathBuf {
@@ -354,6 +368,46 @@ mod tests {
             .unwrap()
             .as_nanos();
         std::env::temp_dir().join(format!("rmus-local-source-{name}-{nanos}"))
+    }
+
+    fn test_cache_path(name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("rmus-local-source-cache-{name}-{nanos}.toml"))
+    }
+
+    fn escaped_toml_string(value: &str) -> String {
+        value.replace('\\', "\\\\").replace('"', "\\\"")
+    }
+
+    fn write_cache_entry(cache_path: &Path, song_path: &Path, title: &str) {
+        let metadata = fs::metadata(song_path).unwrap();
+        let modified = metadata
+            .modified()
+            .unwrap()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default();
+        fs::write(
+            cache_path,
+            format!(
+                r#"
+                    [[tracks]]
+                    path = "{}"
+                    len = {}
+                    modified_secs = {}
+                    modified_nanos = {}
+                    title = "{}"
+                "#,
+                escaped_toml_string(&song_path.to_string_lossy()),
+                metadata.len(),
+                modified.as_secs(),
+                modified.subsec_nanos(),
+                escaped_toml_string(title)
+            ),
+        )
+        .unwrap();
     }
 
     #[test]
@@ -471,6 +525,47 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn local_source_uses_cached_track_metadata_for_unchanged_file() {
+        let dir = test_dir("cached-metadata");
+        fs::create_dir_all(&dir).unwrap();
+        let song_path = dir.join("01 - Untagged.flac");
+        fs::write(&song_path, "audio").unwrap();
+        let cache_path = test_cache_path("cached-metadata");
+        write_cache_entry(&cache_path, &song_path, "Cached Title");
+        let mut cache = LocalTrackCache::with_path(cache_path.clone());
+
+        let songs = LocalFiles::songs_from_files_with_cache(vec![song_path.clone()], &mut cache);
+
+        assert_eq!(songs.len(), 1);
+        assert_eq!(songs[0].title, "Cached Title");
+
+        let _ = fs::remove_dir_all(dir);
+        let _ = fs::remove_file(cache_path);
+    }
+
+    #[test]
+    fn local_source_reloads_metadata_when_cached_file_changes() {
+        let dir = test_dir("stale-cache");
+        fs::create_dir_all(&dir).unwrap();
+        let song_path = dir.join("01 - Untagged.flac");
+        fs::write(&song_path, "audio").unwrap();
+        let cache_path = test_cache_path("stale-cache");
+        write_cache_entry(&cache_path, &song_path, "Stale Cached Title");
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        fs::write(&song_path, "changed audio").unwrap();
+        let mut cache = LocalTrackCache::with_path(cache_path.clone());
+
+        let songs = LocalFiles::songs_from_files_with_cache(vec![song_path.clone()], &mut cache);
+
+        assert_eq!(songs.len(), 1);
+        assert_eq!(songs[0].title, "01 - Untagged.flac");
+        assert_ne!(songs[0].title, "Stale Cached Title");
+
+        let _ = fs::remove_dir_all(dir);
+        let _ = fs::remove_file(cache_path);
     }
 
     #[test]

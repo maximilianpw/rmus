@@ -5,6 +5,7 @@ pub mod config;
 pub mod event;
 pub mod history;
 pub mod keymap;
+pub mod local_cache;
 pub mod players;
 pub mod playlist;
 pub mod queue;
