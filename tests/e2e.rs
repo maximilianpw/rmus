@@ -196,6 +196,7 @@ fn test_cli_help_prints_without_launching_tui() {
     assert!(stdout.contains("scan-local"));
     assert!(stdout.contains("add-source"));
     assert!(stdout.contains("remove-source"));
+    assert!(stdout.contains("show-playlist"));
     assert!(stdout.contains("import-playlist"));
     assert!(stdout.contains("export-playlist"));
     assert!(stdout.contains("clear-cache"));
@@ -443,6 +444,59 @@ title = "Only"
 
     let _ = std::fs::remove_dir_all(state_dir);
     let _ = std::fs::remove_dir_all(empty_dir);
+}
+
+#[test]
+fn test_cli_show_playlist_reports_saved_tracks_without_launching_tui() {
+    let state_dir = test_dir("cli-show-playlist");
+    std::fs::create_dir_all(&state_dir).unwrap();
+    let playlists_dir = isolated_playlists_dir(&state_dir);
+    std::fs::create_dir_all(&playlists_dir).unwrap();
+    std::fs::write(
+        playlists_dir.join("Road Mix.toml"),
+        r#"
+name = "Road Mix"
+
+[[tracks]]
+title = "Local Song"
+artist = "Local Artist"
+album_name = "Local Album"
+path = "/music/local.flac"
+
+[[tracks]]
+title = "Stream Song"
+artist = "Stream Artist"
+album_name = "Stream Album"
+stream_service = "Qobuz"
+stream_track_id = "qbz-1"
+"#,
+    )
+    .unwrap();
+
+    let mut command = rmus_binary();
+    state_env(command.args(["show-playlist", "road mix"]), &state_dir);
+    let output = command.output().expect("rmus show-playlist should run");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Playlist 'Road Mix' (2 tracks)"));
+    assert!(stdout.contains("1. Local Artist - Local Song (Local Album) [local] /music/local.flac"));
+    assert!(stdout.contains("2. Stream Artist - Stream Song (Stream Album) [Qobuz: qbz-1]"));
+
+    let mut missing_command = rmus_binary();
+    state_env(
+        missing_command.args(["show-playlist", "Missing"]),
+        &state_dir,
+    );
+    let missing_output = missing_command
+        .output()
+        .expect("missing rmus show-playlist should run");
+    assert!(!missing_output.status.success());
+    let stderr = String::from_utf8(missing_output.stderr).unwrap();
+    assert!(stderr.contains("Playlist 'Missing' not found"));
+
+    let _ = std::fs::remove_dir_all(state_dir);
 }
 
 #[test]

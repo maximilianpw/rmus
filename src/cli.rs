@@ -12,6 +12,7 @@ use crate::{
     playlist::{PlaylistExportSummary, PlaylistImportSummary, PlaylistStore},
     queue::QueueStore,
     sources::local::{LocalFiles, LocalLibraryStats},
+    utils::track_count_label,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,6 +28,7 @@ pub enum CliAction {
     ScanLocal { name: Option<String> },
     AddSource { name: String, path: PathBuf },
     RemoveSource { name: String },
+    ShowPlaylist { name: String },
     ImportPlaylist { path: PathBuf, name: Option<String> },
     ExportPlaylist { name: String, path: PathBuf },
     ClearCache,
@@ -56,6 +58,7 @@ where
         "scan-local" => parse_scan_local_args(args),
         "add-source" => parse_add_source_args(args),
         "remove-source" => parse_remove_source_args(args),
+        "show-playlist" => parse_show_playlist_args(args),
         "import-playlist" => parse_import_playlist_args(args),
         "export-playlist" => parse_export_playlist_args(args),
         "clear-cache" => no_more_args(args, CliAction::ClearCache, &first),
@@ -129,6 +132,26 @@ where
     }
 
     Ok(CliAction::ScanLocal { name })
+}
+
+fn parse_show_playlist_args<I>(mut args: I) -> Result<CliAction, String>
+where
+    I: Iterator<Item = String>,
+{
+    let Some(name) = args.next() else {
+        return Err(format!(
+            "missing playlist name for show-playlist\n\n{}",
+            help_text()
+        ));
+    };
+    if args.next().is_some() {
+        return Err(format!(
+            "unexpected argument after playlist name\n\n{}",
+            help_text()
+        ));
+    }
+
+    Ok(CliAction::ShowPlaylist { name })
 }
 
 fn parse_import_playlist_args<I>(mut args: I) -> Result<CliAction, String>
@@ -207,6 +230,8 @@ pub fn help_text() -> &'static str {
         "                  Add a local music folder to config\n",
         "  remove-source <NAME>\n",
         "                  Remove a local music folder from config\n",
+        "  show-playlist <NAME>\n",
+        "                  Print saved tracks in a playlist\n",
         "  import-playlist <PATH> [NAME]\n",
         "                  Import a local .m3u/.m3u8 playlist\n",
         "  export-playlist <NAME> <PATH>\n",
@@ -295,6 +320,125 @@ pub fn list_playlists() -> PlaylistListSummary {
 fn list_playlists_with_store(store: PlaylistStore) -> PlaylistListSummary {
     PlaylistListSummary {
         playlists: store.summaries(),
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PlaylistDetailSummary {
+    pub name: String,
+    pub tracks: Vec<crate::playlist::PlaylistTrack>,
+}
+
+impl PlaylistDetailSummary {
+    pub fn message(&self) -> String {
+        let mut text = format!(
+            "Playlist '{}' ({})\n",
+            self.name,
+            track_count_label(self.tracks.len())
+        );
+
+        if self.tracks.is_empty() {
+            text.push_str("No tracks saved.\n");
+            return text;
+        }
+
+        for (index, track) in self.tracks.iter().enumerate() {
+            text.push_str(&format!(
+                "{}. {}\n",
+                index + 1,
+                playlist_track_detail(track)
+            ));
+        }
+        text
+    }
+}
+
+pub fn show_playlist(name: &str) -> Result<PlaylistDetailSummary, String> {
+    show_playlist_with_store(PlaylistStore::default(), name)
+}
+
+fn show_playlist_with_store(
+    store: PlaylistStore,
+    name: &str,
+) -> Result<PlaylistDetailSummary, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("Playlist name is required".to_string());
+    }
+
+    let Some(playlist) = store
+        .load_all()
+        .into_iter()
+        .find(|playlist| playlist.name.eq_ignore_ascii_case(name))
+    else {
+        return Err(format!("Playlist '{name}' not found"));
+    };
+
+    Ok(PlaylistDetailSummary {
+        name: playlist.name,
+        tracks: playlist.tracks,
+    })
+}
+
+fn playlist_track_detail(track: &crate::playlist::PlaylistTrack) -> String {
+    let mut detail = playlist_track_title(track);
+    if let Some(album) = nonblank(&track.album_name) {
+        detail.push_str(&format!(" ({album})"));
+    }
+    detail.push_str(&format!(" [{}]", playlist_track_source_label(track)));
+
+    if let Some(path) = track.path.as_deref().and_then(nonblank) {
+        detail.push(' ');
+        detail.push_str(path);
+    }
+
+    detail
+}
+
+fn playlist_track_title(track: &crate::playlist::PlaylistTrack) -> String {
+    let title = nonblank(&track.title);
+    let artist = nonblank(&track.artist);
+    match (artist, title) {
+        (Some(artist), Some(title)) => format!("{artist} - {title}"),
+        (None, Some(title)) => title.to_string(),
+        (Some(artist), None) => artist.to_string(),
+        (None, None) => track
+            .path
+            .as_deref()
+            .and_then(nonblank)
+            .and_then(|path| {
+                Path::new(path)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .filter(|name| !name.trim().is_empty())
+            })
+            .or_else(|| track.stream_track_id.as_deref().and_then(nonblank))
+            .unwrap_or("Unknown Track")
+            .to_string(),
+    }
+}
+
+fn playlist_track_source_label(track: &crate::playlist::PlaylistTrack) -> String {
+    if track.path.as_deref().and_then(nonblank).is_some() {
+        return "local".to_string();
+    }
+
+    let service = track.stream_service.as_deref().and_then(nonblank);
+    let track_id = track.stream_track_id.as_deref().and_then(nonblank);
+    match (service, track_id) {
+        (Some(service), Some(track_id)) => format!("{service}: {track_id}"),
+        (Some(service), None) => service.to_string(),
+        (None, Some(track_id)) => format!("stream: {track_id}"),
+        (None, None) => "saved".to_string(),
+    }
+}
+
+fn nonblank(value: &str) -> Option<&str> {
+    let value = value.trim();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
     }
 }
 
@@ -1014,7 +1158,7 @@ mod tests {
         add_source_to_config, clear_cache_at, doctor_report_with_options,
         list_playlists_with_store, list_sources_from_config, local_stats_with_cache_path,
         parse_args, paths_text_with_options, remove_source_from_config, scan_local_with_cache_path,
-        CliAction, DoctorOptions,
+        show_playlist_with_store, CliAction, DoctorOptions,
     };
     use std::{
         env, fs,
@@ -1233,6 +1377,79 @@ title = "Only"
             summary.message(),
             "No playlists found; create one in the Playlists tab or import with `rmus import-playlist`"
         );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn show_playlist_command_prints_saved_tracks() {
+        assert_eq!(
+            parse_args(["rmus", "show-playlist", "Road Mix"]),
+            Ok(CliAction::ShowPlaylist {
+                name: "Road Mix".to_string()
+            })
+        );
+        let missing_name =
+            parse_args(["rmus", "show-playlist"]).expect_err("name should be required");
+        assert!(missing_name.contains("missing playlist name for show-playlist"));
+        let extra = parse_args(["rmus", "show-playlist", "Road Mix", "extra"])
+            .expect_err("extra args should fail");
+        assert!(extra.contains("unexpected argument after playlist name"));
+
+        let dir = test_dir("show-playlist");
+        let playlists_dir = dir.join("playlists");
+        fs::create_dir_all(&playlists_dir).unwrap();
+        fs::write(
+            playlists_dir.join("Road Mix.toml"),
+            r#"
+name = "Road Mix"
+
+[[tracks]]
+title = "Local Song"
+artist = "Local Artist"
+album_name = "Local Album"
+path = "/music/local.flac"
+
+[[tracks]]
+title = "Stream Song"
+artist = "Stream Artist"
+album_name = "Stream Album"
+stream_service = "Qobuz"
+stream_track_id = "qbz-1"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            playlists_dir.join("Empty.toml"),
+            r#"
+name = "Empty"
+tracks = []
+"#,
+        )
+        .unwrap();
+        let store = crate::playlist::PlaylistStore::with_dir(playlists_dir);
+
+        let summary = show_playlist_with_store(store.clone(), "road mix").unwrap();
+        assert_eq!(summary.name, "Road Mix");
+        assert_eq!(summary.tracks.len(), 2);
+        let message = summary.message();
+        assert!(message.contains("Playlist 'Road Mix' (2 tracks)"));
+        assert!(message
+            .contains("1. Local Artist - Local Song (Local Album) [local] /music/local.flac"));
+        assert!(message.contains("2. Stream Artist - Stream Song (Stream Album) [Qobuz: qbz-1]"));
+
+        let empty = show_playlist_with_store(store.clone(), "Empty").unwrap();
+        assert_eq!(
+            empty.message(),
+            "Playlist 'Empty' (0 tracks)\nNo tracks saved.\n"
+        );
+
+        let blank = show_playlist_with_store(store.clone(), " ")
+            .expect_err("blank names should be rejected");
+        assert_eq!(blank, "Playlist name is required");
+        let missing =
+            show_playlist_with_store(store, "Missing").expect_err("unknown playlists should fail");
+        assert_eq!(missing, "Playlist 'Missing' not found");
 
         let _ = fs::remove_dir_all(dir);
     }

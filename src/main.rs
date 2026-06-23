@@ -66,6 +66,16 @@ fn main() -> color_eyre::Result<()> {
                 std::process::exit(2);
             }
         },
+        Ok(rmus::cli::CliAction::ShowPlaylist { name }) => match rmus::cli::show_playlist(&name) {
+            Ok(summary) => {
+                print!("{}", summary.message());
+                return Ok(());
+            }
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(2);
+            }
+        },
         Ok(rmus::cli::CliAction::ImportPlaylist { path, name }) => {
             let summary = rmus::cli::import_playlist(&path, name.as_deref())?;
             println!("{}", summary.message());
