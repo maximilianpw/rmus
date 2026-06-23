@@ -24,6 +24,12 @@ It is focused on fast local-library playback with playlist and queue workflows, 
 - Rust toolchain with Cargo.
 - `mpv` available on `PATH` for playback.
 
+## Install
+
+```sh
+brew install maximilianpw/tap/rmus
+```
+
 ## Run
 
 ```sh
