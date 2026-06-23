@@ -3,7 +3,6 @@ use std::{collections::VecDeque, path::PathBuf};
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     layout::{Constraint, Layout, Rect},
-    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
     Frame,
@@ -12,7 +11,7 @@ use ratatui::{
 use crate::{
     playlist::PlaylistStore,
     sources::song::Song,
-    ui::{input_line::InputLine, widget::selected_row_style},
+    ui::{input_line::InputLine, theme, widget::selected_row_style},
     utils::track_count_label,
 };
 
@@ -798,11 +797,7 @@ impl CenterPanel {
     }
 
     fn render_album(&mut self, frame: &mut Frame, area: Rect, is_focused: bool) {
-        let border_style = if is_focused {
-            Style::default().fg(Color::Yellow)
-        } else {
-            Style::default()
-        };
+        let border_style = theme::focused_border_style(is_focused);
 
         let title = Self::collection_title(
             self.selected_album_title.as_deref().unwrap_or("Songs"),
@@ -842,16 +837,12 @@ impl CenterPanel {
 
         lines
             .iter()
-            .map(|line| ListItem::new(*line).style(Style::default().fg(Color::DarkGray)))
+            .map(|line| ListItem::new(*line).style(theme::muted_style()))
             .collect()
     }
 
     fn render_search_input(&mut self, frame: &mut Frame, area: Rect, is_focused: bool) {
-        let border_style = if is_focused {
-            Style::default().fg(Color::Yellow)
-        } else {
-            Style::default()
-        };
+        let border_style = theme::focused_border_style(is_focused);
 
         let [input_area, list_area] =
             Layout::vertical([Constraint::Length(3), Constraint::Fill(1)]).areas(area);
@@ -865,18 +856,10 @@ impl CenterPanel {
         let input_block = Block::bordered()
             .title(search_title)
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Yellow));
+            .border_style(theme::accent_style());
 
-        let mut input_spans = vec![Span::styled(
-            "> ",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )];
-        input_spans.extend(
-            self.search_input
-                .display_spans(true, Style::default().fg(Color::Yellow)),
-        );
+        let mut input_spans = vec![Span::styled("> ", theme::accent_bold_style())];
+        input_spans.extend(self.search_input.display_spans(true, theme::accent_style()));
         let input_text = Line::from(input_spans);
 
         let input_paragraph = Paragraph::new(input_text).block(input_block);
@@ -1009,17 +992,12 @@ impl CenterPanel {
     }
 
     fn render_search_results(&mut self, frame: &mut Frame, area: Rect, is_focused: bool) {
-        let border_style = if is_focused {
-            Style::default().fg(Color::Yellow)
-        } else {
-            Style::default()
-        };
+        let border_style = theme::focused_border_style(is_focused);
 
         let list_items: Vec<ListItem> = if self.songs.is_empty() {
             vec![
-                ListItem::new("No matching songs").style(Style::default().fg(Color::DarkGray)),
-                ListItem::new("Press / to search again.")
-                    .style(Style::default().fg(Color::DarkGray)),
+                ListItem::new("No matching songs").style(theme::muted_style()),
+                ListItem::new("Press / to search again.").style(theme::muted_style()),
             ]
         } else {
             self.songs
@@ -1049,17 +1027,12 @@ impl CenterPanel {
     }
 
     fn render_album_results(&mut self, frame: &mut Frame, area: Rect, is_focused: bool) {
-        let border_style = if is_focused {
-            Style::default().fg(Color::Yellow)
-        } else {
-            Style::default()
-        };
+        let border_style = theme::focused_border_style(is_focused);
 
         let list_items: Vec<ListItem> = if self.album_display_titles.is_empty() {
             vec![
-                ListItem::new("No matching albums").style(Style::default().fg(Color::DarkGray)),
-                ListItem::new("Press / to search again.")
-                    .style(Style::default().fg(Color::DarkGray)),
+                ListItem::new("No matching albums").style(theme::muted_style()),
+                ListItem::new("Press / to search again.").style(theme::muted_style()),
             ]
         } else {
             self.album_display_titles
@@ -1087,17 +1060,12 @@ impl CenterPanel {
     }
 
     fn render_album_tracks(&mut self, frame: &mut Frame, area: Rect, is_focused: bool) {
-        let border_style = if is_focused {
-            Style::default().fg(Color::Yellow)
-        } else {
-            Style::default()
-        };
+        let border_style = theme::focused_border_style(is_focused);
 
         let list_items: Vec<ListItem> = if self.songs.is_empty() {
             vec![
-                ListItem::new("No tracks found").style(Style::default().fg(Color::DarkGray)),
-                ListItem::new("Press Esc to return to albums.")
-                    .style(Style::default().fg(Color::DarkGray)),
+                ListItem::new("No tracks found").style(theme::muted_style()),
+                ListItem::new("Press Esc to return to albums.").style(theme::muted_style()),
             ]
         } else {
             self.songs
@@ -1126,21 +1094,12 @@ impl CenterPanel {
     }
 
     fn render_queue_filter(&self, frame: &mut Frame, area: Rect, is_focused: bool) {
-        let border_style = if is_focused {
-            Style::default().fg(Color::Yellow)
-        } else {
-            Style::default()
-        };
+        let border_style = theme::focused_border_style(is_focused);
 
-        let mut input_spans = vec![Span::styled(
-            "/ ",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )];
+        let mut input_spans = vec![Span::styled("/ ", theme::accent_bold_style())];
         input_spans.extend(self.queue_filter_input.display_spans(
             self.queue_filter_input.is_input_mode(),
-            Style::default().fg(Color::Yellow),
+            theme::accent_style(),
         ));
 
         let paragraph = Paragraph::new(Line::from(input_spans)).block(
@@ -1153,11 +1112,7 @@ impl CenterPanel {
     }
 
     fn render_queue(&mut self, frame: &mut Frame, area: Rect, is_focused: bool) {
-        let border_style = if is_focused {
-            Style::default().fg(Color::Yellow)
-        } else {
-            Style::default()
-        };
+        let border_style = theme::focused_border_style(is_focused);
         let show_filter = self.queue_filter_input.is_input_mode() || self.has_queue_filter_query();
         let (filter_area, list_area) = if show_filter {
             let [filter_area, list_area] =
@@ -1173,15 +1128,13 @@ impl CenterPanel {
 
         let list_items: Vec<ListItem> = if self.queue_songs.is_empty() {
             vec![
-                ListItem::new("Queue is empty").style(Style::default().fg(Color::DarkGray)),
-                ListItem::new("Play or enqueue a song to fill it.")
-                    .style(Style::default().fg(Color::DarkGray)),
+                ListItem::new("Queue is empty").style(theme::muted_style()),
+                ListItem::new("Play or enqueue a song to fill it.").style(theme::muted_style()),
             ]
         } else if self.queue_visible_indices.is_empty() {
             vec![
-                ListItem::new("No queue matches").style(Style::default().fg(Color::DarkGray)),
-                ListItem::new("Press Esc to clear the filter.")
-                    .style(Style::default().fg(Color::DarkGray)),
+                ListItem::new("No queue matches").style(theme::muted_style()),
+                ListItem::new("Press Esc to clear the filter.").style(theme::muted_style()),
             ]
         } else {
             let queue_len = self.queue_songs.len();
@@ -1192,9 +1145,9 @@ impl CenterPanel {
                     let is_current = index == self.queue_position;
                     let display = Self::queue_song_row_label(index, queue_len, song, is_current);
                     let style = if is_current {
-                        Style::default().fg(Color::Green)
+                        theme::current_style()
                     } else {
-                        Style::default()
+                        theme::default_style()
                     };
                     ListItem::new(display).style(style)
                 })
@@ -1227,21 +1180,12 @@ impl CenterPanel {
     }
 
     fn render_history_filter(&self, frame: &mut Frame, area: Rect, is_focused: bool) {
-        let border_style = if is_focused {
-            Style::default().fg(Color::Yellow)
-        } else {
-            Style::default()
-        };
+        let border_style = theme::focused_border_style(is_focused);
 
-        let mut input_spans = vec![Span::styled(
-            "/ ",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )];
+        let mut input_spans = vec![Span::styled("/ ", theme::accent_bold_style())];
         input_spans.extend(self.history_filter_input.display_spans(
             self.history_filter_input.is_input_mode(),
-            Style::default().fg(Color::Yellow),
+            theme::accent_style(),
         ));
 
         let paragraph = Paragraph::new(Line::from(input_spans)).block(
@@ -1254,11 +1198,7 @@ impl CenterPanel {
     }
 
     fn render_history(&mut self, frame: &mut Frame, area: Rect, is_focused: bool) {
-        let border_style = if is_focused {
-            Style::default().fg(Color::Yellow)
-        } else {
-            Style::default()
-        };
+        let border_style = theme::focused_border_style(is_focused);
         let show_filter =
             self.history_filter_input.is_input_mode() || self.has_history_filter_query();
         let (filter_area, list_area) = if show_filter {
@@ -1275,16 +1215,13 @@ impl CenterPanel {
 
         let list_items: Vec<ListItem> = if self.history_songs.is_empty() {
             vec![
-                ListItem::new("No recently played tracks")
-                    .style(Style::default().fg(Color::DarkGray)),
-                ListItem::new("Play a song to fill history.")
-                    .style(Style::default().fg(Color::DarkGray)),
+                ListItem::new("No recently played tracks").style(theme::muted_style()),
+                ListItem::new("Play a song to fill history.").style(theme::muted_style()),
             ]
         } else if self.history_visible_indices.is_empty() {
             vec![
-                ListItem::new("No history matches").style(Style::default().fg(Color::DarkGray)),
-                ListItem::new("Press Esc to clear the filter.")
-                    .style(Style::default().fg(Color::DarkGray)),
+                ListItem::new("No history matches").style(theme::muted_style()),
+                ListItem::new("Press Esc to clear the filter.").style(theme::muted_style()),
             ]
         } else {
             self.history_visible_indices
@@ -1320,17 +1257,12 @@ impl CenterPanel {
     }
 
     fn render_artist_results(&mut self, frame: &mut Frame, area: Rect, is_focused: bool) {
-        let border_style = if is_focused {
-            Style::default().fg(Color::Yellow)
-        } else {
-            Style::default()
-        };
+        let border_style = theme::focused_border_style(is_focused);
 
         let list_items: Vec<ListItem> = if self.artist_display_titles.is_empty() {
             vec![
-                ListItem::new("No matching artists").style(Style::default().fg(Color::DarkGray)),
-                ListItem::new("Press / to search again.")
-                    .style(Style::default().fg(Color::DarkGray)),
+                ListItem::new("No matching artists").style(theme::muted_style()),
+                ListItem::new("Press / to search again.").style(theme::muted_style()),
             ]
         } else {
             self.artist_display_titles
@@ -1611,17 +1543,12 @@ impl CenterPanel {
         let input_block = Block::bordered()
             .title(title)
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Yellow));
+            .border_style(theme::accent_style());
 
-        let mut input_spans = vec![Span::styled(
-            "> ",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )];
+        let mut input_spans = vec![Span::styled("> ", theme::accent_bold_style())];
         input_spans.extend(
             self.playlist_name_input
-                .display_spans(true, Style::default().fg(Color::Yellow)),
+                .display_spans(true, theme::accent_style()),
         );
         let input_text = Line::from(input_spans);
 
@@ -1637,17 +1564,12 @@ impl CenterPanel {
         let input_block = Block::bordered()
             .title(title)
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Yellow));
+            .border_style(theme::accent_style());
 
-        let mut input_spans = vec![Span::styled(
-            "> ",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )];
+        let mut input_spans = vec![Span::styled("> ", theme::accent_bold_style())];
         input_spans.extend(
             self.playlist_name_input
-                .display_spans(true, Style::default().fg(Color::Yellow)),
+                .display_spans(true, theme::accent_style()),
         );
         let input_text = Line::from(input_spans);
 
@@ -1663,17 +1585,12 @@ impl CenterPanel {
         let input_block = Block::bordered()
             .title(title)
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Yellow));
+            .border_style(theme::accent_style());
 
-        let mut input_spans = vec![Span::styled(
-            "> ",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )];
+        let mut input_spans = vec![Span::styled("> ", theme::accent_bold_style())];
         input_spans.extend(
             self.playlist_name_input
-                .display_spans(true, Style::default().fg(Color::Yellow)),
+                .display_spans(true, theme::accent_style()),
         );
         let input_text = Line::from(input_spans);
 
@@ -1682,11 +1599,7 @@ impl CenterPanel {
     }
 
     fn render_playlist_picker(&mut self, frame: &mut Frame, area: Rect, is_focused: bool) {
-        let border_style = if is_focused {
-            Style::default().fg(Color::Yellow)
-        } else {
-            Style::default()
-        };
+        let border_style = theme::focused_border_style(is_focused);
 
         let list_items: Vec<ListItem> = self
             .playlist_picker_names

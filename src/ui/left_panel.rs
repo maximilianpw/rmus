@@ -3,7 +3,6 @@ use std::path::PathBuf;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     layout::{Constraint, Layout, Rect},
-    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
     Frame,
@@ -14,6 +13,7 @@ use crate::{
     ui::{
         input_line::InputLine,
         log_panel::Logger,
+        theme,
         widget::{handle_focused_border_style, selected_row_style, tabs_from_strings},
     },
 };
@@ -301,21 +301,12 @@ impl LeftPanel {
     }
 
     fn render_filter(&self, frame: &mut Frame, area: Rect, is_focused: bool) {
-        let border_style = if is_focused {
-            Style::default().fg(Color::Yellow)
-        } else {
-            Style::default()
-        };
-        let mut input_spans = vec![Span::styled(
-            "/ ",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )];
-        input_spans.extend(self.filter_input.display_spans(
-            self.filter_input.is_input_mode(),
-            Style::default().fg(Color::Yellow),
-        ));
+        let border_style = theme::focused_border_style(is_focused);
+        let mut input_spans = vec![Span::styled("/ ", theme::accent_bold_style())];
+        input_spans.extend(
+            self.filter_input
+                .display_spans(self.filter_input.is_input_mode(), theme::accent_style()),
+        );
         let paragraph = Paragraph::new(Line::from(input_spans)).block(
             Block::bordered()
                 .title(" Filter List ")
@@ -355,7 +346,7 @@ impl LeftPanel {
         };
         lines
             .iter()
-            .map(|line| ListItem::new(*line).style(Style::default().fg(Color::Gray)))
+            .map(|line| ListItem::new(*line).style(theme::muted_style()))
             .collect()
     }
 

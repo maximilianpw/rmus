@@ -1,6 +1,6 @@
 use ratatui::{
     layout::{Alignment, Rect},
-    style::{Color, Modifier, Style},
+    style::Style,
     text::{Line, Span},
     widgets::{Block, Borders, Gauge, Paragraph, Tabs},
     Frame,
@@ -8,20 +8,14 @@ use ratatui::{
 
 use crate::players::{PlaybackInfo, PlaybackState, RepeatMode, ShuffleMode};
 use crate::sources::song::Song;
+use crate::ui::theme;
 
 pub fn handle_focused_border_style(is_focused: bool) -> Style {
-    if is_focused {
-        Style::default().fg(Color::Yellow)
-    } else {
-        Style::default()
-    }
+    theme::focused_border_style(is_focused)
 }
 
 pub fn selected_row_style() -> Style {
-    Style::default()
-        .fg(Color::Black)
-        .bg(Color::Yellow)
-        .add_modifier(Modifier::BOLD)
+    theme::selected_row_style()
 }
 
 pub fn tabs_from_strings<'a>(
@@ -38,7 +32,7 @@ pub fn tabs_from_strings<'a>(
                 .border_style(border_style),
         )
         .select(selected_tab_index)
-        .highlight_style(Style::default().fg(Color::Yellow).bold())
+        .highlight_style(theme::accent_bold_style())
 }
 
 pub fn now_playing_widget(info: &PlaybackInfo, is_focused: bool, frame: &mut Frame, area: Rect) {
@@ -76,9 +70,9 @@ pub fn now_playing_widget(info: &PlaybackInfo, is_focused: bool, frame: &mut Fra
 
     // Status line
     let status = match info.state {
-        PlaybackState::Playing => Span::styled("Playing", Style::default().fg(Color::Green)),
-        PlaybackState::Paused => Span::styled("Paused", Style::default().fg(Color::Yellow)),
-        PlaybackState::Stopped => Span::styled("Stopped", Style::default().fg(Color::Gray)),
+        PlaybackState::Playing => Span::styled("Playing", theme::success_style()),
+        PlaybackState::Paused => Span::styled("Paused", theme::warning_style()),
+        PlaybackState::Stopped => Span::styled("Stopped", theme::muted_style()),
     };
     let quality = info
         .current_song
@@ -92,15 +86,12 @@ pub fn now_playing_widget(info: &PlaybackInfo, is_focused: bool, frame: &mut Fra
     }
     status_parts.push(volume);
     if info.shuffle == ShuffleMode::On {
-        status_parts.push(Span::styled(
-            " | Shuffle",
-            Style::default().fg(Color::Magenta),
-        ));
+        status_parts.push(Span::styled(" | Shuffle", theme::secondary_style()));
     }
     if info.repeat != RepeatMode::Off {
         status_parts.push(Span::styled(
             format!(" | Repeat: {}", info.repeat.label()),
-            Style::default().fg(Color::Cyan),
+            theme::info_style(),
         ));
     }
     frame.render_widget(
@@ -117,7 +108,7 @@ pub fn now_playing_widget(info: &PlaybackInfo, is_focused: bool, frame: &mut Fra
     };
     let gauge = Gauge::default()
         .ratio(progress)
-        .gauge_style(Style::default().fg(Color::Cyan));
+        .gauge_style(theme::accent_style());
     frame.render_widget(gauge, Rect::new(inner.x, row_y, inner.width, 1));
     row_y += 1;
 
@@ -199,7 +190,7 @@ fn now_playing_metadata_lines(song: &Song) -> Vec<Line<'static>> {
 
 fn metadata_line(label: &'static str, value: &str) -> Line<'static> {
     Line::from(vec![
-        Span::styled(format!("{label}: "), Style::default().fg(Color::Gray)),
+        Span::styled(format!("{label}: "), theme::muted_style()),
         Span::raw(value.to_string()),
     ])
 }
@@ -212,6 +203,7 @@ mod tests {
     use crate::{
         players::{PlaybackInfo, PlaybackState},
         sources::song::Song,
+        ui::theme,
     };
 
     use super::now_playing_widget;
@@ -227,6 +219,29 @@ mod tests {
             text.push('\n');
         }
         text
+    }
+
+    fn first_cell_fg_for_text(
+        buffer: &ratatui::buffer::Buffer,
+        needle: &str,
+    ) -> ratatui::style::Color {
+        for y in 0..buffer.area.height {
+            let mut row = String::new();
+            for x in 0..buffer.area.width {
+                if let Some(cell) = buffer.cell((x, y)) {
+                    row.push_str(cell.symbol());
+                }
+            }
+
+            if let Some(offset) = row.find(needle) {
+                return buffer
+                    .cell((buffer.area.x + offset as u16, buffer.area.y + y))
+                    .unwrap()
+                    .fg;
+            }
+        }
+
+        panic!("did not find {needle:?} in rendered buffer");
     }
 
     #[test]
@@ -253,6 +268,33 @@ mod tests {
         let text = extract_buffer_text(frame.buffer);
 
         assert!(text.contains("Quality: Lossless"));
+    }
+
+    #[test]
+    fn now_playing_status_uses_theme_contrast_colors() {
+        let backend = TestBackend::new(60, 5);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let info = PlaybackInfo {
+            state: PlaybackState::Playing,
+            current_song: Some(Song {
+                title: "Needle Drop".to_string(),
+                ..Default::default()
+            }),
+            position: 30.0,
+            duration: 120.0,
+            volume: 50,
+            last_error: None,
+            ..Default::default()
+        };
+
+        let frame = terminal
+            .draw(|frame| now_playing_widget(&info, false, frame, frame.area()))
+            .unwrap();
+
+        assert_eq!(
+            first_cell_fg_for_text(frame.buffer, "Playing"),
+            theme::SUCCESS
+        );
     }
 
     #[test]

@@ -1,12 +1,15 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     layout::{Constraint, Layout, Rect},
-    style::{Color, Modifier, Style, Stylize},
+    style::Stylize,
     text::{Line, Span},
     widgets::Paragraph,
 };
 
-use crate::{config::Config, ui::input_line::InputLine};
+use crate::{
+    config::Config,
+    ui::{input_line::InputLine, theme},
+};
 
 #[derive(Debug)]
 pub struct AccountSettings {
@@ -79,31 +82,24 @@ impl AccountSettings {
             .areas(area);
 
         // Section header
-        let header = Line::from(Span::styled(
-            "── Qobuz ──",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        ));
+        let header = Line::from(Span::styled("── Qobuz ──", theme::section_style()));
         frame.render_widget(Paragraph::new(header), header_area);
 
         let status_text = if self.has_qobuz_credentials() {
             Line::from(vec![
-                Span::styled("Status:   ", Style::default().fg(Color::Cyan)),
-                Span::styled("Configured", Style::default().fg(Color::Green)),
+                Span::styled("Status:   ", theme::accent_style()),
+                Span::styled("Configured", theme::success_style()),
             ])
         } else {
             Line::from(vec![
-                Span::styled("Status:   ", Style::default().fg(Color::Cyan)),
-                Span::styled("Not configured", Style::default().fg(Color::Red)),
+                Span::styled("Status:   ", theme::accent_style()),
+                Span::styled("Not configured", theme::error_style()),
             ])
         };
         frame.render_widget(Paragraph::new(status_text), status_area);
 
-        let label_style = Style::default().fg(Color::Cyan);
-        let active_label_style = Style::default()
-            .fg(Color::Yellow)
-            .add_modifier(Modifier::BOLD);
+        let label_style = theme::accent_style();
+        let active_label_style = theme::accent_bold_style();
 
         // Email field
         let email_label_style = if self.input_mode && self.active_field == 0 {
@@ -114,7 +110,7 @@ impl AccountSettings {
         let mut email_spans = vec![Span::styled("Email:    ", email_label_style)];
         email_spans.extend(self.email_input.display_spans(
             self.input_mode && self.active_field == 0,
-            Style::default().fg(Color::Yellow),
+            theme::accent_style(),
         ));
         let email_line = Line::from(email_spans);
         frame.render_widget(Paragraph::new(email_line), email_area);
@@ -129,7 +125,7 @@ impl AccountSettings {
         if self.input_mode && self.active_field == 1 {
             password_spans.extend(
                 self.password_input
-                    .display_spans(true, Style::default().fg(Color::Yellow)),
+                    .display_spans(true, theme::accent_style()),
             );
         } else {
             password_spans.push(Span::raw("*".repeat(self.password_input.value.len())));
@@ -142,9 +138,9 @@ impl AccountSettings {
             .as_ref()
             .map(|message| {
                 let color = if message.is_error {
-                    Color::Red
+                    theme::ERROR
                 } else {
-                    Color::Green
+                    theme::SUCCESS
                 };
                 Line::from(message.text.clone().fg(color))
             })
@@ -153,9 +149,9 @@ impl AccountSettings {
 
         // Hint
         let hint = if self.input_mode {
-            Line::from("Tab: switch field | Enter: save | Esc: cancel".fg(Color::DarkGray))
+            Line::from("Tab: switch field | Enter: save | Esc: cancel".fg(theme::MUTED))
         } else {
-            Line::from("e: edit account | c: clear accounts".fg(Color::DarkGray))
+            Line::from("e: edit account | c: clear accounts".fg(theme::MUTED))
         };
         frame.render_widget(Paragraph::new(hint), hint_area);
     }
@@ -178,12 +174,7 @@ impl AccountSettings {
         .areas(area);
 
         // Section header
-        let header = Line::from(Span::styled(
-            "── Tidal ──",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        ));
+        let header = Line::from(Span::styled("── Tidal ──", theme::section_style()));
         frame.render_widget(Paragraph::new(header), header_area);
 
         let has_token = self
@@ -195,13 +186,13 @@ impl AccountSettings {
 
         let status_text = if has_token {
             Line::from(vec![
-                Span::styled("Status:   ", Style::default().fg(Color::Cyan)),
-                Span::styled("Authenticated", Style::default().fg(Color::Green)),
+                Span::styled("Status:   ", theme::accent_style()),
+                Span::styled("Authenticated", theme::success_style()),
             ])
         } else {
             Line::from(vec![
-                Span::styled("Status:   ", Style::default().fg(Color::Cyan)),
-                Span::styled("Not authenticated", Style::default().fg(Color::Red)),
+                Span::styled("Status:   ", theme::accent_style()),
+                Span::styled("Not authenticated", theme::error_style()),
             ])
         };
         frame.render_widget(Paragraph::new(status_text), status_area);
@@ -211,9 +202,9 @@ impl AccountSettings {
             .as_ref()
             .map(|message| {
                 let color = if message.is_error {
-                    Color::Red
+                    theme::ERROR
                 } else {
-                    Color::Green
+                    theme::SUCCESS
                 };
                 Line::from(message.text.clone().fg(color))
             })
@@ -225,7 +216,7 @@ impl AccountSettings {
         } else {
             "t: log in to Tidal | c: clear accounts"
         };
-        let hint = Line::from(hint_text.fg(Color::DarkGray));
+        let hint = Line::from(hint_text.fg(theme::MUTED));
         frame.render_widget(Paragraph::new(hint), hint_area);
     }
 

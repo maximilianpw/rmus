@@ -3,7 +3,6 @@ use std::path::PathBuf;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     layout::Rect,
-    style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState},
 };
@@ -11,7 +10,7 @@ use ratatui::{
 use crate::{
     config::{Config, LocalSource, MaxStreamQuality},
     players::ShuffleMode,
-    ui::{input_line::InputLine, widget::selected_row_style},
+    ui::{input_line::InputLine, theme, widget::selected_row_style},
 };
 
 const PAGE_STEP: usize = 10;
@@ -100,7 +99,12 @@ impl SourceSettings {
             ),
         };
         let widget = List::new(list_items)
-            .block(Block::bordered().title(title).borders(Borders::ALL))
+            .block(
+                Block::bordered()
+                    .title(title)
+                    .borders(Borders::ALL)
+                    .border_style(theme::focused_border_style(false)),
+            )
             .highlight_style(selected_row_style());
 
         frame.render_stateful_widget(widget, area, &mut self.list_state);
@@ -108,7 +112,7 @@ impl SourceSettings {
 
     fn input_line(label: &'static str, input: &InputLine, active: bool) -> Line<'static> {
         let mut spans = vec![Span::raw(label)];
-        spans.extend(input.display_spans(active, Style::default().fg(Color::Yellow)));
+        spans.extend(input.display_spans(active, theme::accent_style()));
         Line::from(spans)
     }
 

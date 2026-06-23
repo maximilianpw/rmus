@@ -6,7 +6,7 @@ use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::{backend::TestBackend, buffer::Buffer, style::Color, Terminal};
+use ratatui::{backend::TestBackend, buffer::Buffer, Terminal};
 
 use rmus::{
     action::Action,
@@ -26,6 +26,7 @@ use rmus::{
             StreamingService,
         },
     },
+    ui::theme,
 };
 
 // ---------------------------------------------------------------------------
@@ -6452,22 +6453,22 @@ fn test_panel_switching() {
     // Initial: Left panel focused
     assert_eq!(app.focused_window, FocusedWindow::Left);
     let frame = terminal.draw(|f| app.render(f)).unwrap();
-    // Left panel top-left border corner should be Yellow (focused)
+    // Left panel top-left border corner should use the high-contrast focus color.
     assert_eq!(
         frame.buffer.cell((0, 0)).unwrap().fg,
-        Color::Yellow,
-        "Focused left panel border should be Yellow"
+        theme::FOCUS,
+        "Focused left panel border should use the theme focus color"
     );
 
     // Tab → Center
     app.execute(Action::SwitchPanel);
     assert_eq!(app.focused_window, FocusedWindow::Center);
     let frame = terminal.draw(|f| app.render(f)).unwrap();
-    // Left panel border no longer Yellow
+    // Left panel border no longer uses the focus color.
     assert_ne!(
         frame.buffer.cell((0, 0)).unwrap().fg,
-        Color::Yellow,
-        "Unfocused left panel border should not be Yellow"
+        theme::FOCUS,
+        "Unfocused left panel border should not use the focus color"
     );
 
     // Tab → Right

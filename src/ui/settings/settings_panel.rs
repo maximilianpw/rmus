@@ -1,7 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     layout::{Constraint, Layout, Rect},
-    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Tabs},
 };
@@ -10,6 +9,7 @@ use crate::{
     config::Config,
     ui::{
         settings::{account::AccountSettings, sources::SourceSettings, SettingsTab},
+        theme,
         widget::handle_focused_border_style,
         AppPanel,
     },
@@ -186,11 +186,7 @@ impl SettingsPanel {
 
         let tabs = Tabs::new(titles)
             .select(self.selected_tab)
-            .highlight_style(
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            )
+            .highlight_style(theme::accent_bold_style())
             .divider(Span::raw(" │ "));
 
         frame.render_widget(tabs, area);
@@ -199,7 +195,7 @@ impl SettingsPanel {
     fn render_content(&mut self, frame: &mut ratatui::Frame, area: Rect) {
         let content_block = Block::default()
             .borders(Borders::TOP)
-            .border_style(Style::default().fg(Color::DarkGray));
+            .border_style(theme::muted_style());
 
         let inner = content_block.inner(area);
         frame.render_widget(content_block, area);
@@ -214,18 +210,13 @@ impl SettingsPanel {
     fn render_keybinds(&self, frame: &mut ratatui::Frame, area: Rect) {
         let keybind = |key: &str, desc: &str| -> Line<'static> {
             Line::from(vec![
-                Span::styled(format!("{:<12}", key), Style::default().fg(Color::Cyan)),
+                Span::styled(format!("{:<12}", key), theme::accent_style()),
                 Span::raw(desc.to_string()),
             ])
         };
 
         let section = |title: &str| -> Line<'static> {
-            Line::from(Span::styled(
-                title.to_string(),
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ))
+            Line::from(Span::styled(title.to_string(), theme::section_style()))
         };
 
         let left = vec![

@@ -1,7 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     layout::Rect,
-    style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState},
     Frame,
@@ -9,6 +8,7 @@ use ratatui::{
 use std::sync::mpsc::{self, Receiver, Sender};
 
 use crate::ui::{
+    theme,
     widget::{handle_focused_border_style, selected_row_style},
     AppPanel,
 };
@@ -70,16 +70,16 @@ impl AppPanel for LogPanel {
         let selected = self.list_state.selected();
 
         let items: Vec<ListItem> = if self.log_list.is_empty() {
-            vec![ListItem::new("No logs yet").style(Style::default().fg(Color::DarkGray))]
+            vec![ListItem::new("No logs yet").style(theme::muted_style())]
         } else {
             self.log_list
                 .iter()
                 .enumerate()
                 .map(|(i, item)| {
                     let (prefix, color) = match item.level {
-                        LogLevel::Info => ("INFO: ", Color::Blue),
-                        LogLevel::Debug => ("DEBUG: ", Color::Yellow),
-                        LogLevel::Error => ("ERROR: ", Color::Red),
+                        LogLevel::Info => ("INFO: ", theme::INFO),
+                        LogLevel::Debug => ("DEBUG: ", theme::WARNING),
+                        LogLevel::Error => ("ERROR: ", theme::ERROR),
                     };
                     let msg = if selected == Some(i) && self.h_scroll > 0 {
                         Self::message_from_scroll(&item.message, self.h_scroll)
@@ -87,7 +87,7 @@ impl AppPanel for LogPanel {
                         &item.message
                     };
                     let line = Line::from(vec![
-                        Span::styled(prefix, Style::default().fg(color)),
+                        Span::styled(prefix, theme::default_style().fg(color)),
                         Span::raw(msg),
                     ]);
                     ListItem::new(line)

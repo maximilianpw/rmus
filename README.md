@@ -10,6 +10,7 @@ It is focused on fast local-library playback with playlist and queue workflows, 
 - Audio-file filtering, album-aware row labels, disc/track-aware ordering, and cached best-effort metadata reading via `lofty`.
 - mpv-backed playback with pause, stop, next/previous, seek, volume/mute, shuffle, and repeat controls.
 - Now-playing metadata for artist, album, disc, track, stream source, quality, and duration.
+- High-contrast TUI styling for focused panes, selected rows, status text, and muted guidance.
 - Numbered queue view with restart persistence, jump, reorder, remove, clear, playlist add, and save actions.
 - Recently played history for quickly reopening prior tracks across app restarts.
 - Persistent playlists with local tracks, saved Qobuz/Tidal track references, and duplicate/rename/delete workflows.
