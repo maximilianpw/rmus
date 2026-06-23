@@ -7,6 +7,7 @@ pub mod history;
 pub mod keymap;
 pub mod players;
 pub mod playlist;
+pub mod queue;
 pub mod sources;
 pub mod streaming_coordinator;
 pub mod ui;

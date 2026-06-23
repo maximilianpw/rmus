@@ -673,6 +673,27 @@ impl MusicPlayer for MpvPlayer {
         Ok(())
     }
 
+    fn restore_queue(&mut self, songs: Vec<Song>, position: usize) -> PlayerResult<()> {
+        self.playlist = songs;
+        self.playlist_index = if self.playlist.is_empty() {
+            0
+        } else {
+            position.min(self.playlist.len() - 1)
+        };
+        if self.shuffle == ShuffleMode::On {
+            self.generate_shuffle_order(true);
+        } else {
+            self.shuffle_order.clear();
+            self.shuffle_position = 0;
+        }
+        self.playback_info.state = PlaybackState::Stopped;
+        self.playback_info.current_song = None;
+        self.playback_info.position = 0.0;
+        self.playback_info.duration = 0.0;
+        self.playback_info.last_error = None;
+        Ok(())
+    }
+
     fn get_queue(&self) -> &[Song] {
         &self.playlist
     }
@@ -933,5 +954,32 @@ mod tests {
                 .contains("Cannot move the currently playing track"),
             "moving another item into the current slot should be rejected"
         );
+    }
+
+    #[test]
+    fn restore_queue_sets_position_without_starting_playback() {
+        let mut player = MpvPlayer::new("/tmp/rmus.sock".into());
+
+        player
+            .restore_queue(
+                vec![
+                    Song {
+                        title: "First".to_string(),
+                        ..Default::default()
+                    },
+                    Song {
+                        title: "Second".to_string(),
+                        ..Default::default()
+                    },
+                ],
+                99,
+            )
+            .unwrap();
+
+        assert_eq!(player.get_queue().len(), 2);
+        assert_eq!(player.get_queue_position(), 1);
+        assert_eq!(player.get_playback_info().state, PlaybackState::Stopped);
+        assert!(player.get_playback_info().current_song.is_none());
+        assert!(!player.is_alive());
     }
 }

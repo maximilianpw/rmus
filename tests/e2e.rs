@@ -18,6 +18,7 @@ use rmus::{
     keymap::{resolve_key, KeyAction},
     players::{MusicPlayer, PlaybackInfo, PlaybackState, PlayerResult, RepeatMode, ShuffleMode},
     playlist::PlaylistStore,
+    queue::QueueStore,
     sources::{
         song::Song,
         streaming::{
@@ -484,6 +485,8 @@ impl MockPlayer {
 impl MusicPlayer for MockPlayer {
     fn play(&mut self, song: &Song) -> PlayerResult<()> {
         self.played.lock().unwrap().push(song.clone());
+        self.queue = vec![song.clone()];
+        self.queue_position = 0;
         self.info.current_song = Some(song.clone());
         self.info.state = PlaybackState::Playing;
         self.info.position = 0.0;
@@ -580,6 +583,19 @@ impl MusicPlayer for MockPlayer {
     fn enqueue(&mut self, songs: Vec<Song>) -> PlayerResult<()> {
         self.enqueued.lock().unwrap().extend(songs.clone());
         self.queue.extend(songs);
+        Ok(())
+    }
+
+    fn restore_queue(&mut self, songs: Vec<Song>, position: usize) -> PlayerResult<()> {
+        self.queue = songs;
+        self.queue_position = if self.queue.is_empty() {
+            0
+        } else {
+            position.min(self.queue.len() - 1)
+        };
+        self.info.current_song = None;
+        self.info.state = PlaybackState::Stopped;
+        self.info.position = 0.0;
         Ok(())
     }
 
@@ -4973,6 +4989,237 @@ fn test_queue_view_updates_after_next_track_action() {
         text.contains("> 2. Second Song"),
         "queue view should refresh after playback advances"
     );
+}
+
+#[test]
+fn test_queue_persists_across_app_instances_without_autoplay() {
+    let dir = test_dir("persistent-queue");
+    let queue_store = QueueStore::with_path(dir.join("queue.toml"));
+    let history_store = HistoryStore::with_path(dir.join("history.toml"));
+    let (player, _played, _enqueued) = MockPlayer::new();
+    let mut app = App::new_for_test_with_all_stores_and_player(
+        default_config(),
+        None,
+        None,
+        PlaylistStore::with_dir(dir.join("playlists-1")),
+        history_store.clone(),
+        queue_store.clone(),
+        Box::new(player),
+    );
+
+    app.center_panel.set_album(
+        PathBuf::from("/music/album"),
+        vec![
+            Song {
+                title: "First Song".to_string(),
+                artist: "First Artist".to_string(),
+                path: PathBuf::from("/music/first.flac"),
+                duration_secs: Some(185.0),
+                ..Default::default()
+            },
+            Song {
+                title: "Second Song".to_string(),
+                artist: "Second Artist".to_string(),
+                path: PathBuf::from("/music/second.flac"),
+                duration_secs: Some(190.0),
+                ..Default::default()
+            },
+        ],
+    );
+    app.focused_window = FocusedWindow::Center;
+    app.execute(Action::PlaySelected);
+
+    let (player, played, _enqueued) = MockPlayer::new();
+    let mut restarted = App::new_for_test_with_all_stores_and_player(
+        default_config(),
+        None,
+        None,
+        PlaylistStore::with_dir(dir.join("playlists-2")),
+        history_store,
+        queue_store,
+        Box::new(player),
+    );
+    restarted.execute(Action::ShowQueue);
+
+    let backend = TestBackend::new(220, 40);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let frame = terminal.draw(|frame| restarted.render(frame)).unwrap();
+    let text = extract_buffer_text(frame.buffer);
+
+    assert!(
+        played.lock().unwrap().is_empty(),
+        "restoring a queue should not start playback"
+    );
+    assert!(text.contains("Queue (2 tracks) - 6:15"));
+    assert!(text.contains("> 1. First Artist - First Song"));
+    assert!(text.contains("  2. Second Artist - Second Song"));
+    assert!(text.contains("Not Playing"));
+
+    restarted.delegate_key_to_panel(make_key(KeyCode::Char('j')));
+    dispatch_key(&mut restarted, make_key(KeyCode::Char(' ')));
+    restarted.tick();
+
+    let played = played.lock().unwrap();
+    assert_eq!(played.len(), 1);
+    assert_eq!(played[0].title, "Second Song");
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn test_queue_position_persists_after_next_track_action() {
+    let dir = test_dir("persistent-queue-position");
+    let queue_store = QueueStore::with_path(dir.join("queue.toml"));
+    let history_store = HistoryStore::with_path(dir.join("history.toml"));
+    let (player, _played, _enqueued) = MockPlayer::new();
+    let mut app = App::new_for_test_with_all_stores_and_player(
+        default_config(),
+        None,
+        None,
+        PlaylistStore::with_dir(dir.join("playlists-1")),
+        history_store.clone(),
+        queue_store.clone(),
+        Box::new(player),
+    );
+
+    app.center_panel.set_album(
+        PathBuf::from("/music/album"),
+        vec![
+            Song {
+                title: "First Song".to_string(),
+                path: PathBuf::from("/music/first.flac"),
+                ..Default::default()
+            },
+            Song {
+                title: "Second Song".to_string(),
+                path: PathBuf::from("/music/second.flac"),
+                ..Default::default()
+            },
+        ],
+    );
+    app.focused_window = FocusedWindow::Center;
+    app.execute(Action::PlaySelected);
+    app.execute(Action::NextTrack);
+
+    let (player, _played, _enqueued) = MockPlayer::new();
+    let mut restarted = App::new_for_test_with_all_stores_and_player(
+        default_config(),
+        None,
+        None,
+        PlaylistStore::with_dir(dir.join("playlists-2")),
+        history_store,
+        queue_store,
+        Box::new(player),
+    );
+    restarted.execute(Action::ShowQueue);
+
+    let backend = TestBackend::new(140, 32);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let frame = terminal.draw(|frame| restarted.render(frame)).unwrap();
+    let text = extract_buffer_text(frame.buffer);
+
+    assert!(text.contains("  1. First Song"));
+    assert!(text.contains("> 2. Second Song"));
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn test_queue_remove_and_clear_persist_across_app_instances() {
+    let dir = test_dir("persistent-queue-remove-clear");
+    let queue_store = QueueStore::with_path(dir.join("queue.toml"));
+    let history_store = HistoryStore::with_path(dir.join("history.toml"));
+    let (player, _played, _enqueued) = MockPlayer::new();
+    let mut app = App::new_for_test_with_all_stores_and_player(
+        default_config(),
+        None,
+        None,
+        PlaylistStore::with_dir(dir.join("playlists-1")),
+        history_store.clone(),
+        queue_store.clone(),
+        Box::new(player),
+    );
+
+    app.center_panel.set_album(
+        PathBuf::from("/music/album"),
+        vec![
+            Song {
+                title: "First Song".to_string(),
+                path: PathBuf::from("/music/first.flac"),
+                ..Default::default()
+            },
+            Song {
+                title: "Second Song".to_string(),
+                path: PathBuf::from("/music/second.flac"),
+                ..Default::default()
+            },
+            Song {
+                title: "Third Song".to_string(),
+                path: PathBuf::from("/music/third.flac"),
+                ..Default::default()
+            },
+        ],
+    );
+    app.focused_window = FocusedWindow::Center;
+    app.execute(Action::PlaySelected);
+    app.execute(Action::ShowQueue);
+    app.delegate_key_to_panel(make_key(KeyCode::Char('j')));
+    app.delegate_key_to_panel(make_key(KeyCode::Char('d')));
+    app.tick();
+
+    let (player, _played, _enqueued) = MockPlayer::new();
+    let mut restarted = App::new_for_test_with_all_stores_and_player(
+        default_config(),
+        None,
+        None,
+        PlaylistStore::with_dir(dir.join("playlists-2")),
+        history_store.clone(),
+        queue_store.clone(),
+        Box::new(player),
+    );
+    restarted.execute(Action::ShowQueue);
+
+    let backend = TestBackend::new(180, 40);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let frame = terminal.draw(|frame| restarted.render(frame)).unwrap();
+    let text = extract_buffer_text(frame.buffer);
+
+    assert!(text.contains("Queue (2 tracks)"));
+    assert!(text.contains("> 1. First Song"));
+    assert!(text.contains("  2. Third Song"));
+    assert!(
+        !text.contains("Second Song"),
+        "removed queue rows should stay removed after restart"
+    );
+
+    restarted.delegate_key_to_panel(make_key(KeyCode::Char('c')));
+    restarted.tick();
+
+    let (player, _played, _enqueued) = MockPlayer::new();
+    let mut restarted_again = App::new_for_test_with_all_stores_and_player(
+        default_config(),
+        None,
+        None,
+        PlaylistStore::with_dir(dir.join("playlists-3")),
+        history_store,
+        queue_store,
+        Box::new(player),
+    );
+    restarted_again.execute(Action::ShowQueue);
+
+    let frame = terminal
+        .draw(|frame| restarted_again.render(frame))
+        .unwrap();
+    let text = extract_buffer_text(frame.buffer);
+
+    assert!(text.contains("Queue (1 track)"));
+    assert!(text.contains("> 1. First Song"));
+    assert!(
+        !text.contains("Third Song"),
+        "cleared upcoming queue rows should stay cleared after restart"
+    );
+
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]

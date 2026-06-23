@@ -15,6 +15,7 @@ use crate::{
     history::HistoryStore,
     players::{MusicPlayer, PlaybackState, SafePlayer},
     playlist::{PlaylistAddSummary, PlaylistRemoveSummary, PlaylistSource, PlaylistStore},
+    queue::{QueueState, QueueStore},
     sources::{
         local::LocalFiles,
         qobuz::QobuzSource,
@@ -79,6 +80,7 @@ pub struct App {
     streaming: StreamingCoordinator,
     playlist_store: PlaylistStore,
     history_store: HistoryStore,
+    queue_store: QueueStore,
     pending_playlist_add_songs: Vec<Song>,
     pending_playlist_rename_index: Option<usize>,
     pending_playlist_duplicate_index: Option<usize>,
@@ -99,6 +101,8 @@ pub struct App {
     last_player_runtime_error: Option<String>,
     muted_volume_before_zero: Option<u8>,
     playback_history: Vec<Song>,
+    last_saved_queue_len: usize,
+    last_saved_queue_position: usize,
 }
 
 impl App {
@@ -106,6 +110,8 @@ impl App {
         let config = Config::load();
         let playlist_store = PlaylistStore::default();
         let history_store = HistoryStore::default();
+        let queue_store = QueueStore::default();
+        let restored_queue = queue_store.load();
         let sources = Self::sources_for_config(&config, playlist_store.clone());
         let (log_panel, logger) = LogPanel::new();
         logger.debug(format!("{something}", something = config));
@@ -133,6 +139,14 @@ impl App {
             )
         };
         let streaming = StreamingCoordinator::new(qobuz, tidal);
+        let mut player: Box<dyn MusicPlayer> = Box::new(SafePlayer::new_with_playback_defaults(
+            config.audio.default_volume,
+            config.audio.default_shuffle,
+            config.audio.default_repeat,
+        ));
+        Self::restore_player_queue(player.as_mut(), restored_queue, &logger);
+        let (last_saved_queue_len, last_saved_queue_position) =
+            Self::queue_save_marker(player.as_ref());
 
         Self {
             running: false,
@@ -141,16 +155,13 @@ impl App {
             center_panel: CenterPanel::new(),
             right_panel: RightPanel::new(log_panel),
             settings_panel: SettingsPanel::new(config.clone()),
-            player: Box::new(SafePlayer::new_with_playback_defaults(
-                config.audio.default_volume,
-                config.audio.default_shuffle,
-                config.audio.default_repeat,
-            )),
+            player,
             previous_focus_before_settings: None,
             streaming,
             playlist_store,
             playback_history: history_store.load(),
             history_store,
+            queue_store,
             pending_playlist_add_songs: Vec::new(),
             pending_playlist_rename_index: None,
             pending_playlist_duplicate_index: None,
@@ -168,6 +179,8 @@ impl App {
             last_player_poll_error: None,
             last_player_runtime_error: None,
             muted_volume_before_zero: None,
+            last_saved_queue_len,
+            last_saved_queue_position,
         }
     }
 
@@ -230,6 +243,17 @@ impl App {
         ))
     }
 
+    fn test_queue_path() -> std::path::PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "rmus-test-queue-{}-{nanos}.toml",
+            std::process::id()
+        ))
+    }
+
     pub fn new_for_test_with_stores_and_player(
         config: Config,
         qobuz: Option<Box<dyn StreamingService>>,
@@ -238,10 +262,34 @@ impl App {
         history_store: HistoryStore,
         player: Box<dyn MusicPlayer>,
     ) -> Self {
+        Self::new_for_test_with_all_stores_and_player(
+            config,
+            qobuz,
+            tidal,
+            playlist_store,
+            history_store,
+            QueueStore::with_path(Self::test_queue_path()),
+            player,
+        )
+    }
+
+    pub fn new_for_test_with_all_stores_and_player(
+        config: Config,
+        qobuz: Option<Box<dyn StreamingService>>,
+        tidal: Option<Box<dyn StreamingService>>,
+        playlist_store: PlaylistStore,
+        history_store: HistoryStore,
+        queue_store: QueueStore,
+        mut player: Box<dyn MusicPlayer>,
+    ) -> Self {
         let sources = Self::sources_for_config(&config, playlist_store.clone());
         let (log_panel, logger) = LogPanel::new();
         let streaming = StreamingCoordinator::new(qobuz, tidal);
         let playback_history = history_store.load();
+        let restored_queue = queue_store.load();
+        Self::restore_player_queue(player.as_mut(), restored_queue, &logger);
+        let (last_saved_queue_len, last_saved_queue_position) =
+            Self::queue_save_marker(player.as_ref());
 
         Self {
             running: false,
@@ -255,6 +303,7 @@ impl App {
             streaming,
             playlist_store,
             history_store,
+            queue_store,
             pending_playlist_add_songs: Vec::new(),
             pending_playlist_rename_index: None,
             pending_playlist_duplicate_index: None,
@@ -273,6 +322,8 @@ impl App {
             last_player_runtime_error: None,
             muted_volume_before_zero: None,
             playback_history,
+            last_saved_queue_len,
+            last_saved_queue_position,
         }
     }
 
@@ -348,6 +399,53 @@ impl App {
         }
     }
 
+    fn restore_player_queue(
+        player: &mut dyn MusicPlayer,
+        queue_state: QueueState,
+        logger: &Logger,
+    ) {
+        if queue_state.tracks.is_empty() {
+            return;
+        }
+
+        if let Err(e) = player.restore_queue(queue_state.tracks, queue_state.position) {
+            logger.error(format!("Failed to restore queue: {}", e));
+        }
+    }
+
+    fn queue_save_marker(player: &dyn MusicPlayer) -> (usize, usize) {
+        let len = player.get_queue().len();
+        let position = if len == 0 {
+            0
+        } else {
+            player.get_queue_position().min(len - 1)
+        };
+        (len, position)
+    }
+
+    fn current_queue_state(&self) -> QueueState {
+        QueueState::new(
+            self.player.get_queue().to_vec(),
+            self.player.get_queue_position(),
+        )
+    }
+
+    fn save_queue_state(&mut self) {
+        let state = self.current_queue_state();
+        if let Err(e) = self.queue_store.save(&state) {
+            self.logger.error(format!("Failed to save queue: {}", e));
+        }
+        self.last_saved_queue_len = state.tracks.len();
+        self.last_saved_queue_position = state.position;
+    }
+
+    fn save_queue_state_if_marker_changed(&mut self) {
+        let (len, position) = Self::queue_save_marker(self.player.as_ref());
+        if len != self.last_saved_queue_len || position != self.last_saved_queue_position {
+            self.save_queue_state();
+        }
+    }
+
     fn handle_center_panel_event(&mut self, event: CenterPanelEvent) {
         match event {
             CenterPanelEvent::QuerySubmitted(query) => {
@@ -379,6 +477,7 @@ impl App {
                         } else {
                             self.logger.info("Removed from queue".to_string());
                         }
+                        self.save_queue_state();
                         let queue = self.player.get_queue().to_vec();
                         let pos = self.player.get_queue_position();
                         self.center_panel.set_queue(queue, pos);
@@ -778,6 +877,7 @@ impl App {
         if let Err(e) = self.player.enqueue(songs) {
             self.logger.error(format!("Enqueue error: {}", e));
         } else {
+            self.save_queue_state();
             self.logger.info(feedback);
         }
     }
@@ -1073,6 +1173,9 @@ impl App {
             self.logger.info(format!("Cleared {} {}", removed, noun));
         }
 
+        if removed > 0 {
+            self.save_queue_state();
+        }
         let queue = self.player.get_queue().to_vec();
         let pos = self.player.get_queue_position();
         self.center_panel.set_queue(queue, pos);
@@ -1118,6 +1221,7 @@ impl App {
                 } else {
                     self.logger.info("Moved queue item".to_string());
                 }
+                self.save_queue_state();
                 let queue = self.player.get_queue().to_vec();
                 let pos = self.player.get_queue_position();
                 self.center_panel.set_queue(queue, pos);
@@ -1178,7 +1282,10 @@ impl App {
         }
 
         match self.player.play_album(queue, index) {
-            Ok(()) => self.log_current_track("Playing"),
+            Ok(()) => {
+                self.save_queue_state();
+                self.log_current_track("Playing");
+            }
             Err(e) => self.logger.error(format!("Playback error: {}", e)),
         }
     }
@@ -1256,6 +1363,7 @@ impl App {
 
                 match self.player.next() {
                     Ok(()) => {
+                        self.save_queue_state();
                         self.sync_queue_view();
                         self.log_current_track("Playing");
                     }
@@ -1270,6 +1378,7 @@ impl App {
 
                 match self.player.previous() {
                     Ok(()) => {
+                        self.save_queue_state();
                         self.sync_queue_view();
                         self.log_current_track("Playing");
                     }
@@ -1413,6 +1522,7 @@ impl App {
                         if let Err(e) = self.player.enqueue(songs) {
                             self.logger.error(format!("Enqueue error: {}", e));
                         } else {
+                            self.save_queue_state();
                             self.logger.info(feedback);
                         }
                     } else {
@@ -2101,7 +2211,10 @@ impl App {
         }
 
         match self.player.play_album(songs, index) {
-            Ok(()) => self.log_current_track("Playing"),
+            Ok(()) => {
+                self.save_queue_state();
+                self.log_current_track("Playing");
+            }
             Err(e) => self.logger.error(format!("Playback error: {}", e)),
         }
     }
@@ -2131,6 +2244,7 @@ impl App {
             self.logger.error(format!("Playback error: {}", e));
             self.cancel_pending_playlist_playback();
         } else {
+            self.save_queue_state();
             self.log_current_track("Playing");
             self.enqueue_next_pending_playlist_track();
         }
@@ -2159,6 +2273,8 @@ impl App {
 
             if let Err(e) = self.player.enqueue(vec![song]) {
                 self.logger.error(format!("Enqueue error: {}", e));
+            } else {
+                self.save_queue_state();
             }
         }
 
@@ -2249,6 +2365,7 @@ impl App {
                     }
                 }
                 self.right_panel.update_playback_info(info);
+                self.save_queue_state_if_marker_changed();
             }
             Err(e) => {
                 let msg = e.to_string();
@@ -2542,6 +2659,7 @@ impl App {
                         if let Err(e) = self.player.enqueue(vec![song]) {
                             self.logger.error(format!("Enqueue error: {}", e));
                         } else {
+                            self.save_queue_state();
                             self.logger.info(feedback);
                         }
                         if self.pending_playlist_active {
@@ -2553,6 +2671,7 @@ impl App {
                             self.cancel_pending_playlist_playback();
                         }
                     } else {
+                        self.save_queue_state();
                         self.log_current_track("Playing");
                         if self.pending_playlist_active {
                             self.enqueue_next_pending_playlist_track();
@@ -2581,10 +2700,13 @@ impl App {
                     if let Err(e) = self.player.play(&song) {
                         self.logger.error(format!("Playback error: {}", e));
                     } else {
+                        self.save_queue_state();
                         self.log_current_track("Playing");
                         if !remaining_songs.is_empty() {
                             if let Err(e) = self.player.enqueue(remaining_songs) {
                                 self.logger.error(format!("Enqueue error: {}", e));
+                            } else {
+                                self.save_queue_state();
                             }
                         }
                     }
@@ -2720,7 +2842,9 @@ mod tests {
 
     use crate::{
         config::{AudioConfig, Config, LocalConfig, MaxStreamQuality, QobuzConfig, TidalConfig},
-        players::{MusicPlayer, PlaybackInfo, PlayerResult, RepeatMode, ShuffleMode},
+        players::{
+            MusicPlayer, PlaybackInfo, PlaybackState, PlayerResult, RepeatMode, ShuffleMode,
+        },
         playlist::PlaylistStore,
         sources::{
             local::{reset_song_scan_count, song_scan_count},
@@ -2782,6 +2906,7 @@ mod tests {
     impl MusicPlayer for VolumeTestPlayer {
         fn play(&mut self, song: &Song) -> PlayerResult<()> {
             self.info.current_song = Some(song.clone());
+            self.queue = vec![song.clone()];
             Ok(())
         }
 
@@ -2844,6 +2969,15 @@ mod tests {
 
         fn enqueue(&mut self, songs: Vec<Song>) -> PlayerResult<()> {
             self.queue.extend(songs);
+            Ok(())
+        }
+
+        fn restore_queue(&mut self, songs: Vec<Song>, position: usize) -> PlayerResult<()> {
+            self.queue = songs;
+            self.info.current_song = None;
+            self.info.state = PlaybackState::Stopped;
+            self.info.position = 0.0;
+            let _ = position;
             Ok(())
         }
 

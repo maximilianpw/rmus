@@ -9,6 +9,7 @@ use crate::{
     config::{config_path, Config},
     history::HistoryStore,
     playlist::PlaylistStore,
+    queue::QueueStore,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,6 +92,7 @@ struct DoctorOptions {
     config_path: PathBuf,
     playlists_dir: PathBuf,
     history_path: PathBuf,
+    queue_path: PathBuf,
 }
 
 impl DoctorOptions {
@@ -100,6 +102,7 @@ impl DoctorOptions {
             config_path: config_path(),
             playlists_dir: PlaylistStore::default().dir().to_path_buf(),
             history_path: HistoryStore::default().path().to_path_buf(),
+            queue_path: QueueStore::default().path().to_path_buf(),
         }
     }
 }
@@ -190,6 +193,12 @@ fn storage_checks(options: &DoctorOptions) -> Vec<DoctorCheck> {
         &options.history_path,
         options.history_path.exists(),
         "missing; playback history will be created after playing tracks",
+    ));
+    checks.push(path_check(
+        "queue",
+        &options.queue_path,
+        options.queue_path.exists(),
+        "missing; playback queue will be created after queue changes",
     ));
 
     if config_exists {
@@ -377,6 +386,7 @@ mod tests {
             config_path: dir.join("config.toml"),
             playlists_dir: dir.join("playlists"),
             history_path: dir.join("history.toml"),
+            queue_path: dir.join("queue.toml"),
         }
     }
 
@@ -428,6 +438,7 @@ mod tests {
         assert_eq!(report.exit_code(), 0);
         assert!(text.contains("[ok] mpv:"));
         assert!(text.contains("[warn] config:"));
+        assert!(text.contains("[warn] queue:"));
         assert!(text.contains("[warn] local sources: config missing"));
     }
 
@@ -454,6 +465,7 @@ mod tests {
             config_path,
             playlists_dir: dir.join("playlists"),
             history_path: dir.join("history.toml"),
+            queue_path: dir.join("queue.toml"),
         });
         let text = report.to_text();
 

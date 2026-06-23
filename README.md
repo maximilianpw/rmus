@@ -10,7 +10,7 @@ It is focused on fast local-library playback with playlist and queue workflows, 
 - Audio-file filtering, album-aware row labels, disc/track-aware ordering, and best-effort metadata reading via `lofty`.
 - mpv-backed playback with pause, stop, next/previous, seek, volume/mute, shuffle, and repeat controls.
 - Now-playing metadata for artist, album, disc, track, stream source, quality, and duration.
-- Numbered queue view with jump, reorder, remove, clear, playlist add, and save actions.
+- Numbered queue view with restart persistence, jump, reorder, remove, clear, playlist add, and save actions.
 - Recently played history for quickly reopening prior tracks across app restarts.
 - Persistent playlists with local tracks, saved Qobuz/Tidal track references, and duplicate/rename/delete workflows.
 - Qobuz account configuration and stream-quality selection.
@@ -34,7 +34,7 @@ cargo run
 rmus doctor
 ```
 
-The doctor command checks the installed `rmus` version, whether `mpv` is available on `PATH`, where config/playlists/history are stored, and whether configured local source folders still exist.
+The doctor command checks the installed `rmus` version, whether `mpv` is available on `PATH`, where config/playlists/history/queue are stored, and whether configured local source folders still exist.
 
 ## Test
 
@@ -46,7 +46,7 @@ cargo clippy --all-targets -- -D warnings
 
 ## Configuration
 
-The app stores config, playlists, and playback history under the platform config directory for `com.maximilianpw.rmus`.
+The app stores config, playlists, playback history, and the saved queue under the platform config directory for `com.maximilianpw.rmus`.
 
 Use the in-app settings panel to:
 

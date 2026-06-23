@@ -106,6 +106,7 @@ pub trait MusicPlayer {
     fn toggle_shuffle(&mut self) -> PlayerResult<()>;
     fn cycle_repeat(&mut self) -> PlayerResult<()>;
     fn enqueue(&mut self, songs: Vec<Song>) -> PlayerResult<()>;
+    fn restore_queue(&mut self, songs: Vec<Song>, position: usize) -> PlayerResult<()>;
     fn get_queue(&self) -> &[Song];
     fn get_queue_position(&self) -> usize;
     fn remove_from_queue(&mut self, index: usize) -> PlayerResult<()>;
@@ -384,6 +385,10 @@ impl MusicPlayer for SafePlayer {
             }
         }
         self.inner.enqueue(songs)
+    }
+
+    fn restore_queue(&mut self, songs: Vec<Song>, position: usize) -> PlayerResult<()> {
+        self.inner.restore_queue(songs, position)
     }
 
     fn get_queue(&self) -> &[Song] {
