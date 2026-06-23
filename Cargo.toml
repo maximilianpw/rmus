@@ -1,6 +1,6 @@
 [package]
 name = "rmus"
-version = "0.1.0"
+version = "0.1.1"
 description = "Music Player TUI"
 authors = ["Maximilian PINDER-WHITE <mpinderwhite@proton.me>"]
 license = "MIT"
