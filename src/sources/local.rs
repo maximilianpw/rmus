@@ -388,6 +388,13 @@ impl LocalFiles {
         Self::songs_from_files(files)
     }
 
+    pub fn songs_from_path_using_cached_metadata(path: PathBuf) -> Vec<Song> {
+        let mut files = Vec::new();
+        collect_audio_files(&path, &mut files);
+        let cache = LocalTrackCache::default();
+        Self::songs_from_files_using_cached_metadata(files, &cache)
+    }
+
     pub fn scan_sources(sources: &[LocalSource]) -> Result<usize, std::io::Error> {
         Self::scan_sources_with_cache_path(sources, LocalTrackCache::default_path())
     }
@@ -447,6 +454,23 @@ impl LocalFiles {
             .map(|path| cache.song_for_path(&path))
             .collect();
         let _ = cache.save_if_dirty();
+        Self::sort_songs_for_playback(&mut songs);
+        songs
+    }
+
+    fn songs_from_files_using_cached_metadata(
+        mut files: Vec<PathBuf>,
+        cache: &LocalTrackCache,
+    ) -> Vec<Song> {
+        sort_audio_paths(&mut files);
+        let mut songs: Vec<Song> = files
+            .into_iter()
+            .map(|path| {
+                cache
+                    .cached_song_for_path(&path)
+                    .unwrap_or_else(|| Song::from_path_without_metadata(path))
+            })
+            .collect();
         Self::sort_songs_for_playback(&mut songs);
         songs
     }
@@ -807,6 +831,33 @@ mod tests {
         assert_eq!(songs.len(), 1);
         assert_eq!(songs[0].title, "01 - Untagged.flac");
         assert_ne!(songs[0].title, "Stale Cached Title");
+
+        let _ = fs::remove_dir_all(dir);
+        let _ = fs::remove_file(cache_path);
+    }
+
+    #[test]
+    fn local_source_cached_metadata_search_avoids_uncached_metadata_reads() {
+        let dir = test_dir("cached-search");
+        fs::create_dir_all(&dir).unwrap();
+        let cached_path = dir.join("01 - Cached.flac");
+        let uncached_path = dir.join("02 - Uncached.flac");
+        fs::write(&cached_path, "audio").unwrap();
+        fs::write(&uncached_path, "audio").unwrap();
+        let cache_path = test_cache_path("cached-search");
+        write_cache_entry(&cache_path, &cached_path, "Cached Title");
+        let cache = LocalTrackCache::with_path(cache_path.clone());
+
+        crate::sources::song::reset_metadata_read_count();
+        let songs = LocalFiles::songs_from_files_using_cached_metadata(
+            vec![cached_path.clone(), uncached_path.clone()],
+            &cache,
+        );
+
+        assert_eq!(crate::sources::song::metadata_read_count(), 0);
+        assert_eq!(songs.len(), 2);
+        assert!(songs.iter().any(|song| song.title == "Cached Title"));
+        assert!(songs.iter().any(|song| song.title == "02 - Uncached.flac"));
 
         let _ = fs::remove_dir_all(dir);
         let _ = fs::remove_file(cache_path);

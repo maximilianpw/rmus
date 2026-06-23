@@ -1913,7 +1913,7 @@ impl App {
         self.config
             .get_local_sources()
             .into_iter()
-            .flat_map(|source| LocalFiles::songs_from_path(source.path))
+            .flat_map(|source| LocalFiles::songs_from_path_using_cached_metadata(source.path))
             .collect()
     }
 
@@ -2855,14 +2855,17 @@ mod tests {
     };
 
     use crate::{
-        config::{AudioConfig, Config, LocalConfig, MaxStreamQuality, QobuzConfig, TidalConfig},
+        config::{
+            AudioConfig, Config, LocalConfig, LocalSource, MaxStreamQuality, QobuzConfig,
+            TidalConfig,
+        },
         players::{
             MusicPlayer, PlaybackInfo, PlaybackState, PlayerResult, RepeatMode, ShuffleMode,
         },
         playlist::PlaylistStore,
         sources::{
             local::{reset_song_scan_count, song_scan_count},
-            song::Song,
+            song::{metadata_read_count, reset_metadata_read_count, Song},
         },
     };
 
@@ -3111,6 +3114,32 @@ mod tests {
             0,
             "saving a local source should rebuild the list without eagerly parsing every track"
         );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn local_library_search_uses_cached_metadata_without_parsing_uncached_files() {
+        let dir = temp_dir("cached-local-library-search");
+        for index in 0..20 {
+            fs::write(dir.join(format!("{index:02} - Track.flac")), "").unwrap();
+        }
+        let mut config = default_config();
+        config.local.sources.push(LocalSource {
+            name: "Large Library".to_string(),
+            path: dir.clone(),
+        });
+        let mut app = App::new_for_test(config, None, None);
+
+        reset_metadata_read_count();
+        app.execute(Action::OpenSearch);
+
+        assert_eq!(
+            metadata_read_count(),
+            0,
+            "opening all-local search should use cached metadata and filename fallback without parsing every uncached file"
+        );
+        assert_eq!(app.focused_window, FocusedWindow::Center);
 
         let _ = fs::remove_dir_all(dir);
     }

@@ -153,6 +153,7 @@ Search:
 
 - `Tab`: cycle Albums, Artists, and Tracks search modes.
 - Local filters match song title, artist, album, filename, and path while typing.
+- All-library local search uses cached metadata plus filename/path fallback; run `rmus scan-local` after adding a large library to prefill richer metadata outside the TUI.
 - `Enter`: run the search.
 - `Left` / `Right`: move the text cursor.
 - `Home` / `End`: jump the text cursor to the start/end.

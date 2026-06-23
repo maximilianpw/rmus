@@ -156,6 +156,14 @@ impl LocalTrackCache {
         song
     }
 
+    pub fn cached_song_for_path(&self, path: &Path) -> Option<Song> {
+        let identity = FileIdentity::from_path(path)?;
+        self.tracks
+            .get(path)
+            .filter(|cached| cached.identity() == identity)
+            .map(CachedLocalTrack::to_song)
+    }
+
     pub fn save_if_dirty(&mut self) -> Result<(), std::io::Error> {
         if !self.dirty {
             return Ok(());
@@ -505,6 +513,21 @@ mod tests {
 
         let _ = fs::remove_file(file);
         let _ = fs::remove_file(cache_path);
+    }
+
+    #[test]
+    fn cached_song_for_path_does_not_parse_uncached_files() {
+        let file = test_path("uncached-song").with_extension("flac");
+        fs::write(&file, "audio").unwrap();
+        let cache_path = test_path("uncached-cache");
+        let cache = LocalTrackCache::with_path(cache_path.clone());
+
+        let song = cache.cached_song_for_path(&file);
+
+        assert!(song.is_none());
+        assert!(!cache_path.exists());
+
+        let _ = fs::remove_file(file);
     }
 
     #[test]

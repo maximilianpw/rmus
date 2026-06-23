@@ -1,9 +1,26 @@
+#[cfg(test)]
+use std::cell::Cell;
 use std::{fmt::Display, fs::DirEntry, path::PathBuf};
 
 use lofty::{
     file::{AudioFile, TaggedFileExt},
     tag::Accessor,
 };
+
+#[cfg(test)]
+thread_local! {
+    static METADATA_READ_COUNT: Cell<usize> = const { Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_metadata_read_count() {
+    METADATA_READ_COUNT.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn metadata_read_count() -> usize {
+    METADATA_READ_COUNT.with(Cell::get)
+}
 
 #[derive(Debug, Default, Clone)]
 pub struct Song {
@@ -32,18 +49,24 @@ impl Song {
         Self::from_path(f.path())
     }
 
-    pub fn from_path(path: PathBuf) -> Self {
+    pub fn from_path_without_metadata(path: PathBuf) -> Self {
         let fallback_title = path
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.to_string_lossy().into_owned());
 
-        let mut song = Song {
+        Song {
             title: fallback_title,
-            path: path.clone(),
+            path,
             ..Default::default()
-        };
+        }
+    }
 
+    pub fn from_path(path: PathBuf) -> Self {
+        let mut song = Self::from_path_without_metadata(path.clone());
+
+        #[cfg(test)]
+        METADATA_READ_COUNT.with(|count| count.set(count.get() + 1));
         let Ok(tagged_file) = lofty::read_from_path(&path) else {
             return song;
         };
