@@ -28,6 +28,14 @@ It is focused on fast local-library playback with playlist and queue workflows, 
 cargo run
 ```
 
+## Diagnostics
+
+```sh
+rmus doctor
+```
+
+The doctor command checks the installed `rmus` version, whether `mpv` is available on `PATH`, where config/playlists/history are stored, and whether configured local source folders still exist.
+
 ## Test
 
 ```sh

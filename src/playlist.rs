@@ -260,6 +260,10 @@ impl PlaylistStore {
         Self { dir }
     }
 
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
     pub fn load_all(&self) -> Vec<Playlist> {
         if !self.dir.exists() {
             return Vec::new();

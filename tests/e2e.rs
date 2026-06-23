@@ -100,6 +100,20 @@ fn rmus_binary() -> Command {
     Command::new(env!("CARGO_BIN_EXE_rmus"))
 }
 
+fn fake_mpv_bin_dir(name: &str) -> PathBuf {
+    let dir = test_dir(name).join("bin");
+    std::fs::create_dir_all(&dir).unwrap();
+    let executable_name = if cfg!(windows) { "mpv.exe" } else { "mpv" };
+    let path = dir.join(executable_name);
+    std::fs::write(&path, "").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    dir
+}
+
 #[test]
 fn test_cli_version_prints_without_launching_tui() {
     let output = rmus_binary()
@@ -126,7 +140,37 @@ fn test_cli_help_prints_without_launching_tui() {
     assert!(output.stderr.is_empty());
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("keyboard-driven terminal music player"));
+    assert!(stdout.contains("doctor"));
     assert!(stdout.contains("--version"));
+}
+
+#[test]
+fn test_cli_doctor_reports_runtime_checks_without_launching_tui() {
+    let state_dir = test_dir("cli-doctor");
+    std::fs::create_dir_all(&state_dir).unwrap();
+    let path = std::env::join_paths([fake_mpv_bin_dir("cli-doctor-mpv")]).unwrap();
+
+    let output = rmus_binary()
+        .arg("doctor")
+        .env("PATH", path)
+        .env("HOME", &state_dir)
+        .env("XDG_CONFIG_HOME", state_dir.join("xdg-config"))
+        .env("APPDATA", state_dir.join("appdata"))
+        .env("LOCALAPPDATA", state_dir.join("localappdata"))
+        .current_dir(&state_dir)
+        .output()
+        .expect("rmus doctor should run");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("rmus doctor"));
+    assert!(stdout.contains("[ok] version:"));
+    assert!(stdout.contains("[ok] mpv:"));
+    assert!(stdout.contains("[warn] config:"));
+    assert!(stdout.contains("[warn] local sources: config missing"));
+
+    let _ = std::fs::remove_dir_all(state_dir);
 }
 
 #[test]

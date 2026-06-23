@@ -181,7 +181,7 @@ impl TidalConfig {
 
 impl Config {
     pub fn load() -> Self {
-        let config_path = get_config_path();
+        let config_path = config_path();
 
         if let Ok(content) = fs::read_to_string(&config_path) {
             toml::from_str(&content).unwrap_or_default()
@@ -193,7 +193,7 @@ impl Config {
     }
 
     pub fn save(&self) -> Result<(), std::io::Error> {
-        let config_path = get_config_path();
+        let config_path = config_path();
         if let Some(parent) = config_path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -217,7 +217,7 @@ impl Config {
     }
 }
 
-fn get_config_path() -> PathBuf {
+pub fn config_path() -> PathBuf {
     ProjectDirs::from("com", "maximilianpw", "rmus")
         .map(|dirs| dirs.config_dir().join("config.toml"))
         .unwrap_or_else(|| PathBuf::from("config.toml"))

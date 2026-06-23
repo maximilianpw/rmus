@@ -9,6 +9,11 @@ fn main() -> color_eyre::Result<()> {
             println!("{}", rmus::cli::version_text());
             return Ok(());
         }
+        Ok(rmus::cli::CliAction::Doctor) => {
+            let report = rmus::cli::doctor_report();
+            print!("{}", report.to_text());
+            std::process::exit(report.exit_code());
+        }
         Err(error) => {
             eprintln!("{error}");
             std::process::exit(2);
