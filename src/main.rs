@@ -46,7 +46,13 @@ fn main() -> color_eyre::Result<()> {
 
     color_eyre::install()?;
     let terminal = ratatui::init();
-    let result = rmus::app::App::new().run(terminal);
+    let mouse_capture_result =
+        crossterm::execute!(std::io::stdout(), crossterm::event::EnableMouseCapture);
+    let result = match mouse_capture_result {
+        Ok(()) => rmus::app::App::new().run(terminal),
+        Err(error) => Err(error.into()),
+    };
+    let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableMouseCapture);
     ratatui::restore();
     result
 }
