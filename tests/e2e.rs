@@ -6757,10 +6757,32 @@ fn test_panel_switching() {
     // Tab → Right
     app.execute(Action::SwitchPanel);
     assert_eq!(app.focused_window, FocusedWindow::Right);
+    let frame = terminal.draw(|f| app.render(f)).unwrap();
+    assert_eq!(
+        frame.buffer.cell((64, 0)).unwrap().fg,
+        theme::FOCUS,
+        "Right focus should highlight the playback panel"
+    );
+    assert_ne!(
+        frame.buffer.cell((64, 18)).unwrap().fg,
+        theme::FOCUS,
+        "Right focus should not highlight the logs panel"
+    );
 
     // Tab → Logs
     app.execute(Action::SwitchPanel);
     assert_eq!(app.focused_window, FocusedWindow::Logs);
+    let frame = terminal.draw(|f| app.render(f)).unwrap();
+    assert_ne!(
+        frame.buffer.cell((64, 0)).unwrap().fg,
+        theme::FOCUS,
+        "Logs focus should not highlight the playback panel"
+    );
+    assert_eq!(
+        frame.buffer.cell((64, 18)).unwrap().fg,
+        theme::FOCUS,
+        "Logs focus should highlight the logs panel"
+    );
 
     // Tab → wraps back to Left
     app.execute(Action::SwitchPanel);

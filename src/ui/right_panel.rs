@@ -27,16 +27,26 @@ impl RightPanel {
     pub fn update_playback_info(&mut self, info: PlaybackInfo) {
         self.playback_info = info;
     }
-}
 
-impl AppPanel for RightPanel {
-    fn render(&mut self, frame: &mut Frame, area: Rect, is_focused: bool) {
+    pub fn render_with_focus(
+        &mut self,
+        frame: &mut Frame,
+        area: Rect,
+        playback_focused: bool,
+        logs_focused: bool,
+    ) {
         let layout = Layout::vertical([Constraint::Fill(PLAYING_FILL), Constraint::Fill(1)]);
         let [playing_area, log_area] = layout.areas(area);
 
         self.log_panel.poll();
 
-        now_playing_widget(&self.playback_info, is_focused, frame, playing_area);
-        self.log_panel.render(frame, log_area, is_focused);
+        now_playing_widget(&self.playback_info, playback_focused, frame, playing_area);
+        self.log_panel.render(frame, log_area, logs_focused);
+    }
+}
+
+impl AppPanel for RightPanel {
+    fn render(&mut self, frame: &mut Frame, area: Rect, is_focused: bool) {
+        self.render_with_focus(frame, area, is_focused, is_focused);
     }
 }

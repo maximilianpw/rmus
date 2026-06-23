@@ -2594,10 +2594,11 @@ impl App {
             center_area,
             self.focused_window == FocusedWindow::Center,
         );
-        self.right_panel.render(
+        self.right_panel.render_with_focus(
             frame,
             right_area,
             self.focused_window == FocusedWindow::Right,
+            self.focused_window == FocusedWindow::Logs,
         );
         self.settings_panel
             .render(frame, area, self.focused_window == FocusedWindow::Settings);
