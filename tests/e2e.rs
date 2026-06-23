@@ -159,6 +159,7 @@ fn test_cli_help_prints_without_launching_tui() {
     assert!(stdout.contains("keyboard-driven terminal music player"));
     assert!(stdout.contains("doctor"));
     assert!(stdout.contains("import-playlist"));
+    assert!(stdout.contains("export-playlist"));
     assert!(stdout.contains("--version"));
 }
 
@@ -204,6 +205,70 @@ song.flac
         "path = \"{}\"",
         music_dir.join("song.flac").to_string_lossy()
     )));
+
+    let _ = std::fs::remove_dir_all(state_dir);
+}
+
+#[test]
+fn test_cli_export_playlist_writes_m3u8() {
+    let state_dir = test_dir("cli-export-playlist");
+    let music_dir = state_dir.join("music");
+    std::fs::create_dir_all(&music_dir).unwrap();
+    let first = music_dir.join("first.flac");
+    std::fs::write(&first, "not real audio").unwrap();
+    let m3u = music_dir.join("mix.m3u");
+    std::fs::write(
+        &m3u,
+        "\
+#EXTM3U
+#EXTINF:200,Artist - First
+first.flac
+",
+    )
+    .unwrap();
+    let state_env = |command: &mut Command| {
+        command
+            .env("HOME", &state_dir)
+            .env("XDG_CONFIG_HOME", state_dir.join("xdg-config"))
+            .env("APPDATA", state_dir.join("appdata"))
+            .env("LOCALAPPDATA", state_dir.join("localappdata"))
+            .current_dir(&state_dir);
+    };
+
+    let mut import_command = rmus_binary();
+    state_env(import_command.args(["import-playlist", m3u.to_str().unwrap(), "Export Me"]));
+    let import_output = import_command
+        .output()
+        .expect("rmus import-playlist should run");
+    assert!(import_output.status.success());
+
+    let export_path = state_dir.join("exported.m3u8");
+    let mut export_command = rmus_binary();
+    state_env(export_command.args([
+        "export-playlist",
+        "Export Me",
+        export_path.to_str().unwrap(),
+    ]));
+    let export_output = export_command
+        .output()
+        .expect("rmus export-playlist should run");
+
+    assert!(export_output.status.success());
+    assert!(export_output.stderr.is_empty());
+    let stdout = String::from_utf8(export_output.stdout).unwrap();
+    assert!(stdout.contains("Exported 1 track from playlist 'Export Me'"));
+    let exported = std::fs::read_to_string(export_path).unwrap();
+    assert_eq!(
+        exported,
+        format!(
+            "\
+#EXTM3U
+#EXTINF:200,Artist - First
+{}
+",
+            first.to_string_lossy()
+        )
+    );
 
     let _ = std::fs::remove_dir_all(state_dir);
 }

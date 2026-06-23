@@ -1,5 +1,5 @@
 #[cfg(test)]
-use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+use std::cell::Cell;
 use std::{
     cmp::Ordering,
     fmt::Debug,
@@ -28,28 +28,32 @@ const SUPPORTED_AUDIO_EXTENSIONS: &[&str] = &[
 ];
 
 #[cfg(test)]
-static SONG_SCAN_COUNT: AtomicUsize = AtomicUsize::new(0);
+thread_local! {
+    static SONG_SCAN_COUNT: Cell<usize> = const { Cell::new(0) };
+}
 #[cfg(test)]
-static ALBUM_DISCOVERY_SCAN_COUNT: AtomicUsize = AtomicUsize::new(0);
+thread_local! {
+    static ALBUM_DISCOVERY_SCAN_COUNT: Cell<usize> = const { Cell::new(0) };
+}
 
 #[cfg(test)]
 pub(crate) fn reset_song_scan_count() {
-    SONG_SCAN_COUNT.store(0, AtomicOrdering::SeqCst);
+    SONG_SCAN_COUNT.with(|count| count.set(0));
 }
 
 #[cfg(test)]
 pub(crate) fn song_scan_count() -> usize {
-    SONG_SCAN_COUNT.load(AtomicOrdering::SeqCst)
+    SONG_SCAN_COUNT.with(Cell::get)
 }
 
 #[cfg(test)]
 pub(crate) fn reset_album_discovery_scan_count() {
-    ALBUM_DISCOVERY_SCAN_COUNT.store(0, AtomicOrdering::SeqCst);
+    ALBUM_DISCOVERY_SCAN_COUNT.with(|count| count.set(0));
 }
 
 #[cfg(test)]
 pub(crate) fn album_discovery_scan_count() -> usize {
-    ALBUM_DISCOVERY_SCAN_COUNT.load(AtomicOrdering::SeqCst)
+    ALBUM_DISCOVERY_SCAN_COUNT.with(Cell::get)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -124,7 +128,7 @@ fn read_album_discovery_dir(
         snapshots.push(snapshot);
     }
     #[cfg(test)]
-    ALBUM_DISCOVERY_SCAN_COUNT.fetch_add(1, AtomicOrdering::SeqCst);
+    ALBUM_DISCOVERY_SCAN_COUNT.with(|count| count.set(count.get() + 1));
     fs::read_dir(path).ok()
 }
 
@@ -407,7 +411,7 @@ impl LocalFiles {
         cache: &mut LocalTrackCache,
     ) -> Vec<Song> {
         #[cfg(test)]
-        SONG_SCAN_COUNT.fetch_add(files.len(), AtomicOrdering::SeqCst);
+        SONG_SCAN_COUNT.with(|count| count.set(count.get() + files.len()));
 
         files.sort_by(|a, b| {
             a.file_name()

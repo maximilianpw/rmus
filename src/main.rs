@@ -19,6 +19,11 @@ fn main() -> color_eyre::Result<()> {
             println!("{}", summary.message());
             return Ok(());
         }
+        Ok(rmus::cli::CliAction::ExportPlaylist { name, path }) => {
+            let summary = rmus::cli::export_playlist(&name, &path)?;
+            println!("{}", summary.message());
+            return Ok(());
+        }
         Err(error) => {
             eprintln!("{error}");
             std::process::exit(2);

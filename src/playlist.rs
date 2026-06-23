@@ -71,6 +71,14 @@ pub struct PlaylistImportSummary {
     pub skipped_count: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlaylistExportSummary {
+    pub playlist_name: String,
+    pub path: PathBuf,
+    pub exported_count: usize,
+    pub skipped_count: usize,
+}
+
 impl PlaylistSummary {
     pub fn display_title(&self) -> String {
         format!("{} ({})", self.name, track_count_label(self.track_count))
@@ -89,6 +97,27 @@ impl PlaylistImportSummary {
                 "Imported {} into playlist '{}' (skipped {})",
                 track_count_label(self.imported_count),
                 self.playlist_name,
+                track_count_label(skipped)
+            ),
+        }
+    }
+}
+
+impl PlaylistExportSummary {
+    pub fn message(&self) -> String {
+        let target = self.path.to_string_lossy();
+        match self.skipped_count {
+            0 => format!(
+                "Exported {} from playlist '{}' to {}",
+                track_count_label(self.exported_count),
+                self.playlist_name,
+                target
+            ),
+            skipped => format!(
+                "Exported {} from playlist '{}' to {} (skipped {})",
+                track_count_label(self.exported_count),
+                self.playlist_name,
+                target,
                 track_count_label(skipped)
             ),
         }
@@ -392,6 +421,39 @@ impl PlaylistStore {
             playlist_name: name,
             imported_count: imported.songs.len(),
             skipped_count: imported.skipped_count,
+        })
+    }
+
+    pub fn export_m3u(
+        &self,
+        name: &str,
+        path: &Path,
+    ) -> Result<PlaylistExportSummary, std::io::Error> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Playlist name is required",
+            ));
+        }
+
+        let playlists = self.load_all();
+        let Some(playlist) = playlists
+            .iter()
+            .find(|playlist| playlist.name.eq_ignore_ascii_case(name))
+        else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("Playlist '{}' not found", name),
+            ));
+        };
+
+        let exported = export_playlist_to_m3u(playlist, path)?;
+        Ok(PlaylistExportSummary {
+            playlist_name: playlist.name.clone(),
+            path: path.to_path_buf(),
+            exported_count: exported.exported_count,
+            skipped_count: exported.skipped_count,
         })
     }
 
@@ -726,6 +788,12 @@ struct ImportedM3u {
 }
 
 #[derive(Debug, Default)]
+struct ExportedM3u {
+    exported_count: usize,
+    skipped_count: usize,
+}
+
+#[derive(Debug, Default)]
 struct ExtInf {
     title: Option<String>,
     duration_secs: Option<f64>,
@@ -851,6 +919,71 @@ fn title_from_path(path: &Path) -> String {
         .and_then(|name| name.to_str())
         .map(ToString::to_string)
         .unwrap_or_else(|| path.to_string_lossy().into_owned())
+}
+
+fn export_playlist_to_m3u(playlist: &Playlist, path: &Path) -> Result<ExportedM3u, std::io::Error> {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+
+    let mut output = String::from("#EXTM3U\n");
+    let mut exported = ExportedM3u::default();
+
+    for track in &playlist.tracks {
+        let Some(track_path) = track
+            .path
+            .as_deref()
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+        else {
+            exported.skipped_count += 1;
+            continue;
+        };
+
+        output.push_str(&format!(
+            "#EXTINF:{},{}\n{}\n",
+            m3u_duration_label(track.duration_secs),
+            playlist_track_display_title(track),
+            track_path
+        ));
+        exported.exported_count += 1;
+    }
+
+    if exported.exported_count == 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Playlist does not contain any local tracks",
+        ));
+    }
+
+    fs::write(path, output)?;
+    Ok(exported)
+}
+
+fn m3u_duration_label(duration_secs: Option<f64>) -> String {
+    duration_secs
+        .filter(|duration| duration.is_finite() && *duration > 0.0)
+        .map(|duration| (duration.round() as i64).to_string())
+        .unwrap_or_else(|| "-1".to_string())
+}
+
+fn playlist_track_display_title(track: &PlaylistTrack) -> String {
+    let title = track.title.trim();
+    let artist = track.artist.trim();
+    match (artist.is_empty(), title.is_empty()) {
+        (false, false) => format!("{artist} - {title}"),
+        (true, false) => title.to_string(),
+        (false, true) => artist.to_string(),
+        (true, true) => track
+            .path
+            .as_deref()
+            .map(Path::new)
+            .map(title_from_path)
+            .unwrap_or_else(|| "Unknown Track".to_string()),
+    }
 }
 
 impl PlaylistSource {
@@ -1106,6 +1239,90 @@ https://example.com/stream.flac
             .import_m3u(&playlist_file, Some("imported mix"))
             .expect_err("duplicate playlist names should be rejected");
         assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn store_exports_local_tracks_to_m3u() {
+        let dir = test_dir("export-m3u");
+        let store = PlaylistStore::with_dir(dir.join("playlists"));
+        store.create("Road Mix".to_string()).unwrap();
+        store
+            .add_songs_to_index(
+                0,
+                &[
+                    Song {
+                        title: "Local Song".to_string(),
+                        artist: "Artist".to_string(),
+                        path: "/music/local.flac".into(),
+                        duration_secs: Some(244.6),
+                        ..Default::default()
+                    },
+                    Song {
+                        title: "Stream Song".to_string(),
+                        artist: "Streaming Artist".to_string(),
+                        stream_service: Some("Qobuz".to_string()),
+                        stream_track_id: Some("stream-1".to_string()),
+                        ..Default::default()
+                    },
+                ],
+            )
+            .unwrap();
+
+        let export_path = dir.join("exports/road.m3u8");
+        let summary = store.export_m3u("road mix", &export_path).unwrap();
+
+        assert_eq!(
+            summary,
+            PlaylistExportSummary {
+                playlist_name: "Road Mix".to_string(),
+                path: export_path.clone(),
+                exported_count: 1,
+                skipped_count: 1,
+            }
+        );
+        let output = fs::read_to_string(&export_path).unwrap();
+        assert_eq!(
+            output,
+            "\
+#EXTM3U
+#EXTINF:245,Artist - Local Song
+/music/local.flac
+"
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn store_rejects_export_without_local_tracks() {
+        let dir = test_dir("export-m3u-empty");
+        let store = PlaylistStore::with_dir(dir.join("playlists"));
+        store.create("Streams".to_string()).unwrap();
+        store
+            .add_songs_to_index(
+                0,
+                &[Song {
+                    title: "Stream Only".to_string(),
+                    stream_service: Some("Tidal".to_string()),
+                    stream_track_id: Some("stream-1".to_string()),
+                    ..Default::default()
+                }],
+            )
+            .unwrap();
+
+        let error = store
+            .export_m3u("Streams", &dir.join("streams.m3u8"))
+            .expect_err("all-stream playlists should not write an empty M3U");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert!(!dir.join("streams.m3u8").exists());
+
+        let error = store
+            .export_m3u("Missing", &dir.join("missing.m3u8"))
+            .expect_err("missing playlists should fail explicitly");
+        assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
 
         let _ = fs::remove_dir_all(dir);
     }

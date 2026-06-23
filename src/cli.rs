@@ -9,7 +9,7 @@ use crate::{
     config::{config_path, Config},
     history::HistoryStore,
     local_cache::LocalTrackCache,
-    playlist::{PlaylistImportSummary, PlaylistStore},
+    playlist::{PlaylistExportSummary, PlaylistImportSummary, PlaylistStore},
     queue::QueueStore,
 };
 
@@ -20,6 +20,7 @@ pub enum CliAction {
     Version,
     Doctor,
     ImportPlaylist { path: PathBuf, name: Option<String> },
+    ExportPlaylist { name: String, path: PathBuf },
 }
 
 pub fn parse_args<I, S>(args: I) -> Result<CliAction, String>
@@ -40,6 +41,7 @@ where
         "-V" | "--version" => no_more_args(args, CliAction::Version, &first),
         "doctor" => no_more_args(args, CliAction::Doctor, &first),
         "import-playlist" => parse_import_playlist_args(args),
+        "export-playlist" => parse_export_playlist_args(args),
         _ => Err(format!("unknown argument '{first}'\n\n{}", help_text())),
     }
 }
@@ -81,6 +83,35 @@ where
     })
 }
 
+fn parse_export_playlist_args<I>(mut args: I) -> Result<CliAction, String>
+where
+    I: Iterator<Item = String>,
+{
+    let Some(name) = args.next() else {
+        return Err(format!(
+            "missing playlist name for export-playlist\n\n{}",
+            help_text()
+        ));
+    };
+    let Some(path) = args.next() else {
+        return Err(format!(
+            "missing path for export-playlist\n\n{}",
+            help_text()
+        ));
+    };
+    if args.next().is_some() {
+        return Err(format!(
+            "unexpected argument after export path\n\n{}",
+            help_text()
+        ));
+    }
+
+    Ok(CliAction::ExportPlaylist {
+        name,
+        path: PathBuf::from(path),
+    })
+}
+
 pub fn version_text() -> String {
     format!("rmus {}", env!("CARGO_PKG_VERSION"))
 }
@@ -96,6 +127,8 @@ pub fn help_text() -> &'static str {
         "  doctor          Check runtime dependencies and app paths\n",
         "  import-playlist <PATH> [NAME]\n",
         "                  Import a local .m3u/.m3u8 playlist\n",
+        "  export-playlist <NAME> <PATH>\n",
+        "                  Export a playlist to .m3u8\n",
         "\n",
         "Options:\n",
         "  -h, --help       Print help\n",
@@ -108,6 +141,10 @@ pub fn import_playlist(
     name: Option<&str>,
 ) -> Result<PlaylistImportSummary, std::io::Error> {
     PlaylistStore::default().import_m3u(path, name)
+}
+
+pub fn export_playlist(name: &str, path: &Path) -> Result<PlaylistExportSummary, std::io::Error> {
+    PlaylistStore::default().export_m3u(name, path)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -483,11 +520,32 @@ mod tests {
     }
 
     #[test]
+    fn export_playlist_command_accepts_name_and_path() {
+        assert_eq!(
+            parse_args(["rmus", "export-playlist", "Road Mix", "/music/road.m3u8"]),
+            Ok(CliAction::ExportPlaylist {
+                name: "Road Mix".to_string(),
+                path: PathBuf::from("/music/road.m3u8"),
+            })
+        );
+    }
+
+    #[test]
     fn import_playlist_command_requires_path() {
         let error = parse_args(["rmus", "import-playlist"]).expect_err("path should be required");
 
         assert!(error.contains("missing path for import-playlist"));
         assert!(error.contains("Usage:"));
+    }
+
+    #[test]
+    fn export_playlist_command_requires_name_and_path() {
+        let error = parse_args(["rmus", "export-playlist"]).expect_err("name should be required");
+        assert!(error.contains("missing playlist name for export-playlist"));
+
+        let error = parse_args(["rmus", "export-playlist", "Road Mix"])
+            .expect_err("path should be required");
+        assert!(error.contains("missing path for export-playlist"));
     }
 
     #[test]

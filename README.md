@@ -14,7 +14,7 @@ It is focused on fast local-library playback with playlist and queue workflows, 
 - Numbered queue view with restart persistence, jump, reorder, remove, clear, playlist add, and save actions.
 - Recently played history for quickly reopening prior tracks across app restarts.
 - Persistent playlists with local tracks, saved Qobuz/Tidal track references, and duplicate/rename/delete workflows.
-- Local `.m3u`/`.m3u8` playlist import from the CLI.
+- Local `.m3u`/`.m3u8` playlist import and export from the CLI.
 - Qobuz account configuration and stream-quality selection.
 - Tidal device-code authentication with token persistence.
 - Streaming album, artist, and track search with background requests and timeout handling.
@@ -43,9 +43,12 @@ The doctor command checks the installed `rmus` version, whether `mpv` is availab
 ```sh
 rmus import-playlist ~/Music/Mix.m3u
 rmus import-playlist ~/Music/Mix.m3u "Road Mix"
+rmus export-playlist "Road Mix" ~/Music/Road-Mix.m3u8
 ```
 
 The import command creates a new rmus playlist from local file entries in `.m3u` or `.m3u8` files. Relative entries are resolved from the playlist file's folder, `#EXTINF` titles and durations are preserved when present, and URL entries are skipped.
+
+The export command writes local tracks from an rmus playlist to `.m3u8`, including `#EXTINF` title and duration rows when metadata is available. Streaming-only saved references are skipped because they need fresh service resolution before playback.
 
 ## Test
 
