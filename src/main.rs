@@ -27,10 +27,18 @@ fn main() -> color_eyre::Result<()> {
             println!("{}", summary.message());
             return Ok(());
         }
-        Ok(rmus::cli::CliAction::ScanLocal) => {
-            let summary = rmus::cli::scan_local()?;
-            println!("{}", summary.message());
-            return Ok(());
+        Ok(rmus::cli::CliAction::ScanLocal { name }) => {
+            match rmus::cli::scan_local(name.as_deref()) {
+                Ok(summary) => {
+                    println!("{}", summary.message());
+                    return Ok(());
+                }
+                Err(rmus::cli::LocalScanError::Io(error)) => return Err(error.into()),
+                Err(error) => {
+                    eprintln!("{error}");
+                    std::process::exit(2);
+                }
+            }
         }
         Ok(rmus::cli::CliAction::AddSource { name, path }) => {
             match rmus::cli::add_source(&name, &path) {

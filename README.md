@@ -73,10 +73,11 @@ The export command writes local tracks from an rmus playlist to `.m3u8`, includi
 
 ```sh
 rmus scan-local
+rmus scan-local "Music"
 rmus clear-cache
 ```
 
-The scan-local command walks configured local music folders and warms the local album-discovery and track-metadata cache. Run it after adding a large local library if the first in-app browse or search feels slow.
+The scan-local command walks configured local music folders and warms the local album-discovery and track-metadata cache. Pass a source name to warm only that configured folder. Run it after adding a large local library if the first in-app browse or search feels slow.
 
 The clear-cache command removes cached local album discovery and track metadata. It leaves config, playlists, playback history, queue state, and streaming account tokens untouched.
 

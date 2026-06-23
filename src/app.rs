@@ -229,7 +229,12 @@ impl App {
         qobuz: Option<Box<dyn StreamingService>>,
         tidal: Option<Box<dyn StreamingService>>,
     ) -> Self {
-        Self::new_for_test_with_playlist_store(config, qobuz, tidal, PlaylistStore::default())
+        Self::new_for_test_with_playlist_store(
+            config,
+            qobuz,
+            tidal,
+            PlaylistStore::with_dir(Self::test_playlist_dir()),
+        )
     }
 
     pub fn new_for_test_with_playlist_store(
@@ -278,6 +283,17 @@ impl App {
             .as_nanos();
         std::env::temp_dir().join(format!(
             "rmus-test-history-{}-{nanos}.toml",
+            std::process::id()
+        ))
+    }
+
+    fn test_playlist_dir() -> std::path::PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "rmus-test-playlists-{}-{nanos}",
             std::process::id()
         ))
     }

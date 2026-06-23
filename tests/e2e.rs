@@ -479,6 +479,75 @@ default_volume = 50
 }
 
 #[test]
+fn test_cli_scan_local_can_target_named_source_without_launching_tui() {
+    let state_dir = test_dir("cli-scan-local-source");
+    let library_dir = state_dir.join("library").join("Album");
+    let archive_dir = state_dir.join("archive").join("Album");
+    std::fs::create_dir_all(&library_dir).unwrap();
+    std::fs::create_dir_all(&archive_dir).unwrap();
+    std::fs::write(library_dir.join("01 - Library.flac"), "not real audio").unwrap();
+    std::fs::write(archive_dir.join("01 - Archive.opus"), "not real audio").unwrap();
+
+    let config_path = isolated_config_path(&state_dir);
+    std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &config_path,
+        format!(
+            "\
+[[local.sources]]
+name = \"Library\"
+path = \"{}\"
+
+[[local.sources]]
+name = \"Archive\"
+path = \"{}\"
+
+[audio]
+default_volume = 50
+",
+            state_dir
+                .join("library")
+                .to_string_lossy()
+                .replace('\\', "\\\\"),
+            state_dir
+                .join("archive")
+                .to_string_lossy()
+                .replace('\\', "\\\\")
+        ),
+    )
+    .unwrap();
+
+    let mut command = rmus_binary();
+    state_env(command.args(["scan-local", "archive"]), &state_dir);
+    let output = command
+        .output()
+        .expect("rmus scan-local archive should run");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Scanned 1 local track from local source 'Archive'"));
+    assert!(stdout.contains("local-cache.toml"));
+
+    let cache_path = find_file_named(&state_dir, "local-cache.toml")
+        .expect("targeted scan-local should write the local cache");
+    let cache = std::fs::read_to_string(cache_path).unwrap();
+    assert!(cache.contains("01 - Archive.opus"));
+    assert!(!cache.contains("01 - Library.flac"));
+
+    let mut missing_command = rmus_binary();
+    state_env(missing_command.args(["scan-local", "Missing"]), &state_dir);
+    let missing_output = missing_command
+        .output()
+        .expect("rmus scan-local Missing should run");
+    assert!(!missing_output.status.success());
+    let stderr = String::from_utf8(missing_output.stderr).unwrap();
+    assert!(stderr.contains("source not found: Missing"));
+
+    let _ = std::fs::remove_dir_all(state_dir);
+}
+
+#[test]
 fn test_cli_clear_cache_runs_without_launching_tui() {
     let state_dir = test_dir("cli-clear-cache");
     std::fs::create_dir_all(&state_dir).unwrap();

@@ -23,7 +23,7 @@ pub enum CliAction {
     Paths,
     ListSources,
     LocalStats,
-    ScanLocal,
+    ScanLocal { name: Option<String> },
     AddSource { name: String, path: PathBuf },
     RemoveSource { name: String },
     ImportPlaylist { path: PathBuf, name: Option<String> },
@@ -51,7 +51,7 @@ where
         "paths" => no_more_args(args, CliAction::Paths, &first),
         "list-sources" => no_more_args(args, CliAction::ListSources, &first),
         "local-stats" => no_more_args(args, CliAction::LocalStats, &first),
-        "scan-local" => no_more_args(args, CliAction::ScanLocal, &first),
+        "scan-local" => parse_scan_local_args(args),
         "add-source" => parse_add_source_args(args),
         "remove-source" => parse_remove_source_args(args),
         "import-playlist" => parse_import_playlist_args(args),
@@ -112,6 +112,21 @@ where
     }
 
     Ok(CliAction::RemoveSource { name })
+}
+
+fn parse_scan_local_args<I>(mut args: I) -> Result<CliAction, String>
+where
+    I: Iterator<Item = String>,
+{
+    let name = args.next();
+    if args.next().is_some() {
+        return Err(format!(
+            "unexpected argument after source name\n\n{}",
+            help_text()
+        ));
+    }
+
+    Ok(CliAction::ScanLocal { name })
 }
 
 fn parse_import_playlist_args<I>(mut args: I) -> Result<CliAction, String>
@@ -183,7 +198,8 @@ pub fn help_text() -> &'static str {
         "  paths           Print app storage paths\n",
         "  list-sources    Print configured local music folders\n",
         "  local-stats     Count configured local sources, albums, and tracks\n",
-        "  scan-local      Scan configured local sources into the metadata cache\n",
+        "  scan-local [NAME]\n",
+        "                  Scan all, or a named local source, into the metadata cache\n",
         "  add-source <NAME> <PATH>\n",
         "                  Add a local music folder to config\n",
         "  remove-source <NAME>\n",
@@ -546,6 +562,7 @@ local cache: {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalScanSummary {
+    pub source_name: Option<String>,
     pub source_count: usize,
     pub track_count: usize,
     pub cache_path: PathBuf,
@@ -557,30 +574,76 @@ impl LocalScanSummary {
             return "No local sources configured; add folders in Settings first".to_string();
         }
 
+        let source_label = if let Some(name) = &self.source_name {
+            format!("local source '{name}'")
+        } else {
+            format!(
+                "{} local {}",
+                self.source_count,
+                plural(self.source_count, "source", "sources")
+            )
+        };
+
         format!(
-            "Scanned {} local {} from {} local {}; cache: {}",
+            "Scanned {} local {} from {}; cache: {}",
             self.track_count,
             plural(self.track_count, "track", "tracks"),
-            self.source_count,
-            plural(self.source_count, "source", "sources"),
+            source_label,
             self.cache_path.to_string_lossy()
         )
     }
 }
 
-pub fn scan_local() -> Result<LocalScanSummary, std::io::Error> {
-    scan_local_with_config(Config::load())
+#[derive(Debug)]
+pub enum LocalScanError {
+    SourceNameRequired,
+    SourceNotFound(String),
+    Io(std::io::Error),
 }
 
-fn scan_local_with_config(config: Config) -> Result<LocalScanSummary, std::io::Error> {
-    scan_local_with_cache_path(config, LocalTrackCache::default_path())
+impl std::fmt::Display for LocalScanError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SourceNameRequired => write!(f, "source name is required"),
+            Self::SourceNotFound(name) => write!(f, "source not found: {name}"),
+            Self::Io(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for LocalScanError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(error) => Some(error),
+            Self::SourceNameRequired | Self::SourceNotFound(_) => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for LocalScanError {
+    fn from(error: std::io::Error) -> Self {
+        Self::Io(error)
+    }
+}
+
+pub fn scan_local(source_name: Option<&str>) -> Result<LocalScanSummary, LocalScanError> {
+    scan_local_with_config(Config::load(), source_name)
+}
+
+fn scan_local_with_config(
+    config: Config,
+    source_name: Option<&str>,
+) -> Result<LocalScanSummary, LocalScanError> {
+    scan_local_with_cache_path(config, source_name, LocalTrackCache::default_path())
 }
 
 fn scan_local_with_cache_path(
     config: Config,
+    source_name: Option<&str>,
     cache_path: PathBuf,
-) -> Result<LocalScanSummary, std::io::Error> {
+) -> Result<LocalScanSummary, LocalScanError> {
     let sources = config.get_local_sources();
+    let (sources, selected_name) = select_scan_sources(sources, source_name)?;
     let track_count = if sources.is_empty() {
         0
     } else {
@@ -588,10 +651,33 @@ fn scan_local_with_cache_path(
     };
 
     Ok(LocalScanSummary {
+        source_name: selected_name,
         source_count: sources.len(),
         track_count,
         cache_path,
     })
+}
+
+fn select_scan_sources(
+    sources: Vec<crate::config::LocalSource>,
+    source_name: Option<&str>,
+) -> Result<(Vec<crate::config::LocalSource>, Option<String>), LocalScanError> {
+    let Some(name) = source_name.map(str::trim) else {
+        return Ok((sources, None));
+    };
+    if name.is_empty() {
+        return Err(LocalScanError::SourceNameRequired);
+    }
+
+    let Some(source) = sources
+        .into_iter()
+        .find(|source| source.name.eq_ignore_ascii_case(name))
+    else {
+        return Err(LocalScanError::SourceNotFound(name.to_string()));
+    };
+
+    let selected_name = source.name.clone();
+    Ok((vec![source], Some(selected_name)))
 }
 
 fn plural(count: usize, singular: &'static str, plural: &'static str) -> &'static str {
@@ -1250,7 +1336,19 @@ mod tests {
 
     #[test]
     fn scan_local_command_warms_configured_sources() {
-        assert_eq!(parse_args(["rmus", "scan-local"]), Ok(CliAction::ScanLocal));
+        assert_eq!(
+            parse_args(["rmus", "scan-local"]),
+            Ok(CliAction::ScanLocal { name: None })
+        );
+        assert_eq!(
+            parse_args(["rmus", "scan-local", "Library"]),
+            Ok(CliAction::ScanLocal {
+                name: Some("Library".to_string())
+            })
+        );
+        let error = parse_args(["rmus", "scan-local", "Library", "extra"])
+            .expect_err("extra scan-local args should fail");
+        assert!(error.contains("unexpected argument after source name"));
 
         let dir = test_dir("scan-local");
         fs::write(dir.join("01 - Warmed.flac"), "").unwrap();
@@ -1265,10 +1363,12 @@ mod tests {
                 },
                 ..crate::config::Config::default()
             },
+            None,
             cache_path.clone(),
         )
         .unwrap();
 
+        assert_eq!(summary.source_name, None);
         assert_eq!(summary.source_count, 1);
         assert_eq!(summary.track_count, 1);
         assert!(summary.message().contains("Scanned 1 local track"));
@@ -1280,10 +1380,14 @@ mod tests {
     #[test]
     fn scan_local_reports_missing_sources() {
         let dir = test_dir("scan-local-missing");
-        let summary =
-            scan_local_with_cache_path(crate::config::Config::default(), dir.join("cache.toml"))
-                .unwrap();
+        let summary = scan_local_with_cache_path(
+            crate::config::Config::default(),
+            None,
+            dir.join("cache.toml"),
+        )
+        .unwrap();
 
+        assert_eq!(summary.source_name, None);
         assert_eq!(summary.source_count, 0);
         assert_eq!(summary.track_count, 0);
         assert_eq!(
@@ -1291,6 +1395,84 @@ mod tests {
             "No local sources configured; add folders in Settings first"
         );
         assert!(!dir.join("cache.toml").exists());
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn scan_local_command_warms_named_source_and_preserves_existing_cache() {
+        let first = test_dir("scan-local-first");
+        let second = test_dir("scan-local-second");
+        fs::write(first.join("01 - First.flac"), "").unwrap();
+        fs::write(second.join("01 - Second.flac"), "").unwrap();
+        let cache_path = first.join("local-cache.toml");
+
+        let first_config = crate::config::Config {
+            local: crate::config::LocalConfig {
+                sources: vec![crate::config::LocalSource {
+                    name: "First".to_string(),
+                    path: first.clone(),
+                }],
+            },
+            ..crate::config::Config::default()
+        };
+        scan_local_with_cache_path(first_config, None, cache_path.clone()).unwrap();
+
+        let summary = scan_local_with_cache_path(
+            crate::config::Config {
+                local: crate::config::LocalConfig {
+                    sources: vec![
+                        crate::config::LocalSource {
+                            name: "First".to_string(),
+                            path: first.clone(),
+                        },
+                        crate::config::LocalSource {
+                            name: "Second".to_string(),
+                            path: second.clone(),
+                        },
+                    ],
+                },
+                ..crate::config::Config::default()
+            },
+            Some("second"),
+            cache_path.clone(),
+        )
+        .unwrap();
+
+        assert_eq!(summary.source_name, Some("Second".to_string()));
+        assert_eq!(summary.source_count, 1);
+        assert_eq!(summary.track_count, 1);
+        assert!(summary
+            .message()
+            .contains("Scanned 1 local track from local source 'Second'"));
+
+        let cache = fs::read_to_string(&cache_path).unwrap();
+        assert!(cache.contains("01 - First.flac"));
+        assert!(cache.contains("01 - Second.flac"));
+
+        let _ = fs::remove_dir_all(first);
+        let _ = fs::remove_dir_all(second);
+    }
+
+    #[test]
+    fn scan_local_command_rejects_unknown_source_names() {
+        let dir = test_dir("scan-local-unknown");
+        let error = scan_local_with_cache_path(
+            crate::config::Config {
+                local: crate::config::LocalConfig {
+                    sources: vec![crate::config::LocalSource {
+                        name: "Library".to_string(),
+                        path: dir.clone(),
+                    }],
+                },
+                ..crate::config::Config::default()
+            },
+            Some("Other"),
+            dir.join("cache.toml"),
+        )
+        .expect_err("unknown source should fail");
+
+        assert_eq!(error.to_string(), "source not found: Other");
 
         let _ = fs::remove_dir_all(dir);
     }
