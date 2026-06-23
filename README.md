@@ -93,6 +93,7 @@ The clear-cache command removes cached local album discovery and track metadata.
 Automatic in-app album discovery is bounded so very large folders stay responsive; press `W` in the app or run `rmus scan-local` when you want to rescan and warm the full local cache deliberately.
 
 When you add or change a local source in Settings, `rmus` starts that cache warm in the background automatically.
+If an especially deep source initially appears as `scanning...`, wait for that background scan to finish; opening the placeholder will not walk the entire folder on the UI thread.
 
 ## Test
 

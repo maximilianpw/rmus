@@ -37,6 +37,10 @@ thread_local! {
 thread_local! {
     static ALBUM_DISCOVERY_SCAN_COUNT: Cell<usize> = const { Cell::new(0) };
 }
+#[cfg(test)]
+thread_local! {
+    static AUDIO_FILE_DISCOVERY_SCAN_COUNT: Cell<usize> = const { Cell::new(0) };
+}
 
 #[cfg(test)]
 pub(crate) fn reset_song_scan_count() {
@@ -58,11 +62,22 @@ pub(crate) fn album_discovery_scan_count() -> usize {
     ALBUM_DISCOVERY_SCAN_COUNT.with(Cell::get)
 }
 
+#[cfg(test)]
+pub(crate) fn reset_audio_file_discovery_scan_count() {
+    AUDIO_FILE_DISCOVERY_SCAN_COUNT.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn audio_file_discovery_scan_count() -> usize {
+    AUDIO_FILE_DISCOVERY_SCAN_COUNT.with(Cell::get)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct LocalAlbumEntry {
     name: String,
     path: PathBuf,
     scope: LocalAlbumScope,
+    scan_pending: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -134,6 +149,8 @@ fn collect_audio_files(path: &Path, songs: &mut Vec<PathBuf>) {
     let Ok(entries) = fs::read_dir(path) else {
         return;
     };
+    #[cfg(test)]
+    AUDIO_FILE_DISCOVERY_SCAN_COUNT.with(|count| count.set(count.get() + 1));
 
     for entry in entries.filter_map(|entry| entry.ok()) {
         let path = entry.path();
@@ -153,6 +170,8 @@ fn collect_direct_audio_files(path: &Path, songs: &mut Vec<PathBuf>) {
     let Ok(entries) = fs::read_dir(path) else {
         return;
     };
+    #[cfg(test)]
+    AUDIO_FILE_DISCOVERY_SCAN_COUNT.with(|count| count.set(count.get() + 1));
 
     for entry in entries.filter_map(|entry| entry.ok()) {
         let path = entry.path();
@@ -259,6 +278,7 @@ fn collect_child_album_entries(
                 name: local_album_entry_name(source_root, &child_dir),
                 path: child_dir.clone(),
                 scope: LocalAlbumScope::Direct,
+                scan_pending: false,
             });
         }
         collect_child_album_entries(source_root, &child_dir, entries, snapshots, budget);
@@ -304,6 +324,7 @@ fn discover_album_entries_uncached_with_budget(
                 name: source.name.clone(),
                 path: source.path.clone(),
                 scope: LocalAlbumScope::Direct,
+                scan_pending: false,
             });
         }
 
@@ -316,10 +337,17 @@ fn discover_album_entries_uncached_with_budget(
         );
 
         if source_entries.is_empty() {
+            let scan_pending = budget.exhausted;
+            let name = if scan_pending {
+                format!("{} (scanning...)", source.name)
+            } else {
+                source.name.clone()
+            };
             source_entries.push(LocalAlbumEntry {
-                name: source.name.clone(),
+                name,
                 path: source.path.clone(),
                 scope: LocalAlbumScope::Recursive,
+                scan_pending,
             });
         }
 
@@ -407,6 +435,7 @@ impl LocalAlbumEntry {
                 CachedLocalAlbumScope::Direct => LocalAlbumScope::Direct,
                 CachedLocalAlbumScope::Recursive => LocalAlbumScope::Recursive,
             },
+            scan_pending: false,
         }
     }
 
@@ -655,6 +684,10 @@ impl LocalFiles {
     }
 
     fn songs_for_entry_with_cache_path(entry: &LocalAlbumEntry, cache_path: PathBuf) -> Vec<Song> {
+        if entry.scan_pending {
+            return Vec::new();
+        }
+
         match entry.scope {
             LocalAlbumScope::Direct => {
                 Self::songs_directly_from_path_using_cached_metadata_with_cache_path(
@@ -1085,6 +1118,43 @@ mod tests {
             "incomplete album discovery should not be cached as a complete source snapshot"
         );
         assert!(!cache_path.exists());
+
+        let _ = fs::remove_dir_all(dir);
+        let _ = fs::remove_file(cache_path);
+    }
+
+    #[test]
+    fn incomplete_bounded_discovery_defers_recursive_source_open() {
+        let dir = test_dir("deferred-incomplete-discovery");
+        fs::create_dir_all(dir.join("00 Empty")).unwrap();
+        fs::create_dir_all(dir.join("01 Empty")).unwrap();
+        fs::create_dir_all(dir.join("99 Album")).unwrap();
+        fs::write(dir.join("99 Album").join("01 - Late.flac"), "").unwrap();
+        let cache_path = test_cache_path("deferred-incomplete-discovery");
+        let source = LocalFiles::new_with_album_discovery_limit_and_cache_path(
+            "Local".to_string(),
+            vec![LocalSource {
+                name: "Library".to_string(),
+                path: dir.clone(),
+            }],
+            3,
+            cache_path.clone(),
+        );
+
+        assert_eq!(source.get_albums(), vec!["Library (scanning...)"]);
+
+        reset_audio_file_discovery_scan_count();
+        let songs = source.get_songs_from_album(source.get_album_path(0).unwrap());
+
+        assert!(
+            songs.is_empty(),
+            "incomplete discovery placeholders should not synchronously open the full source"
+        );
+        assert_eq!(
+            audio_file_discovery_scan_count(),
+            0,
+            "opening a placeholder should not recursively walk the music folder"
+        );
 
         let _ = fs::remove_dir_all(dir);
         let _ = fs::remove_file(cache_path);

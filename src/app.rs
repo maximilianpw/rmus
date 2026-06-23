@@ -3135,7 +3135,8 @@ mod tests {
         playlist::PlaylistStore,
         sources::{
             local::{
-                album_discovery_scan_count, reset_album_discovery_scan_count,
+                album_discovery_scan_count, audio_file_discovery_scan_count,
+                reset_album_discovery_scan_count, reset_audio_file_discovery_scan_count,
                 reset_song_scan_count, song_scan_count,
             },
             song::{metadata_read_count, reset_metadata_read_count, Song},
@@ -3515,6 +3516,64 @@ mod tests {
         let cache = fs::read_to_string(&cache_path).unwrap();
         assert!(cache.contains("[[album_discoveries]]"));
         assert!(cache.contains("01 - Ready.flac"));
+
+        let _ = fs::remove_dir_all(dir);
+        let _ = fs::remove_dir_all(cache_dir);
+    }
+
+    #[test]
+    fn source_update_defers_deep_source_open_until_background_scan_finishes() {
+        let dir = temp_dir("deferred-deep-source-update");
+        for index in 0..(SOURCE_SAVE_ALBUM_DISCOVERY_DIRECTORIES + 8) {
+            fs::create_dir_all(dir.join(format!("Empty {index:03}"))).unwrap();
+        }
+        let album_dir = dir.join("Z Album");
+        fs::create_dir_all(&album_dir).unwrap();
+        fs::write(album_dir.join("01 - Late.flac"), "audio").unwrap();
+        let cache_dir = temp_dir("deferred-deep-source-update-cache");
+        let cache_path = cache_dir.join("cache.toml");
+        let mut app = App::new_for_test(default_config(), None, None);
+        app.local_cache_path = cache_path.clone();
+        app.running = true;
+
+        app.settings_panel.toggle_open();
+        app.settings_panel.handle_events(key(KeyCode::Char('a')));
+        for c in "Library".chars() {
+            app.settings_panel.handle_events(key(KeyCode::Char(c)));
+        }
+        app.settings_panel.handle_events(key(KeyCode::Tab));
+        for c in dir.to_string_lossy().chars() {
+            app.settings_panel.handle_events(key(KeyCode::Char(c)));
+        }
+        app.settings_panel.handle_events(key(KeyCode::Enter));
+        app.sync_config_from_settings();
+
+        assert_eq!(app.left_panel.active_tab_name(), "Local");
+        assert_eq!(
+            app.left_panel.selected_item_label().as_deref(),
+            Some("Library (scanning...)")
+        );
+        assert!(app.local_scan_result.is_some());
+
+        reset_audio_file_discovery_scan_count();
+        app.execute(Action::SelectAlbum);
+
+        assert!(app.center_panel.get_songs().is_empty());
+        assert_eq!(
+            audio_file_discovery_scan_count(),
+            0,
+            "opening the pending source should not recursively walk the whole library"
+        );
+
+        wait_for_local_scan(&mut app);
+
+        assert_eq!(
+            app.left_panel.selected_item_label().as_deref(),
+            Some("Z Album")
+        );
+        app.execute(Action::SelectAlbum);
+        assert_eq!(app.center_panel.get_songs().len(), 1);
+        assert_eq!(app.center_panel.get_songs()[0].title, "01 - Late.flac");
 
         let _ = fs::remove_dir_all(dir);
         let _ = fs::remove_dir_all(cache_dir);
