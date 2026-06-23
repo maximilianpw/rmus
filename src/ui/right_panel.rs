@@ -28,6 +28,13 @@ impl RightPanel {
         self.playback_info = info;
     }
 
+    pub(crate) fn layout_areas(area: Rect) -> (Rect, Rect) {
+        let layout = Layout::vertical([Constraint::Fill(PLAYING_FILL), Constraint::Fill(1)]);
+        let [playing_area, log_area] = layout.areas(area);
+
+        (playing_area, log_area)
+    }
+
     pub fn render_with_focus(
         &mut self,
         frame: &mut Frame,
@@ -35,8 +42,7 @@ impl RightPanel {
         playback_focused: bool,
         logs_focused: bool,
     ) {
-        let layout = Layout::vertical([Constraint::Fill(PLAYING_FILL), Constraint::Fill(1)]);
-        let [playing_area, log_area] = layout.areas(area);
+        let (playing_area, log_area) = Self::layout_areas(area);
 
         self.log_panel.poll();
 

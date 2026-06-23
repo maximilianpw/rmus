@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use crossterm::event::{
-    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEventKind,
+    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
 };
 
 use crate::app::App;
@@ -32,6 +32,8 @@ pub fn handle_crossterm_events(app: &mut App) -> color_eyre::Result<()> {
             Event::Mouse(mouse) => {
                 if let Some(key) = mouse_scroll_key(mouse.kind) {
                     app.delegate_scroll_at(mouse.column, mouse.row, key);
+                } else if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+                    app.focus_at(mouse.column, mouse.row);
                 }
             }
             _ => {}

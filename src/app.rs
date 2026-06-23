@@ -72,7 +72,8 @@ impl FocusedWindow {
 struct PanelLayout {
     left: Rect,
     center: Rect,
-    right: Rect,
+    playback: Rect,
+    logs: Rect,
 }
 
 fn rect_contains(rect: Rect, column: u16, row: u16) -> bool {
@@ -1681,6 +1682,17 @@ impl App {
         self.delegate_key_to_window(target, key);
     }
 
+    pub(crate) fn focus_at(&mut self, column: u16, row: u16) {
+        if self.settings_panel.opened {
+            self.focused_window = FocusedWindow::Settings;
+            return;
+        }
+
+        if let Some(target) = self.focused_window_at(column, row) {
+            self.focused_window = target;
+        }
+    }
+
     fn delegate_key_to_window(&mut self, window: FocusedWindow, key: KeyEvent) {
         match window {
             FocusedWindow::Left => self.left_panel.handle_events(key),
@@ -1696,7 +1708,9 @@ impl App {
             Some(FocusedWindow::Left)
         } else if rect_contains(self.last_panel_layout.center, column, row) {
             Some(FocusedWindow::Center)
-        } else if rect_contains(self.last_panel_layout.right, column, row) {
+        } else if rect_contains(self.last_panel_layout.playback, column, row) {
+            Some(FocusedWindow::Right)
+        } else if rect_contains(self.last_panel_layout.logs, column, row) {
             Some(FocusedWindow::Logs)
         } else {
             None
@@ -2581,10 +2595,12 @@ impl App {
             Constraint::Fill(1),
         ]);
         let [left_area, center_area, right_area] = layout.areas(area);
+        let (playback_area, logs_area) = RightPanel::layout_areas(right_area);
         self.last_panel_layout = PanelLayout {
             left: left_area,
             center: center_area,
-            right: right_area,
+            playback: playback_area,
+            logs: logs_area,
         };
 
         self.left_panel
@@ -3229,6 +3245,26 @@ mod tests {
         assert_eq!(app.focused_window, FocusedWindow::Center);
 
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn mouse_click_focuses_panel_under_pointer() {
+        let mut app = App::new_for_test(default_config(), None, None);
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+
+        app.focus_at(30, 5);
+        assert_eq!(app.focused_window, FocusedWindow::Center);
+
+        app.focus_at(100, 5);
+        assert_eq!(app.focused_window, FocusedWindow::Right);
+
+        app.focus_at(100, 25);
+        assert_eq!(app.focused_window, FocusedWindow::Logs);
+
+        app.focus_at(1, 5);
+        assert_eq!(app.focused_window, FocusedWindow::Left);
     }
 
     #[test]
