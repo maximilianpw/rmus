@@ -120,7 +120,7 @@ pub struct App {
     config: Config,
     logger: Logger,
     local_scan_result: Option<Receiver<Result<usize, String>>>,
-    local_scan_cache_path: PathBuf,
+    local_cache_path: PathBuf,
     /// Which service has a pending auth flow.
     pending_auth_service: Option<StreamingServiceId>,
     deferred_search: Option<String>,
@@ -140,8 +140,13 @@ impl App {
         let history_store = HistoryStore::default();
         let queue_store = QueueStore::default();
         let restored_queue = queue_store.load();
-        let sources =
-            Self::sources_for_config(&config, playlist_store.clone(), LocalDiscoveryMode::Cached);
+        let local_cache_path = LocalTrackCache::default_path();
+        let sources = Self::sources_for_config(
+            &config,
+            playlist_store.clone(),
+            LocalDiscoveryMode::Cached,
+            &local_cache_path,
+        );
         let (log_panel, logger) = LogPanel::new();
         logger.debug(format!("{something}", something = config));
 
@@ -204,7 +209,7 @@ impl App {
             config,
             logger,
             local_scan_result: None,
-            local_scan_cache_path: LocalTrackCache::default_path(),
+            local_cache_path,
             pending_auth_service: None,
             deferred_search: None,
             last_player_poll_error: None,
@@ -325,8 +330,13 @@ impl App {
         queue_store: QueueStore,
         mut player: Box<dyn MusicPlayer>,
     ) -> Self {
-        let sources =
-            Self::sources_for_config(&config, playlist_store.clone(), LocalDiscoveryMode::Cached);
+        let local_cache_path = Self::test_local_cache_path();
+        let sources = Self::sources_for_config(
+            &config,
+            playlist_store.clone(),
+            LocalDiscoveryMode::Cached,
+            &local_cache_path,
+        );
         let (log_panel, logger) = LogPanel::new();
         let streaming = StreamingCoordinator::new(qobuz, tidal);
         let playback_history = history_store.load();
@@ -361,7 +371,7 @@ impl App {
             config,
             logger,
             local_scan_result: None,
-            local_scan_cache_path: Self::test_local_cache_path(),
+            local_cache_path,
             pending_auth_service: None,
             deferred_search: None,
             last_player_poll_error: None,
@@ -378,16 +388,26 @@ impl App {
         config: &Config,
         playlist_store: PlaylistStore,
         local_discovery: LocalDiscoveryMode,
+        local_cache_path: &Path,
     ) -> Vec<Box<dyn MusicSource>> {
         let local_sources: Vec<LocalSource> = config.get_local_sources();
         let local: Box<dyn MusicSource> = match local_discovery {
-            LocalDiscoveryMode::Cached => LocalFiles::new("Local".to_string(), local_sources),
-            LocalDiscoveryMode::Fresh => LocalFiles::new_fresh("Local".to_string(), local_sources),
+            LocalDiscoveryMode::Cached => LocalFiles::new_with_cache_path(
+                "Local".to_string(),
+                local_sources,
+                local_cache_path.to_path_buf(),
+            ),
+            LocalDiscoveryMode::Fresh => LocalFiles::new_fresh_with_cache_path(
+                "Local".to_string(),
+                local_sources,
+                local_cache_path.to_path_buf(),
+            ),
             LocalDiscoveryMode::Bounded(max_directories) => {
-                LocalFiles::new_with_album_discovery_limit(
+                LocalFiles::new_with_album_discovery_limit_and_cache_path(
                     "Local".to_string(),
                     local_sources,
                     max_directories,
+                    local_cache_path.to_path_buf(),
                 )
             }
         };
@@ -1891,8 +1911,12 @@ impl App {
 
     fn rebuild_left_panel_with_local_discovery(&mut self, local_discovery: LocalDiscoveryMode) {
         let active_tab = self.left_panel.active_tab_name();
-        let sources =
-            Self::sources_for_config(&self.config, self.playlist_store.clone(), local_discovery);
+        let sources = Self::sources_for_config(
+            &self.config,
+            self.playlist_store.clone(),
+            local_discovery,
+            &self.local_cache_path,
+        );
         let mut left_panel = LeftPanel::new(sources, self.logger.clone());
         left_panel.select_tab_by_name(&active_tab);
         self.left_panel = left_panel;
@@ -1912,7 +1936,7 @@ impl App {
             return;
         }
 
-        let cache_path = self.local_scan_cache_path.clone();
+        let cache_path = self.local_cache_path.clone();
         let source_count = sources.len();
         let source_label = if source_count == 1 {
             "1 local source".to_string()
@@ -1938,6 +1962,13 @@ impl App {
 
         match receiver.try_recv() {
             Ok(Ok(track_count)) => {
+                self.rebuild_left_panel();
+                let refreshed_local_library = self.refresh_open_local_library();
+                let refreshed_local_album =
+                    !refreshed_local_library && self.refresh_open_local_album();
+                if !refreshed_local_library && !refreshed_local_album {
+                    self.clear_stale_open_local_album();
+                }
                 self.logger.info(format!(
                     "Scanned {} into local cache",
                     track_count_label(track_count)
@@ -1973,9 +2004,11 @@ impl App {
             return false;
         };
 
-        let Some((refreshed_path, title, songs)) =
-            LocalFiles::album_for_path(&self.config.local.sources, &open_path)
-        else {
+        let Some((refreshed_path, title, songs)) = LocalFiles::album_for_path_with_cache_path(
+            &self.config.local.sources,
+            &open_path,
+            self.local_cache_path.clone(),
+        ) else {
             return false;
         };
 
@@ -2002,7 +2035,13 @@ impl App {
         if !self.open_path_belongs_to_local_source(&open_path) {
             return;
         }
-        if LocalFiles::album_for_path(&self.config.local.sources, &open_path).is_some() {
+        if LocalFiles::album_for_path_with_cache_path(
+            &self.config.local.sources,
+            &open_path,
+            self.local_cache_path.clone(),
+        )
+        .is_some()
+        {
             return;
         }
 
@@ -2075,7 +2114,12 @@ impl App {
         self.config
             .get_local_sources()
             .into_iter()
-            .flat_map(|source| LocalFiles::songs_from_path_using_cached_metadata(source.path))
+            .flat_map(|source| {
+                LocalFiles::songs_from_path_using_cached_metadata_with_cache_path(
+                    source.path,
+                    self.local_cache_path.clone(),
+                )
+            })
             .collect()
     }
 
@@ -3021,7 +3065,7 @@ mod tests {
     use ratatui::{backend::TestBackend, Terminal};
     use std::{
         fs,
-        path::PathBuf,
+        path::{Path, PathBuf},
         thread,
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
@@ -3059,6 +3103,57 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("rmus-app-{name}-{nanos}"));
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    fn escaped_toml_string(value: &str) -> String {
+        value.replace('\\', "\\\\").replace('"', "\\\"")
+    }
+
+    fn write_album_discovery_cache(
+        cache_path: &PathBuf,
+        source: &LocalSource,
+        entry_name: &str,
+        entry_path: &Path,
+        scope: &str,
+    ) {
+        let modified = fs::metadata(&source.path)
+            .unwrap()
+            .modified()
+            .unwrap()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default();
+
+        fs::write(
+            cache_path,
+            format!(
+                r#"
+                    [[album_discoveries]]
+
+                    [[album_discoveries.sources]]
+                    name = "{}"
+                    path = "{}"
+
+                    [[album_discoveries.directories]]
+                    path = "{}"
+                    modified_secs = {}
+                    modified_nanos = {}
+
+                    [[album_discoveries.entries]]
+                    name = "{}"
+                    path = "{}"
+                    scope = "{}"
+                "#,
+                escaped_toml_string(&source.name),
+                escaped_toml_string(&source.path.to_string_lossy()),
+                escaped_toml_string(&source.path.to_string_lossy()),
+                modified.as_secs(),
+                modified.subsec_nanos(),
+                escaped_toml_string(entry_name),
+                escaped_toml_string(&entry_path.to_string_lossy()),
+                scope
+            ),
+        )
+        .unwrap();
     }
 
     fn wait_for_local_scan(app: &mut App) {
@@ -3411,14 +3506,15 @@ mod tests {
         fs::create_dir_all(dir.join("Album")).unwrap();
         fs::write(dir.join("Album").join("01 - First.flac"), "audio").unwrap();
         fs::write(dir.join("Album").join("02 - Second.flac"), "audio").unwrap();
-        let cache_path = dir.join("cache.toml");
+        let cache_dir = temp_dir("background-local-cache-cache");
+        let cache_path = cache_dir.join("cache.toml");
         let mut config = default_config();
         config.local.sources.push(LocalSource {
             name: "Library".to_string(),
             path: dir.clone(),
         });
         let mut app = App::new_for_test(config, None, None);
-        app.local_scan_cache_path = cache_path.clone();
+        app.local_cache_path = cache_path.clone();
 
         app.execute(Action::WarmLocalCache);
 
@@ -3439,6 +3535,43 @@ mod tests {
             .any(|message| message == &"Scanned 2 tracks into local cache"));
 
         let _ = fs::remove_dir_all(dir);
+        let _ = fs::remove_dir_all(cache_dir);
+    }
+
+    #[test]
+    fn warm_local_cache_refreshes_visible_local_album_list() {
+        let dir = temp_dir("background-local-cache-refresh");
+        let album_dir = dir.join("Fresh Album");
+        fs::create_dir_all(&album_dir).unwrap();
+        fs::write(album_dir.join("01 - First.flac"), "audio").unwrap();
+        let cache_dir = temp_dir("background-local-cache-refresh-cache");
+        let cache_path = cache_dir.join("cache.toml");
+        let source = LocalSource {
+            name: "Library".to_string(),
+            path: dir.clone(),
+        };
+        write_album_discovery_cache(&cache_path, &source, "Library", &dir, "recursive");
+        let mut config = default_config();
+        config.local.sources.push(source);
+        let mut app = App::new_for_test(config, None, None);
+        app.local_cache_path = cache_path.clone();
+        app.rebuild_left_panel();
+
+        assert_eq!(
+            app.left_panel.selected_item_label().as_deref(),
+            Some("Library")
+        );
+
+        app.execute(Action::WarmLocalCache);
+        wait_for_local_scan(&mut app);
+
+        assert_eq!(
+            app.left_panel.selected_item_label().as_deref(),
+            Some("Fresh Album")
+        );
+
+        let _ = fs::remove_dir_all(dir);
+        let _ = fs::remove_dir_all(cache_dir);
     }
 
     #[test]

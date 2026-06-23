@@ -20,6 +20,7 @@ use crate::{
 pub struct LocalFiles {
     pub name: String,
     pub files: Vec<LocalSource>,
+    cache_path: PathBuf,
     album_entries: Vec<LocalAlbumEntry>,
 }
 
@@ -325,8 +326,11 @@ fn discover_album_entries_uncached_with_budget(
     }
 }
 
-fn discover_album_entries(sources: &[LocalSource]) -> Vec<LocalAlbumEntry> {
-    let mut cache = LocalAlbumCache::default();
+fn discover_album_entries_with_cache_path(
+    sources: &[LocalSource],
+    cache_path: PathBuf,
+) -> Vec<LocalAlbumEntry> {
+    let mut cache = LocalAlbumCache::with_path(cache_path);
     discover_album_entries_with_cache(sources, &mut cache)
 }
 
@@ -370,9 +374,12 @@ fn discover_album_entries_with_cache_and_limit(
     result.entries
 }
 
-fn discover_album_entries_fresh(sources: &[LocalSource]) -> Vec<LocalAlbumEntry> {
+fn discover_album_entries_fresh_with_cache_path(
+    sources: &[LocalSource],
+    cache_path: PathBuf,
+) -> Vec<LocalAlbumEntry> {
     let result = discover_album_entries_uncached(sources);
-    let mut cache = LocalAlbumCache::default();
+    let mut cache = LocalAlbumCache::with_path(cache_path);
     if result.complete {
         let cached_entries: Vec<_> = result
             .entries
@@ -430,41 +437,67 @@ impl MusicSource for LocalFiles {
         self.album_entries
             .iter()
             .find(|entry| paths_equivalent(&entry.path, &path))
-            .map(Self::songs_for_entry)
-            .unwrap_or_else(|| Self::songs_from_path_using_cached_metadata(path))
+            .map(|entry| self.songs_for_entry(entry))
+            .unwrap_or_else(|| {
+                Self::songs_from_path_using_cached_metadata_with_cache_path(
+                    path,
+                    self.cache_path.clone(),
+                )
+            })
     }
 }
 
 impl LocalFiles {
     pub fn new(name: String, files: Vec<LocalSource>) -> Box<Self> {
-        let album_entries = discover_album_entries(&files);
+        Self::new_with_cache_path(name, files, LocalTrackCache::default_path())
+    }
+
+    pub(crate) fn new_with_cache_path(
+        name: String,
+        files: Vec<LocalSource>,
+        cache_path: PathBuf,
+    ) -> Box<Self> {
+        let album_entries = discover_album_entries_with_cache_path(&files, cache_path.clone());
         Box::new(LocalFiles {
             name,
             files,
+            cache_path,
             album_entries,
         })
     }
 
     pub fn new_fresh(name: String, files: Vec<LocalSource>) -> Box<Self> {
-        let album_entries = discover_album_entries_fresh(&files);
+        Self::new_fresh_with_cache_path(name, files, LocalTrackCache::default_path())
+    }
+
+    pub(crate) fn new_fresh_with_cache_path(
+        name: String,
+        files: Vec<LocalSource>,
+        cache_path: PathBuf,
+    ) -> Box<Self> {
+        let album_entries =
+            discover_album_entries_fresh_with_cache_path(&files, cache_path.clone());
         Box::new(LocalFiles {
             name,
             files,
+            cache_path,
             album_entries,
         })
     }
 
-    pub(crate) fn new_with_album_discovery_limit(
+    pub(crate) fn new_with_album_discovery_limit_and_cache_path(
         name: String,
         files: Vec<LocalSource>,
         max_directories: usize,
+        cache_path: PathBuf,
     ) -> Box<Self> {
-        let mut cache = LocalAlbumCache::default();
+        let mut cache = LocalAlbumCache::with_path(cache_path.clone());
         let album_entries =
             discover_album_entries_with_cache_and_limit(&files, &mut cache, Some(max_directories));
         Box::new(LocalFiles {
             name,
             files,
+            cache_path,
             album_entries,
         })
     }
@@ -479,6 +512,7 @@ impl LocalFiles {
         Box::new(LocalFiles {
             name,
             files,
+            cache_path: LocalTrackCache::default_path(),
             album_entries,
         })
     }
@@ -487,11 +521,19 @@ impl LocalFiles {
         sources: &[LocalSource],
         path: &Path,
     ) -> Option<(PathBuf, String, Vec<Song>)> {
-        discover_album_entries(sources)
+        Self::album_for_path_with_cache_path(sources, path, LocalTrackCache::default_path())
+    }
+
+    pub(crate) fn album_for_path_with_cache_path(
+        sources: &[LocalSource],
+        path: &Path,
+        cache_path: PathBuf,
+    ) -> Option<(PathBuf, String, Vec<Song>)> {
+        discover_album_entries_with_cache_path(sources, cache_path.clone())
             .into_iter()
             .find(|entry| paths_equivalent(&entry.path, path))
             .map(|entry| {
-                let songs = Self::songs_for_entry(&entry);
+                let songs = Self::songs_for_entry_with_cache_path(&entry, cache_path);
                 (entry.path, entry.name, songs)
             })
     }
@@ -503,9 +545,19 @@ impl LocalFiles {
     }
 
     pub fn songs_from_path_using_cached_metadata(path: PathBuf) -> Vec<Song> {
+        Self::songs_from_path_using_cached_metadata_with_cache_path(
+            path,
+            LocalTrackCache::default_path(),
+        )
+    }
+
+    pub(crate) fn songs_from_path_using_cached_metadata_with_cache_path(
+        path: PathBuf,
+        cache_path: PathBuf,
+    ) -> Vec<Song> {
         let mut files = Vec::new();
         collect_audio_files(&path, &mut files);
-        let cache = LocalTrackCache::default();
+        let cache = LocalTrackCache::with_path(cache_path);
         Self::songs_from_files_using_cached_metadata(files, &cache)
     }
 
@@ -543,20 +595,33 @@ impl LocalFiles {
         Ok(track_count)
     }
 
-    fn songs_directly_from_path_using_cached_metadata(path: PathBuf) -> Vec<Song> {
+    fn songs_directly_from_path_using_cached_metadata_with_cache_path(
+        path: PathBuf,
+        cache_path: PathBuf,
+    ) -> Vec<Song> {
         let mut files = Vec::new();
         collect_direct_audio_files(&path, &mut files);
-        let cache = LocalTrackCache::default();
+        let cache = LocalTrackCache::with_path(cache_path);
         Self::songs_from_files_using_cached_metadata(files, &cache)
     }
 
-    fn songs_for_entry(entry: &LocalAlbumEntry) -> Vec<Song> {
+    fn songs_for_entry(&self, entry: &LocalAlbumEntry) -> Vec<Song> {
+        Self::songs_for_entry_with_cache_path(entry, self.cache_path.clone())
+    }
+
+    fn songs_for_entry_with_cache_path(entry: &LocalAlbumEntry, cache_path: PathBuf) -> Vec<Song> {
         match entry.scope {
             LocalAlbumScope::Direct => {
-                Self::songs_directly_from_path_using_cached_metadata(entry.path.clone())
+                Self::songs_directly_from_path_using_cached_metadata_with_cache_path(
+                    entry.path.clone(),
+                    cache_path,
+                )
             }
             LocalAlbumScope::Recursive => {
-                Self::songs_from_path_using_cached_metadata(entry.path.clone())
+                Self::songs_from_path_using_cached_metadata_with_cache_path(
+                    entry.path.clone(),
+                    cache_path,
+                )
             }
         }
     }
@@ -1056,6 +1121,7 @@ mod tests {
         let source = LocalFiles {
             name: "Local".to_string(),
             files: Vec::new(),
+            cache_path: LocalTrackCache::default_path(),
             album_entries: Vec::new(),
         };
 
