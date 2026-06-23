@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -116,6 +116,21 @@ fn fake_mpv_bin_dir(name: &str) -> PathBuf {
     dir
 }
 
+fn find_file_named(root: &Path, file_name: &str) -> Option<PathBuf> {
+    for entry in std::fs::read_dir(root).ok()?.filter_map(|entry| entry.ok()) {
+        let path = entry.path();
+        if path.file_name().and_then(|name| name.to_str()) == Some(file_name) {
+            return Some(path);
+        }
+        if path.is_dir() {
+            if let Some(found) = find_file_named(&path, file_name) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
 #[test]
 fn test_cli_version_prints_without_launching_tui() {
     let output = rmus_binary()
@@ -143,7 +158,54 @@ fn test_cli_help_prints_without_launching_tui() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("keyboard-driven terminal music player"));
     assert!(stdout.contains("doctor"));
+    assert!(stdout.contains("import-playlist"));
     assert!(stdout.contains("--version"));
+}
+
+#[test]
+fn test_cli_import_playlist_writes_rmus_playlist() {
+    let state_dir = test_dir("cli-import-playlist");
+    let music_dir = state_dir.join("music");
+    std::fs::create_dir_all(&music_dir).unwrap();
+    std::fs::write(music_dir.join("song.flac"), "not real audio").unwrap();
+    let m3u = music_dir.join("mix.m3u");
+    std::fs::write(
+        &m3u,
+        "\
+#EXTM3U
+#EXTINF:245,Artist - Song
+song.flac
+",
+    )
+    .unwrap();
+
+    let output = rmus_binary()
+        .args(["import-playlist", m3u.to_str().unwrap(), "Imported Mix"])
+        .env("HOME", &state_dir)
+        .env("XDG_CONFIG_HOME", state_dir.join("xdg-config"))
+        .env("APPDATA", state_dir.join("appdata"))
+        .env("LOCALAPPDATA", state_dir.join("localappdata"))
+        .current_dir(&state_dir)
+        .output()
+        .expect("rmus import-playlist should run");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Imported 1 track into playlist 'Imported Mix'"));
+
+    let playlist_path = find_file_named(&state_dir, "Imported Mix.toml")
+        .expect("import should create a playlist file under the isolated state dir");
+    let playlist = std::fs::read_to_string(playlist_path).unwrap();
+    assert!(playlist.contains("name = \"Imported Mix\""));
+    assert!(playlist.contains("title = \"Artist - Song\""));
+    assert!(playlist.contains("duration_secs = 245.0"));
+    assert!(playlist.contains(&format!(
+        "path = \"{}\"",
+        music_dir.join("song.flac").to_string_lossy()
+    )));
+
+    let _ = std::fs::remove_dir_all(state_dir);
 }
 
 #[test]

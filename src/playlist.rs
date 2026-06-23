@@ -64,9 +64,34 @@ pub struct PlaylistRemoveSummary {
     pub existed: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlaylistImportSummary {
+    pub playlist_name: String,
+    pub imported_count: usize,
+    pub skipped_count: usize,
+}
+
 impl PlaylistSummary {
     pub fn display_title(&self) -> String {
         format!("{} ({})", self.name, track_count_label(self.track_count))
+    }
+}
+
+impl PlaylistImportSummary {
+    pub fn message(&self) -> String {
+        match self.skipped_count {
+            0 => format!(
+                "Imported {} into playlist '{}'",
+                track_count_label(self.imported_count),
+                self.playlist_name
+            ),
+            skipped => format!(
+                "Imported {} into playlist '{}' (skipped {})",
+                track_count_label(self.imported_count),
+                self.playlist_name,
+                track_count_label(skipped)
+            ),
+        }
     }
 }
 
@@ -330,6 +355,44 @@ impl PlaylistStore {
         }
 
         Playlist::new(name).create_in_dir(&self.dir)
+    }
+
+    pub fn import_m3u(
+        &self,
+        path: &Path,
+        name_override: Option<&str>,
+    ) -> Result<PlaylistImportSummary, std::io::Error> {
+        let name = playlist_name_for_import(path, name_override)?;
+        if self
+            .load_all()
+            .iter()
+            .any(|playlist| playlist.name.eq_ignore_ascii_case(&name))
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                format!("Playlist '{}' already exists", name),
+            ));
+        }
+
+        let imported = parse_m3u(path)?;
+        if imported.songs.is_empty() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "M3U playlist did not contain any local tracks",
+            ));
+        }
+
+        let playlist = Playlist {
+            name: name.clone(),
+            tracks: imported.songs.iter().map(track_from_song).collect(),
+        };
+        playlist.create_in_dir(&self.dir)?;
+
+        Ok(PlaylistImportSummary {
+            playlist_name: name,
+            imported_count: imported.songs.len(),
+            skipped_count: imported.skipped_count,
+        })
     }
 
     pub fn rename_at(
@@ -656,6 +719,140 @@ impl PlaylistStore {
     }
 }
 
+#[derive(Debug, Default)]
+struct ImportedM3u {
+    songs: Vec<Song>,
+    skipped_count: usize,
+}
+
+#[derive(Debug, Default)]
+struct ExtInf {
+    title: Option<String>,
+    duration_secs: Option<f64>,
+}
+
+fn playlist_name_for_import(
+    path: &Path,
+    name_override: Option<&str>,
+) -> Result<String, std::io::Error> {
+    let name = name_override
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| {
+            path.file_stem()
+                .and_then(|stem| stem.to_str())
+                .map(str::trim)
+                .filter(|stem| !stem.is_empty())
+                .map(ToString::to_string)
+        })
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Playlist name is required",
+            )
+        })?;
+
+    Ok(name)
+}
+
+fn parse_m3u(path: &Path) -> Result<ImportedM3u, std::io::Error> {
+    let bytes = fs::read(path)?;
+    let content = String::from_utf8_lossy(&bytes);
+    let base_dir = path.parent().unwrap_or_else(|| Path::new(""));
+    let mut imported = ImportedM3u::default();
+    let mut pending_extinf = ExtInf::default();
+
+    for raw_line in content.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        if let Some(extinf) = parse_extinf(line) {
+            pending_extinf = extinf;
+            continue;
+        }
+
+        if line.starts_with('#') {
+            continue;
+        }
+
+        if is_m3u_url(line) {
+            imported.skipped_count += 1;
+            pending_extinf = ExtInf::default();
+            continue;
+        }
+
+        let track_path = resolve_m3u_track_path(base_dir, line);
+        let title = pending_extinf
+            .title
+            .take()
+            .unwrap_or_else(|| title_from_path(&track_path));
+        let duration_secs = pending_extinf.duration_secs.take();
+        imported.songs.push(Song {
+            title,
+            path: track_path,
+            duration_secs,
+            ..Default::default()
+        });
+    }
+
+    Ok(imported)
+}
+
+fn parse_extinf(line: &str) -> Option<ExtInf> {
+    let extinf_prefix = "#EXTINF:";
+    if !line
+        .get(..extinf_prefix.len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(extinf_prefix))
+    {
+        return None;
+    }
+
+    let body = &line[extinf_prefix.len()..];
+    let (duration_text, title_text) = body.split_once(',').unwrap_or((body, ""));
+    let duration_secs = duration_text
+        .split_whitespace()
+        .next()
+        .and_then(|value| value.parse::<f64>().ok())
+        .filter(|duration| duration.is_finite() && *duration > 0.0);
+    let title = match title_text.trim() {
+        "" => None,
+        title => Some(title.to_string()),
+    };
+
+    Some(ExtInf {
+        title,
+        duration_secs,
+    })
+}
+
+fn is_m3u_url(value: &str) -> bool {
+    value
+        .get(..8)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("https://"))
+        || value
+            .get(..7)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("http://"))
+}
+
+fn resolve_m3u_track_path(base_dir: &Path, value: &str) -> PathBuf {
+    let path = PathBuf::from(value);
+    if path.is_absolute() {
+        path
+    } else {
+        base_dir.join(path)
+    }
+}
+
+fn title_from_path(path: &Path) -> String {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| path.to_string_lossy().into_owned())
+}
+
 impl PlaylistSource {
     pub fn new() -> Self {
         Self::with_store(PlaylistStore::default())
@@ -839,6 +1036,76 @@ mod tests {
             loaded[0].tracks[0].path.as_deref(),
             Some("/music/track.flac")
         );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn store_imports_local_m3u_playlist() {
+        let dir = test_dir("import-m3u");
+        fs::create_dir_all(dir.join("tracks")).unwrap();
+        let playlist_file = dir.join("Road.m3u");
+        fs::write(
+            &playlist_file,
+            "\
+#EXTM3U
+#EXTINF:123,Artist - First
+tracks/first.flac
+https://example.com/stream.flac
+/absolute/second.mp3
+",
+        )
+        .unwrap();
+        let store = PlaylistStore::with_dir(dir.join("playlists"));
+
+        let summary = store.import_m3u(&playlist_file, None).unwrap();
+
+        assert_eq!(
+            summary,
+            PlaylistImportSummary {
+                playlist_name: "Road".to_string(),
+                imported_count: 2,
+                skipped_count: 1,
+            }
+        );
+        let loaded = store.load_all();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].name, "Road");
+        assert_eq!(loaded[0].tracks.len(), 2);
+        assert_eq!(loaded[0].tracks[0].title, "Artist - First");
+        assert_eq!(loaded[0].tracks[0].duration_secs, Some(123.0));
+        let relative_track = dir.join("tracks/first.flac").to_string_lossy().into_owned();
+        assert_eq!(
+            loaded[0].tracks[0].path.as_deref(),
+            Some(relative_track.as_str())
+        );
+        assert_eq!(loaded[0].tracks[1].title, "second.mp3");
+        assert_eq!(
+            loaded[0].tracks[1].path.as_deref(),
+            Some("/absolute/second.mp3")
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn store_imports_m3u_with_custom_name_without_overwriting() {
+        let dir = test_dir("import-m3u-custom-name");
+        let playlist_file = dir.join("source.m3u8");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(&playlist_file, "track.flac\n").unwrap();
+        let store = PlaylistStore::with_dir(dir.join("playlists"));
+
+        let summary = store
+            .import_m3u(&playlist_file, Some("Imported Mix"))
+            .unwrap();
+
+        assert_eq!(summary.playlist_name, "Imported Mix");
+        assert_eq!(store.load_all()[0].name, "Imported Mix");
+        let error = store
+            .import_m3u(&playlist_file, Some("imported mix"))
+            .expect_err("duplicate playlist names should be rejected");
+        assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
 
         let _ = fs::remove_dir_all(dir);
     }

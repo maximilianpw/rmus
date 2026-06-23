@@ -9,16 +9,17 @@ use crate::{
     config::{config_path, Config},
     history::HistoryStore,
     local_cache::LocalTrackCache,
-    playlist::PlaylistStore,
+    playlist::{PlaylistImportSummary, PlaylistStore},
     queue::QueueStore,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CliAction {
     Run,
     Help,
     Version,
     Doctor,
+    ImportPlaylist { path: PathBuf, name: Option<String> },
 }
 
 pub fn parse_args<I, S>(args: I) -> Result<CliAction, String>
@@ -32,20 +33,52 @@ where
     let Some(first) = args.next().map(Into::into) else {
         return Ok(CliAction::Run);
     };
+    let args = args.map(Into::into);
 
+    match first.as_str() {
+        "-h" | "--help" => no_more_args(args, CliAction::Help, &first),
+        "-V" | "--version" => no_more_args(args, CliAction::Version, &first),
+        "doctor" => no_more_args(args, CliAction::Doctor, &first),
+        "import-playlist" => parse_import_playlist_args(args),
+        _ => Err(format!("unknown argument '{first}'\n\n{}", help_text())),
+    }
+}
+
+fn no_more_args<I>(mut args: I, action: CliAction, first: &str) -> Result<CliAction, String>
+where
+    I: Iterator<Item = String>,
+{
     if args.next().is_some() {
         return Err(format!(
             "unexpected argument after '{first}'\n\n{}",
             help_text()
         ));
     }
+    Ok(action)
+}
 
-    match first.as_str() {
-        "-h" | "--help" => Ok(CliAction::Help),
-        "-V" | "--version" => Ok(CliAction::Version),
-        "doctor" => Ok(CliAction::Doctor),
-        _ => Err(format!("unknown argument '{first}'\n\n{}", help_text())),
+fn parse_import_playlist_args<I>(mut args: I) -> Result<CliAction, String>
+where
+    I: Iterator<Item = String>,
+{
+    let Some(path) = args.next() else {
+        return Err(format!(
+            "missing path for import-playlist\n\n{}",
+            help_text()
+        ));
+    };
+    let name = args.next();
+    if args.next().is_some() {
+        return Err(format!(
+            "unexpected argument after playlist name\n\n{}",
+            help_text()
+        ));
     }
+
+    Ok(CliAction::ImportPlaylist {
+        path: PathBuf::from(path),
+        name,
+    })
 }
 
 pub fn version_text() -> String {
@@ -61,11 +94,20 @@ pub fn help_text() -> &'static str {
         "\n",
         "Commands:\n",
         "  doctor          Check runtime dependencies and app paths\n",
+        "  import-playlist <PATH> [NAME]\n",
+        "                  Import a local .m3u/.m3u8 playlist\n",
         "\n",
         "Options:\n",
         "  -h, --help       Print help\n",
         "  -V, --version    Print version\n"
     )
+}
+
+pub fn import_playlist(
+    path: &Path,
+    name: Option<&str>,
+) -> Result<PlaylistImportSummary, std::io::Error> {
+    PlaylistStore::default().import_m3u(path, name)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -420,6 +462,32 @@ mod tests {
     #[test]
     fn doctor_command_runs_diagnostics() {
         assert_eq!(parse_args(["rmus", "doctor"]), Ok(CliAction::Doctor));
+    }
+
+    #[test]
+    fn import_playlist_command_accepts_path_and_optional_name() {
+        assert_eq!(
+            parse_args(["rmus", "import-playlist", "/music/mix.m3u"]),
+            Ok(CliAction::ImportPlaylist {
+                path: PathBuf::from("/music/mix.m3u"),
+                name: None,
+            })
+        );
+        assert_eq!(
+            parse_args(["rmus", "import-playlist", "/music/mix.m3u", "Road Mix"]),
+            Ok(CliAction::ImportPlaylist {
+                path: PathBuf::from("/music/mix.m3u"),
+                name: Some("Road Mix".to_string()),
+            })
+        );
+    }
+
+    #[test]
+    fn import_playlist_command_requires_path() {
+        let error = parse_args(["rmus", "import-playlist"]).expect_err("path should be required");
+
+        assert!(error.contains("missing path for import-playlist"));
+        assert!(error.contains("Usage:"));
     }
 
     #[test]
