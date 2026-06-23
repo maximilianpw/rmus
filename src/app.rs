@@ -37,7 +37,7 @@ use crate::{
         log_panel::{LogPanel, Logger},
         right_panel::RightPanel,
         settings::settings_panel::SettingsPanel,
-        AppPanel,
+        theme, AppPanel,
     },
     utils::track_count_label,
 };
@@ -2527,12 +2527,15 @@ impl App {
     }
 
     pub fn render(&mut self, frame: &mut Frame) {
+        let area = frame.area();
+        frame.buffer_mut().set_style(area, theme::default_style());
+
         let layout = Layout::horizontal([
             Constraint::Fill(1),
             Constraint::Percentage(60),
             Constraint::Fill(1),
         ]);
-        let [left_area, center_area, right_area] = layout.areas(frame.area());
+        let [left_area, center_area, right_area] = layout.areas(area);
 
         self.left_panel
             .render(frame, left_area, self.focused_window == FocusedWindow::Left);
@@ -2546,11 +2549,8 @@ impl App {
             right_area,
             self.focused_window == FocusedWindow::Right,
         );
-        self.settings_panel.render(
-            frame,
-            frame.area(),
-            self.focused_window == FocusedWindow::Settings,
-        );
+        self.settings_panel
+            .render(frame, area, self.focused_window == FocusedWindow::Settings);
     }
 
     pub(crate) fn quit(&mut self) {

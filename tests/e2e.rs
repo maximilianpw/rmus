@@ -886,7 +886,9 @@ fn test_app_renders_without_panic() {
     let mut app = make_app(None, None);
     let backend = TestBackend::new(80, 24);
     let mut terminal = Terminal::new(backend).unwrap();
-    terminal.draw(|frame| app.render(frame)).unwrap();
+    let frame = terminal.draw(|frame| app.render(frame)).unwrap();
+
+    assert_eq!(frame.buffer.cell((0, 0)).unwrap().bg, theme::BACKGROUND);
 }
 
 #[test]
