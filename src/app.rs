@@ -1,6 +1,6 @@
 use crossterm::event::KeyEvent;
 use ratatui::{
-    layout::{Constraint, Layout},
+    layout::{Constraint, Layout, Rect},
     DefaultTerminal, Frame,
 };
 use std::{
@@ -68,6 +68,20 @@ impl FocusedWindow {
     }
 }
 
+#[derive(Debug, Default, Clone, Copy)]
+struct PanelLayout {
+    left: Rect,
+    center: Rect,
+    right: Rect,
+}
+
+fn rect_contains(rect: Rect, column: u16, row: u16) -> bool {
+    column >= rect.x
+        && column < rect.x.saturating_add(rect.width)
+        && row >= rect.y
+        && row < rect.y.saturating_add(rect.height)
+}
+
 pub struct App {
     pub running: bool,
     pub focused_window: FocusedWindow,
@@ -103,6 +117,7 @@ pub struct App {
     playback_history: Vec<Song>,
     last_saved_queue_len: usize,
     last_saved_queue_position: usize,
+    last_panel_layout: PanelLayout,
 }
 
 impl App {
@@ -181,6 +196,7 @@ impl App {
             muted_volume_before_zero: None,
             last_saved_queue_len,
             last_saved_queue_position,
+            last_panel_layout: PanelLayout::default(),
         }
     }
 
@@ -324,6 +340,7 @@ impl App {
             playback_history,
             last_saved_queue_len,
             last_saved_queue_position,
+            last_panel_layout: PanelLayout::default(),
         }
     }
 
@@ -1649,12 +1666,40 @@ impl App {
             }
             return;
         }
-        match self.focused_window {
+        self.delegate_key_to_window(self.focused_window, key);
+    }
+
+    pub(crate) fn delegate_scroll_at(&mut self, column: u16, row: u16, key: KeyEvent) {
+        if self.settings_panel.opened {
+            self.delegate_key_to_panel(key);
+            return;
+        }
+
+        let target = self
+            .focused_window_at(column, row)
+            .unwrap_or(self.focused_window);
+        self.delegate_key_to_window(target, key);
+    }
+
+    fn delegate_key_to_window(&mut self, window: FocusedWindow, key: KeyEvent) {
+        match window {
             FocusedWindow::Left => self.left_panel.handle_events(key),
             FocusedWindow::Center => self.center_panel.handle_events(key),
             FocusedWindow::Logs => self.right_panel.log_panel.handle_events(key),
             FocusedWindow::Settings => self.settings_panel.handle_events(key),
             _ => {}
+        }
+    }
+
+    fn focused_window_at(&self, column: u16, row: u16) -> Option<FocusedWindow> {
+        if rect_contains(self.last_panel_layout.left, column, row) {
+            Some(FocusedWindow::Left)
+        } else if rect_contains(self.last_panel_layout.center, column, row) {
+            Some(FocusedWindow::Center)
+        } else if rect_contains(self.last_panel_layout.right, column, row) {
+            Some(FocusedWindow::Logs)
+        } else {
+            None
         }
     }
 
@@ -2536,6 +2581,11 @@ impl App {
             Constraint::Fill(1),
         ]);
         let [left_area, center_area, right_area] = layout.areas(area);
+        self.last_panel_layout = PanelLayout {
+            left: left_area,
+            center: center_area,
+            right: right_area,
+        };
 
         self.left_panel
             .render(frame, left_area, self.focused_window == FocusedWindow::Left);
@@ -2849,6 +2899,7 @@ impl Default for App {
 #[cfg(test)]
 mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use ratatui::{backend::TestBackend, Terminal};
     use std::{
         fs,
         path::PathBuf,
@@ -3139,6 +3190,40 @@ mod tests {
             metadata_read_count(),
             0,
             "opening all-local search should use cached metadata and filename fallback without parsing every uncached file"
+        );
+        assert_eq!(app.focused_window, FocusedWindow::Center);
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn mouse_scroll_targets_panel_under_pointer_without_changing_focus() {
+        let dir = temp_dir("mouse-scroll-targets-left-panel");
+        fs::create_dir_all(dir.join("Alpha")).unwrap();
+        fs::create_dir_all(dir.join("Beta")).unwrap();
+        fs::write(dir.join("Alpha").join("01 - Alpha.flac"), "").unwrap();
+        fs::write(dir.join("Beta").join("01 - Beta.flac"), "").unwrap();
+        let mut config = default_config();
+        config.local.sources.push(LocalSource {
+            name: "Library".to_string(),
+            path: dir.clone(),
+        });
+        let mut app = App::new_for_test(config, None, None);
+        app.focused_window = FocusedWindow::Center;
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+
+        assert_eq!(
+            app.left_panel.selected_item_label().as_deref(),
+            Some("Alpha")
+        );
+
+        app.delegate_scroll_at(1, 5, key(KeyCode::Down));
+
+        assert_eq!(
+            app.left_panel.selected_item_label().as_deref(),
+            Some("Beta")
         );
         assert_eq!(app.focused_window, FocusedWindow::Center);
 

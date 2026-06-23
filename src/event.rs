@@ -31,7 +31,7 @@ pub fn handle_crossterm_events(app: &mut App) -> color_eyre::Result<()> {
             }
             Event::Mouse(mouse) => {
                 if let Some(key) = mouse_scroll_key(mouse.kind) {
-                    app.delegate_key_to_panel(key);
+                    app.delegate_scroll_at(mouse.column, mouse.row, key);
                 }
             }
             _ => {}
