@@ -60,10 +60,13 @@ The local-stats command counts configured local sources, missing source folders,
 ## Import Playlists
 
 ```sh
+rmus list-playlists
 rmus import-playlist ~/Music/Mix.m3u
 rmus import-playlist ~/Music/Mix.m3u "Road Mix"
 rmus export-playlist "Road Mix" ~/Music/Road-Mix.m3u8
 ```
+
+The list-playlists command prints saved playlists with track counts.
 
 The import command creates a new rmus playlist from local file entries in `.m3u` or `.m3u8` files. Relative entries are resolved from the playlist file's folder, `#EXTINF` titles and durations are preserved when present, and URL entries are skipped.
 

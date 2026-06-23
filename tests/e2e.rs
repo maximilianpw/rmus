@@ -140,17 +140,26 @@ fn state_env(command: &mut Command, state_dir: &Path) {
         .current_dir(state_dir);
 }
 
-fn isolated_config_path(state_dir: &Path) -> PathBuf {
+fn isolated_storage_path(state_dir: &Path, label: &str) -> PathBuf {
     let mut command = rmus_binary();
     state_env(command.arg("paths"), state_dir);
     let output = command.output().expect("rmus paths should run");
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
+    let prefix = format!("{label}: ");
     stdout
         .lines()
-        .find_map(|line| line.strip_prefix("config: "))
+        .find_map(|line| line.strip_prefix(&prefix))
         .map(PathBuf::from)
-        .expect("rmus paths should print config path")
+        .unwrap_or_else(|| panic!("rmus paths should print {label} path"))
+}
+
+fn isolated_config_path(state_dir: &Path) -> PathBuf {
+    isolated_storage_path(state_dir, "config")
+}
+
+fn isolated_playlists_dir(state_dir: &Path) -> PathBuf {
+    isolated_storage_path(state_dir, "playlists")
 }
 
 #[test]
@@ -182,6 +191,7 @@ fn test_cli_help_prints_without_launching_tui() {
     assert!(stdout.contains("doctor"));
     assert!(stdout.contains("paths"));
     assert!(stdout.contains("list-sources"));
+    assert!(stdout.contains("list-playlists"));
     assert!(stdout.contains("local-stats"));
     assert!(stdout.contains("scan-local"));
     assert!(stdout.contains("add-source"));
@@ -375,6 +385,64 @@ default_volume = 50
     assert!(stdout.contains("[missing]"));
 
     let _ = std::fs::remove_dir_all(state_dir);
+}
+
+#[test]
+fn test_cli_list_playlists_reports_saved_playlists_without_launching_tui() {
+    let state_dir = test_dir("cli-list-playlists");
+    std::fs::create_dir_all(&state_dir).unwrap();
+    let playlists_dir = isolated_playlists_dir(&state_dir);
+    std::fs::create_dir_all(&playlists_dir).unwrap();
+    std::fs::write(
+        playlists_dir.join("Road Mix.toml"),
+        r#"
+name = "Road Mix"
+
+[[tracks]]
+title = "First"
+
+[[tracks]]
+title = "Second"
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        playlists_dir.join("Favorites.toml"),
+        r#"
+name = "Favorites"
+
+[[tracks]]
+title = "Only"
+"#,
+    )
+    .unwrap();
+
+    let mut command = rmus_binary();
+    state_env(command.arg("list-playlists"), &state_dir);
+    let output = command.output().expect("rmus list-playlists should run");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Playlists (2):"));
+    assert!(stdout.contains("- Favorites (1 track)"));
+    assert!(stdout.contains("- Road Mix (2 tracks)"));
+
+    let mut empty_command = rmus_binary();
+    let empty_dir = test_dir("cli-list-playlists-empty");
+    std::fs::create_dir_all(&empty_dir).unwrap();
+    state_env(empty_command.arg("list-playlists"), &empty_dir);
+    let empty_output = empty_command
+        .output()
+        .expect("empty rmus list-playlists should run");
+    assert!(empty_output.status.success());
+    assert!(empty_output.stderr.is_empty());
+    let empty_stdout = String::from_utf8(empty_output.stdout).unwrap();
+    assert!(empty_stdout.contains("No playlists found"));
+    assert!(empty_stdout.contains("rmus import-playlist"));
+
+    let _ = std::fs::remove_dir_all(state_dir);
+    let _ = std::fs::remove_dir_all(empty_dir);
 }
 
 #[test]

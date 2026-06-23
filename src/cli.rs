@@ -22,6 +22,7 @@ pub enum CliAction {
     Doctor,
     Paths,
     ListSources,
+    ListPlaylists,
     LocalStats,
     ScanLocal { name: Option<String> },
     AddSource { name: String, path: PathBuf },
@@ -50,6 +51,7 @@ where
         "doctor" => no_more_args(args, CliAction::Doctor, &first),
         "paths" => no_more_args(args, CliAction::Paths, &first),
         "list-sources" => no_more_args(args, CliAction::ListSources, &first),
+        "list-playlists" => no_more_args(args, CliAction::ListPlaylists, &first),
         "local-stats" => no_more_args(args, CliAction::LocalStats, &first),
         "scan-local" => parse_scan_local_args(args),
         "add-source" => parse_add_source_args(args),
@@ -197,6 +199,7 @@ pub fn help_text() -> &'static str {
         "  doctor          Check runtime dependencies and app paths\n",
         "  paths           Print app storage paths\n",
         "  list-sources    Print configured local music folders\n",
+        "  list-playlists  Print saved playlists and track counts\n",
         "  local-stats     Count configured local sources, albums, and tracks\n",
         "  scan-local [NAME]\n",
         "                  Scan all, or a named local source, into the metadata cache\n",
@@ -263,6 +266,35 @@ fn list_sources_from_config(config: Config) -> LocalSourceListSummary {
                 path: source.path,
             })
             .collect(),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlaylistListSummary {
+    pub playlists: Vec<crate::playlist::PlaylistSummary>,
+}
+
+impl PlaylistListSummary {
+    pub fn message(&self) -> String {
+        if self.playlists.is_empty() {
+            return "No playlists found; create one in the Playlists tab or import with `rmus import-playlist`".to_string();
+        }
+
+        let mut text = format!("Playlists ({}):\n", self.playlists.len());
+        for playlist in &self.playlists {
+            text.push_str(&format!("- {}\n", playlist.display_title()));
+        }
+        text
+    }
+}
+
+pub fn list_playlists() -> PlaylistListSummary {
+    list_playlists_with_store(PlaylistStore::default())
+}
+
+fn list_playlists_with_store(store: PlaylistStore) -> PlaylistListSummary {
+    PlaylistListSummary {
+        playlists: store.summaries(),
     }
 }
 
@@ -979,9 +1011,10 @@ fn is_executable_file(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        add_source_to_config, clear_cache_at, doctor_report_with_options, list_sources_from_config,
-        local_stats_with_cache_path, parse_args, paths_text_with_options,
-        remove_source_from_config, scan_local_with_cache_path, CliAction, DoctorOptions,
+        add_source_to_config, clear_cache_at, doctor_report_with_options,
+        list_playlists_with_store, list_sources_from_config, local_stats_with_cache_path,
+        parse_args, paths_text_with_options, remove_source_from_config, scan_local_with_cache_path,
+        CliAction, DoctorOptions,
     };
     use std::{
         env, fs,
@@ -1136,6 +1169,72 @@ mod tests {
             summary.message(),
             "No local sources configured; add folders in Settings first"
         );
+    }
+
+    #[test]
+    fn list_playlists_command_prints_saved_playlists() {
+        assert_eq!(
+            parse_args(["rmus", "list-playlists"]),
+            Ok(CliAction::ListPlaylists)
+        );
+
+        let dir = test_dir("list-playlists");
+        let playlists_dir = dir.join("playlists");
+        fs::create_dir_all(&playlists_dir).unwrap();
+        fs::write(
+            playlists_dir.join("Road.toml"),
+            r#"
+name = "Road"
+
+[[tracks]]
+title = "First"
+
+[[tracks]]
+title = "Second"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            playlists_dir.join("Favorites.toml"),
+            r#"
+name = "Favorites"
+
+[[tracks]]
+title = "Only"
+"#,
+        )
+        .unwrap();
+
+        let summary =
+            list_playlists_with_store(crate::playlist::PlaylistStore::with_dir(playlists_dir));
+
+        assert_eq!(summary.playlists.len(), 2);
+        assert_eq!(summary.playlists[0].name, "Favorites");
+        assert_eq!(summary.playlists[0].track_count, 1);
+        assert_eq!(summary.playlists[1].name, "Road");
+        assert_eq!(summary.playlists[1].track_count, 2);
+        let message = summary.message();
+        assert!(message.contains("Playlists (2):"));
+        assert!(message.contains("- Favorites (1 track)"));
+        assert!(message.contains("- Road (2 tracks)"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn list_playlists_reports_empty_store() {
+        let dir = test_dir("list-playlists-empty");
+        let summary = list_playlists_with_store(crate::playlist::PlaylistStore::with_dir(
+            dir.join("missing"),
+        ));
+
+        assert!(summary.playlists.is_empty());
+        assert_eq!(
+            summary.message(),
+            "No playlists found; create one in the Playlists tab or import with `rmus import-playlist`"
+        );
+
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
