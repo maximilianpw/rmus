@@ -3268,6 +3268,32 @@ mod tests {
     }
 
     #[test]
+    fn opening_local_album_uses_cached_metadata_without_parsing_uncached_files() {
+        let dir = temp_dir("cached-local-album-open");
+        for index in 0..20 {
+            fs::write(dir.join(format!("{index:02} - Track.flac")), "").unwrap();
+        }
+        let mut config = default_config();
+        config.local.sources.push(LocalSource {
+            name: "Large Library".to_string(),
+            path: dir.clone(),
+        });
+        let mut app = App::new_for_test(config, None, None);
+
+        reset_metadata_read_count();
+        app.execute(Action::SelectAlbum);
+
+        assert_eq!(
+            metadata_read_count(),
+            0,
+            "opening a local source should use cached metadata and filename fallback without parsing every uncached file"
+        );
+        assert_eq!(app.center_panel.get_songs().len(), 20);
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn mouse_scroll_targets_panel_under_pointer_without_changing_focus() {
         let dir = temp_dir("mouse-scroll-targets-left-panel");
         fs::create_dir_all(dir.join("Alpha")).unwrap();

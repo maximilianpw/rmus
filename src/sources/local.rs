@@ -543,16 +543,21 @@ impl LocalFiles {
         Ok(track_count)
     }
 
-    fn songs_directly_from_path(path: PathBuf) -> Vec<Song> {
+    fn songs_directly_from_path_using_cached_metadata(path: PathBuf) -> Vec<Song> {
         let mut files = Vec::new();
         collect_direct_audio_files(&path, &mut files);
-        Self::songs_from_files(files)
+        let cache = LocalTrackCache::default();
+        Self::songs_from_files_using_cached_metadata(files, &cache)
     }
 
     fn songs_for_entry(entry: &LocalAlbumEntry) -> Vec<Song> {
         match entry.scope {
-            LocalAlbumScope::Direct => Self::songs_directly_from_path(entry.path.clone()),
-            LocalAlbumScope::Recursive => Self::songs_from_path(entry.path.clone()),
+            LocalAlbumScope::Direct => {
+                Self::songs_directly_from_path_using_cached_metadata(entry.path.clone())
+            }
+            LocalAlbumScope::Recursive => {
+                Self::songs_from_path_using_cached_metadata(entry.path.clone())
+            }
         }
     }
 
