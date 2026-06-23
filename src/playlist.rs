@@ -336,7 +336,7 @@ impl PlaylistStore {
                 }
             }
         }
-        playlists.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        playlists.sort_by_key(|playlist| playlist.name.to_lowercase());
         playlists
     }
 

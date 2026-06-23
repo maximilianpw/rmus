@@ -136,15 +136,11 @@ impl SettingsPanel {
             return;
         }
         match self.current_tab() {
-            SettingsTab::General => {
-                if self.source_settings.handle_events(key) {
-                    return;
-                }
+            SettingsTab::General if self.source_settings.handle_events(key) => {
+                return;
             }
-            SettingsTab::Account => {
-                if self.account_settings.handle_events(key) {
-                    return;
-                }
+            SettingsTab::Account if self.account_settings.handle_events(key) => {
+                return;
             }
             _ => {}
         }

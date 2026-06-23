@@ -342,10 +342,8 @@ impl MpvPlayer {
                         self.playback_info.volume = vol as u8;
                     }
                 }
-                "eof-reached" => {
-                    if data.and_then(|d| d.as_bool()) == Some(true) {
-                        // Track ended - will be handled by end-file event
-                    }
+                "eof-reached" if data.and_then(|d| d.as_bool()) == Some(true) => {
+                    // Track ended - will be handled by end-file event
                 }
                 _ => {}
             }
