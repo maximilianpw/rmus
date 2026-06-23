@@ -44,10 +44,15 @@ fn main() -> color_eyre::Result<()> {
                 }
             }
         }
-        Ok(rmus::cli::CliAction::AddSource { name, path }) => {
-            match rmus::cli::add_source(&name, &path) {
+        Ok(rmus::cli::CliAction::AddSource { name, path, scan }) => {
+            let result = if scan {
+                rmus::cli::add_source_and_scan(&name, &path).map(|summary| summary.message())
+            } else {
+                rmus::cli::add_source(&name, &path).map(|summary| summary.message())
+            };
+            match result {
                 Ok(summary) => {
-                    println!("{}", summary.message());
+                    println!("{summary}");
                     return Ok(());
                 }
                 Err(error) => {

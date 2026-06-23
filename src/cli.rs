@@ -25,13 +25,31 @@ pub enum CliAction {
     ListSources,
     ListPlaylists,
     LocalStats,
-    ScanLocal { name: Option<String> },
-    AddSource { name: String, path: PathBuf },
-    RemoveSource { name: String },
-    ShowPlaylist { name: String },
-    DeletePlaylist { name: String },
-    ImportPlaylist { path: PathBuf, name: Option<String> },
-    ExportPlaylist { name: String, path: PathBuf },
+    ScanLocal {
+        name: Option<String>,
+    },
+    AddSource {
+        name: String,
+        path: PathBuf,
+        scan: bool,
+    },
+    RemoveSource {
+        name: String,
+    },
+    ShowPlaylist {
+        name: String,
+    },
+    DeletePlaylist {
+        name: String,
+    },
+    ImportPlaylist {
+        path: PathBuf,
+        name: Option<String>,
+    },
+    ExportPlaylist {
+        name: String,
+        path: PathBuf,
+    },
     ClearCache,
 }
 
@@ -91,9 +109,19 @@ where
     let Some(path) = args.next() else {
         return Err(format!("missing path for add-source\n\n{}", help_text()));
     };
+    let scan = match args.next() {
+        Some(flag) if flag == "--scan" => true,
+        Some(_) => {
+            return Err(format!(
+                "unexpected argument after source path\n\n{}",
+                help_text()
+            ));
+        }
+        None => false,
+    };
     if args.next().is_some() {
         return Err(format!(
-            "unexpected argument after source path\n\n{}",
+            "unexpected argument after --scan\n\n{}",
             help_text()
         ));
     }
@@ -101,6 +129,7 @@ where
     Ok(CliAction::AddSource {
         name,
         path: PathBuf::from(path),
+        scan,
     })
 }
 
@@ -248,8 +277,8 @@ pub fn help_text() -> &'static str {
         "  local-stats     Count configured local sources, albums, and tracks\n",
         "  scan-local [NAME]\n",
         "                  Scan all, or a named local source, into the metadata cache\n",
-        "  add-source <NAME> <PATH>\n",
-        "                  Add a local music folder to config\n",
+        "  add-source <NAME> <PATH> [--scan]\n",
+        "                  Add a local music folder to config, optionally warming the cache\n",
         "  remove-source <NAME>\n",
         "                  Remove a local music folder from config\n",
         "  show-playlist <NAME>\n",
@@ -595,6 +624,46 @@ pub fn add_source(name: &str, path: &Path) -> Result<LocalSourceAddSummary, Stri
         .save()
         .map_err(|error| format!("failed to save config: {error}"))?;
     Ok(summary)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalSourceAddAndScanSummary {
+    pub add: LocalSourceAddSummary,
+    pub scan: LocalScanSummary,
+}
+
+impl LocalSourceAddAndScanSummary {
+    pub fn message(&self) -> String {
+        format!("{}\n{}", self.add.message(), self.scan.message())
+    }
+}
+
+pub fn add_source_and_scan(
+    name: &str,
+    path: &Path,
+) -> Result<LocalSourceAddAndScanSummary, String> {
+    let mut config = Config::load();
+    let add = add_source_to_config(&mut config, name, path)?;
+    config
+        .save()
+        .map_err(|error| format!("failed to save config: {error}"))?;
+    let scan = scan_local_with_cache_path(config, Some(&add.name), LocalTrackCache::default_path())
+        .map_err(|error| format!("failed to scan local source '{}': {error}", add.name))?;
+    Ok(LocalSourceAddAndScanSummary { add, scan })
+}
+
+#[cfg(test)]
+fn add_source_and_scan_with_config_and_cache_path(
+    config: &mut Config,
+    name: &str,
+    path: &Path,
+    cache_path: PathBuf,
+) -> Result<LocalSourceAddAndScanSummary, String> {
+    let add = add_source_to_config(config, name, path)?;
+    let scan = scan_local_with_cache_path(config.clone(), Some(&add.name), cache_path)
+        .map_err(|error| format!("failed to scan local source '{}': {error}", add.name))?;
+
+    Ok(LocalSourceAddAndScanSummary { add, scan })
 }
 
 fn add_source_to_config(
@@ -1228,9 +1297,9 @@ fn is_executable_file(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        add_source_to_config, clear_cache_at, delete_playlist_with_store,
-        doctor_report_with_options, list_playlists_with_store, list_sources_from_config,
-        local_stats_with_cache_path, parse_args, paths_text_with_options,
+        add_source_and_scan_with_config_and_cache_path, add_source_to_config, clear_cache_at,
+        delete_playlist_with_store, doctor_report_with_options, list_playlists_with_store,
+        list_sources_from_config, local_stats_with_cache_path, parse_args, paths_text_with_options,
         remove_source_from_config, scan_local_with_cache_path, show_playlist_with_store, CliAction,
         DoctorOptions,
     };
@@ -1663,6 +1732,15 @@ tracks = []
             Ok(CliAction::AddSource {
                 name: "Library".to_string(),
                 path: PathBuf::from("/music"),
+                scan: false,
+            })
+        );
+        assert_eq!(
+            parse_args(["rmus", "add-source", "Library", "/music", "--scan"]),
+            Ok(CliAction::AddSource {
+                name: "Library".to_string(),
+                path: PathBuf::from("/music"),
+                scan: true,
             })
         );
     }
@@ -1675,6 +1753,14 @@ tracks = []
         let error =
             parse_args(["rmus", "add-source", "Library"]).expect_err("path should be required");
         assert!(error.contains("missing path for add-source"));
+
+        let error = parse_args(["rmus", "add-source", "Library", "/music", "--unknown"])
+            .expect_err("unknown add-source flags should fail");
+        assert!(error.contains("unexpected argument after source path"));
+
+        let error = parse_args(["rmus", "add-source", "Library", "/music", "--scan", "extra"])
+            .expect_err("extra scan args should fail");
+        assert!(error.contains("unexpected argument after --scan"));
     }
 
     #[test]
@@ -1691,6 +1777,35 @@ tracks = []
         assert_eq!(config.local.sources[0].name, "Library");
         assert_eq!(config.local.sources[0].path, dir.canonicalize().unwrap());
         assert!(summary.message().contains("Added local source 'Library'"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn add_source_and_scan_warms_new_source_cache() {
+        let dir = test_dir("add-source-scan");
+        fs::write(dir.join("01 - Warmed.flac"), "").unwrap();
+        let cache_path = dir.join("local-cache.toml");
+        let mut config = crate::config::Config::default();
+
+        let summary = add_source_and_scan_with_config_and_cache_path(
+            &mut config,
+            " Library ",
+            &dir.join("."),
+            cache_path.clone(),
+        )
+        .unwrap();
+
+        assert_eq!(summary.add.name, "Library");
+        assert_eq!(summary.add.source_count, 1);
+        assert_eq!(summary.scan.source_name, Some("Library".to_string()));
+        assert_eq!(summary.scan.source_count, 1);
+        assert_eq!(summary.scan.track_count, 1);
+        assert!(summary.message().contains("Added local source 'Library'"));
+        assert!(summary.message().contains("Scanned 1 local track"));
+        assert!(cache_path.exists());
+        let cache = fs::read_to_string(&cache_path).unwrap();
+        assert!(cache.contains("01 - Warmed.flac"));
 
         let _ = fs::remove_dir_all(dir);
     }

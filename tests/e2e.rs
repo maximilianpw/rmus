@@ -286,6 +286,45 @@ fn test_cli_add_source_updates_config_without_launching_tui() {
 }
 
 #[test]
+fn test_cli_add_source_scan_warms_cache_without_launching_tui() {
+    let state_dir = test_dir("cli-add-source-scan");
+    let music_dir = state_dir.join("music");
+    std::fs::create_dir_all(&music_dir).unwrap();
+    std::fs::write(music_dir.join("01 - First.flac"), "not real audio").unwrap();
+    std::fs::write(music_dir.join("02 - Second.opus"), "not real audio").unwrap();
+
+    let mut add_command = rmus_binary();
+    state_env(
+        add_command.args([
+            "add-source",
+            "Library",
+            music_dir.to_str().unwrap(),
+            "--scan",
+        ]),
+        &state_dir,
+    );
+    let output = add_command
+        .output()
+        .expect("rmus add-source --scan should run");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Added local source 'Library'"));
+    assert!(stdout.contains("Scanned 2 local tracks from local source 'Library'"));
+
+    let config = std::fs::read_to_string(isolated_config_path(&state_dir)).unwrap();
+    assert!(config.contains("name = \"Library\""));
+
+    let cache = std::fs::read_to_string(isolated_storage_path(&state_dir, "local cache"))
+        .expect("add-source --scan should write the local metadata cache");
+    assert!(cache.contains("01 - First.flac"));
+    assert!(cache.contains("02 - Second.opus"));
+
+    let _ = std::fs::remove_dir_all(state_dir);
+}
+
+#[test]
 fn test_cli_remove_source_updates_config_without_launching_tui() {
     let state_dir = test_dir("cli-remove-source");
     let music_dir = state_dir.join("music");
