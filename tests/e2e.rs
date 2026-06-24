@@ -18,7 +18,7 @@ use rmus::{
     keymap::{resolve_key, KeyAction},
     players::{MusicPlayer, PlaybackInfo, PlaybackState, PlayerResult, RepeatMode, ShuffleMode},
     playlist::{Playlist, PlaylistStore},
-    queue::QueueStore,
+    queue::{QueueState, QueueStore},
     sources::{
         song::Song,
         streaming::{
@@ -233,6 +233,8 @@ fn test_cli_help_prints_without_launching_tui() {
     assert!(stdout.contains("import-playlist"));
     assert!(stdout.contains("export-playlist"));
     assert!(stdout.contains("clear-cache"));
+    assert!(stdout.contains("clear-history"));
+    assert!(stdout.contains("clear-queue"));
     assert!(stdout.contains("--version"));
 }
 
@@ -940,6 +942,99 @@ fn test_cli_clear_cache_runs_without_launching_tui() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("Local cache already absent"));
     assert!(stdout.contains("local-cache.toml"));
+
+    let _ = std::fs::remove_dir_all(state_dir);
+}
+
+#[test]
+fn test_cli_clear_history_removes_saved_history_without_launching_tui() {
+    let state_dir = test_dir("cli-clear-history");
+    let config_dir = state_dir.join("rmus-config");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    let history_path = config_dir.join("history.toml");
+    HistoryStore::with_path(history_path.clone())
+        .save(&[
+            Song {
+                title: "First History".to_string(),
+                path: PathBuf::from("/music/first.flac"),
+                ..Default::default()
+            },
+            Song {
+                title: "Second History".to_string(),
+                path: PathBuf::from("/music/second.flac"),
+                ..Default::default()
+            },
+        ])
+        .unwrap();
+
+    let mut command = rmus_binary();
+    state_env(command.arg("clear-history"), &state_dir);
+    let output = command.output().expect("rmus clear-history should run");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Removed history (2 tracks)"));
+    assert!(stdout.contains("history.toml"));
+    assert!(!history_path.exists());
+
+    let mut command = rmus_binary();
+    state_env(command.arg("clear-history"), &state_dir);
+    let output = command
+        .output()
+        .expect("second rmus clear-history should run");
+    assert!(output.status.success());
+    assert!(String::from_utf8(output.stdout)
+        .unwrap()
+        .contains("History already absent"));
+
+    let _ = std::fs::remove_dir_all(state_dir);
+}
+
+#[test]
+fn test_cli_clear_queue_removes_saved_queue_without_launching_tui() {
+    let state_dir = test_dir("cli-clear-queue");
+    let config_dir = state_dir.join("rmus-config");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    let queue_path = config_dir.join("queue.toml");
+    QueueStore::with_path(queue_path.clone())
+        .save(&QueueState::new(
+            vec![
+                Song {
+                    title: "First Queue".to_string(),
+                    path: PathBuf::from("/music/first.flac"),
+                    ..Default::default()
+                },
+                Song {
+                    title: "Second Queue".to_string(),
+                    path: PathBuf::from("/music/second.flac"),
+                    ..Default::default()
+                },
+            ],
+            1,
+        ))
+        .unwrap();
+
+    let mut command = rmus_binary();
+    state_env(command.arg("clear-queue"), &state_dir);
+    let output = command.output().expect("rmus clear-queue should run");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Removed saved queue (2 tracks)"));
+    assert!(stdout.contains("queue.toml"));
+    assert!(!queue_path.exists());
+
+    let mut command = rmus_binary();
+    state_env(command.arg("clear-queue"), &state_dir);
+    let output = command
+        .output()
+        .expect("second rmus clear-queue should run");
+    assert!(output.status.success());
+    assert!(String::from_utf8(output.stdout)
+        .unwrap()
+        .contains("Saved queue already absent"));
 
     let _ = std::fs::remove_dir_all(state_dir);
 }

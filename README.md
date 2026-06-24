@@ -48,6 +48,8 @@ rmus doctor
 rmus paths
 rmus local-stats
 rmus search-local "artist, album, title, or filename"
+rmus clear-history
+rmus clear-queue
 ```
 
 The add-source command validates and stores a local music folder without opening the TUI. It canonicalizes the path and rejects duplicate source names or paths. Pass `--scan` to warm that new source into the local metadata cache immediately. The remove-source command removes a configured local source by name. The move-source command reorders configured local sources with `up`, `down`, `top`, or `bottom`.
@@ -61,6 +63,8 @@ The paths command prints only the app storage paths, which is useful when inspec
 The local-stats command counts configured local sources, missing source folders, discoverable albums, playable audio files, and the local cache state without opening the TUI.
 
 The search-local command searches configured local tracks without opening the TUI. It matches title, artist, album, filename, and path using cached metadata when available, with filename/path fallback for uncached tracks. Use `--limit N` to show more or fewer matches.
+
+The clear-history and clear-queue commands remove saved playback history or saved queue state without touching config, playlists, streaming accounts, or the local metadata cache.
 
 ## Import Playlists
 

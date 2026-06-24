@@ -65,6 +65,8 @@ pub enum CliAction {
         path: PathBuf,
     },
     ClearCache,
+    ClearHistory,
+    ClearQueue,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,6 +108,8 @@ where
         "import-playlist" => parse_import_playlist_args(args),
         "export-playlist" => parse_export_playlist_args(args),
         "clear-cache" => no_more_args(args, CliAction::ClearCache, &first),
+        "clear-history" => no_more_args(args, CliAction::ClearHistory, &first),
+        "clear-queue" => no_more_args(args, CliAction::ClearQueue, &first),
         _ => Err(format!("unknown argument '{first}'\n\n{}", help_text())),
     }
 }
@@ -400,6 +404,8 @@ pub fn help_text() -> &'static str {
         "  export-playlist <NAME> <PATH>\n",
         "                  Export a playlist to .m3u8\n",
         "  clear-cache     Remove cached local discovery and metadata\n",
+        "  clear-history   Remove saved recently played history\n",
+        "  clear-queue     Remove saved playback queue state\n",
         "\n",
         "Options:\n",
         "  -h, --help       Print help\n",
@@ -1204,15 +1210,89 @@ pub fn clear_cache() -> Result<CacheClearSummary, std::io::Error> {
 }
 
 fn clear_cache_at(path: &Path) -> Result<CacheClearSummary, std::io::Error> {
+    remove_optional_file(path).map(|removed| CacheClearSummary {
+        path: path.to_path_buf(),
+        removed,
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HistoryClearSummary {
+    pub path: PathBuf,
+    pub removed: bool,
+    pub track_count: usize,
+}
+
+impl HistoryClearSummary {
+    pub fn message(&self) -> String {
+        let path = self.path.to_string_lossy();
+        if self.removed {
+            format!(
+                "Removed history ({}) at {path}",
+                track_count_label(self.track_count)
+            )
+        } else {
+            format!("History already absent at {path}")
+        }
+    }
+}
+
+pub fn clear_history() -> Result<HistoryClearSummary, std::io::Error> {
+    let store = HistoryStore::default();
+    clear_history_at(store.path())
+}
+
+fn clear_history_at(path: &Path) -> Result<HistoryClearSummary, std::io::Error> {
+    let track_count = HistoryStore::with_path(path.to_path_buf()).load().len();
+    remove_optional_file(path).map(|removed| HistoryClearSummary {
+        path: path.to_path_buf(),
+        removed,
+        track_count: if removed { track_count } else { 0 },
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueueClearSummary {
+    pub path: PathBuf,
+    pub removed: bool,
+    pub track_count: usize,
+}
+
+impl QueueClearSummary {
+    pub fn message(&self) -> String {
+        let path = self.path.to_string_lossy();
+        if self.removed {
+            format!(
+                "Removed saved queue ({}) at {path}",
+                track_count_label(self.track_count)
+            )
+        } else {
+            format!("Saved queue already absent at {path}")
+        }
+    }
+}
+
+pub fn clear_queue() -> Result<QueueClearSummary, std::io::Error> {
+    let store = QueueStore::default();
+    clear_queue_at(store.path())
+}
+
+fn clear_queue_at(path: &Path) -> Result<QueueClearSummary, std::io::Error> {
+    let track_count = QueueStore::with_path(path.to_path_buf())
+        .load()
+        .tracks
+        .len();
+    remove_optional_file(path).map(|removed| QueueClearSummary {
+        path: path.to_path_buf(),
+        removed,
+        track_count: if removed { track_count } else { 0 },
+    })
+}
+
+fn remove_optional_file(path: &Path) -> Result<bool, std::io::Error> {
     match fs::remove_file(path) {
-        Ok(()) => Ok(CacheClearSummary {
-            path: path.to_path_buf(),
-            removed: true,
-        }),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(CacheClearSummary {
-            path: path.to_path_buf(),
-            removed: false,
-        }),
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(error),
     }
 }
@@ -1659,11 +1739,17 @@ fn is_executable_file(path: &Path) -> bool {
 mod tests {
     use super::{
         add_source_and_scan_with_config_and_cache_path, add_source_to_config, clear_cache_at,
-        delete_playlist_with_store, doctor_report_with_options, list_playlists_with_store,
-        list_sources_from_config, local_stats_with_cache_path, move_source_in_config, parse_args,
-        paths_text_with_options, remove_source_from_config, scan_local_with_cache_path,
-        search_local_with_config_and_cache_path, show_playlist_with_store, CliAction,
-        DoctorOptions, LocalSourceMoveTarget, DEFAULT_LOCAL_SEARCH_LIMIT,
+        clear_history_at, clear_queue_at, delete_playlist_with_store, doctor_report_with_options,
+        list_playlists_with_store, list_sources_from_config, local_stats_with_cache_path,
+        move_source_in_config, parse_args, paths_text_with_options, remove_source_from_config,
+        scan_local_with_cache_path, search_local_with_config_and_cache_path,
+        show_playlist_with_store, CliAction, DoctorOptions, LocalSourceMoveTarget,
+        DEFAULT_LOCAL_SEARCH_LIMIT,
+    };
+    use crate::{
+        history::HistoryStore,
+        queue::{QueueState, QueueStore},
+        sources::song::Song,
     };
     use std::{
         env, fs,
@@ -2731,6 +2817,22 @@ tracks = []
     }
 
     #[test]
+    fn clear_history_command_runs_maintenance_action() {
+        assert_eq!(
+            parse_args(["rmus", "clear-history"]),
+            Ok(CliAction::ClearHistory)
+        );
+    }
+
+    #[test]
+    fn clear_queue_command_runs_maintenance_action() {
+        assert_eq!(
+            parse_args(["rmus", "clear-queue"]),
+            Ok(CliAction::ClearQueue)
+        );
+    }
+
+    #[test]
     fn import_playlist_command_accepts_path_and_optional_name() {
         assert_eq!(
             parse_args(["rmus", "import-playlist", "/music/mix.m3u"]),
@@ -2773,6 +2875,79 @@ tracks = []
 
         let summary = clear_cache_at(&summary.path).unwrap();
         assert!(!summary.removed);
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn clear_history_removes_history_file_and_counts_tracks() {
+        let dir = test_dir("clear-history");
+        let history_path = dir.join("history.toml");
+        let store = HistoryStore::with_path(history_path.clone());
+        store
+            .save(&[
+                Song {
+                    title: "First".to_string(),
+                    ..Default::default()
+                },
+                Song {
+                    title: "Second".to_string(),
+                    ..Default::default()
+                },
+            ])
+            .unwrap();
+
+        let summary = clear_history_at(&history_path).unwrap();
+
+        assert_eq!(summary.path, history_path);
+        assert!(summary.removed);
+        assert_eq!(summary.track_count, 2);
+        assert!(summary.message().contains("Removed history (2 tracks)"));
+        assert!(!summary.path.exists());
+
+        let summary = clear_history_at(&summary.path).unwrap();
+        assert!(!summary.removed);
+        assert_eq!(summary.track_count, 0);
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn clear_queue_removes_queue_file_and_counts_tracks() {
+        let dir = test_dir("clear-queue");
+        let queue_path = dir.join("queue.toml");
+        let store = QueueStore::with_path(queue_path.clone());
+        store
+            .save(&QueueState::new(
+                vec![
+                    Song {
+                        title: "First".to_string(),
+                        ..Default::default()
+                    },
+                    Song {
+                        title: "Second".to_string(),
+                        ..Default::default()
+                    },
+                    Song {
+                        title: "Third".to_string(),
+                        ..Default::default()
+                    },
+                ],
+                1,
+            ))
+            .unwrap();
+
+        let summary = clear_queue_at(&queue_path).unwrap();
+
+        assert_eq!(summary.path, queue_path);
+        assert!(summary.removed);
+        assert_eq!(summary.track_count, 3);
+        assert!(summary.message().contains("Removed saved queue (3 tracks)"));
+        assert!(!summary.path.exists());
+
+        let summary = clear_queue_at(&summary.path).unwrap();
+        assert!(!summary.removed);
+        assert_eq!(summary.track_count, 0);
 
         let _ = fs::remove_dir_all(dir);
     }
