@@ -6878,6 +6878,60 @@ fn test_favorite_selected_song_creates_favorites_and_skips_duplicate() {
 }
 
 #[test]
+fn test_favorite_selected_song_marks_open_album_row() {
+    let dir = test_dir("favorite-selected-song-marker");
+    let store = PlaylistStore::with_dir(dir.clone());
+    let mut app =
+        App::new_for_test_with_playlist_store(default_config(), None, None, store.clone());
+
+    app.center_panel.set_album(
+        PathBuf::from("/music/album"),
+        vec![
+            Song {
+                title: "First Song".to_string(),
+                artist: "First Artist".to_string(),
+                path: PathBuf::from("/music/first.flac"),
+                ..Default::default()
+            },
+            Song {
+                title: "Favorite Song".to_string(),
+                artist: "Favorite Artist".to_string(),
+                path: PathBuf::from("/music/favorite.flac"),
+                ..Default::default()
+            },
+        ],
+    );
+    app.focused_window = FocusedWindow::Center;
+    app.delegate_key_to_panel(make_key(KeyCode::Char('j')));
+
+    dispatch_key(&mut app, make_key(KeyCode::Char('F')));
+
+    let backend = TestBackend::new(220, 40);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let frame = terminal.draw(|frame| app.render(frame)).unwrap();
+    let text = extract_buffer_text(frame.buffer);
+    assert!(
+        text.contains("Favorite Artist - Favorite Song [fav]"),
+        "favorited open-album rows should be marked"
+    );
+    assert!(
+        !text.contains("First Artist - First Song [fav]"),
+        "non-favorited rows should not be marked"
+    );
+
+    dispatch_key(&mut app, make_key(KeyCode::Char('U')));
+
+    let frame = terminal.draw(|frame| app.render(frame)).unwrap();
+    let text = extract_buffer_text(frame.buffer);
+    assert!(
+        !text.contains("Favorite Artist - Favorite Song [fav]"),
+        "unfavorited rows should lose the favorite marker"
+    );
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn test_favorite_current_track_from_right_panel() {
     let dir = test_dir("favorite-current-track");
     let store = PlaylistStore::with_dir(dir.clone());

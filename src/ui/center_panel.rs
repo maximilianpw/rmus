@@ -149,6 +149,8 @@ pub struct CenterPanel {
     pre_playlist_mode: Option<CenterPanelMode>,
     /// Currently playing song, used to mark matching rows while browsing.
     current_song: Option<Song>,
+    /// Songs in the Favorites playlist, used to mark matching rows while browsing.
+    favorite_songs: Vec<Song>,
 }
 
 impl CenterPanel {
@@ -187,6 +189,7 @@ impl CenterPanel {
             playlist_picker_state: ListState::default(),
             pre_playlist_mode: None,
             current_song: None,
+            favorite_songs: Vec::new(),
         }
     }
 
@@ -196,6 +199,10 @@ impl CenterPanel {
 
     pub fn set_current_song(&mut self, song: Option<Song>) {
         self.current_song = song;
+    }
+
+    pub fn set_favorite_songs(&mut self, songs: Vec<Song>) {
+        self.favorite_songs = songs;
     }
 
     pub fn set_album(&mut self, path: PathBuf, songs: Vec<Song>) {
@@ -935,7 +942,8 @@ impl CenterPanel {
     }
 
     fn song_list_item(&self, song: &Song) -> ListItem<'static> {
-        self.current_marked_song_item(Self::song_row_label(song), song)
+        let label = self.favorite_marked_song_label(Self::song_row_label(song), song);
+        self.current_marked_song_item(label, song)
     }
 
     fn numbered_song_row_label(index: usize, song: &Song) -> String {
@@ -949,7 +957,17 @@ impl CenterPanel {
     }
 
     fn numbered_song_list_item(&self, index: usize, song: &Song) -> ListItem<'static> {
-        self.current_marked_song_item(Self::numbered_song_row_label(index, song), song)
+        let label =
+            self.favorite_marked_song_label(Self::numbered_song_row_label(index, song), song);
+        self.current_marked_song_item(label, song)
+    }
+
+    fn favorite_marked_song_label(&self, label: String, song: &Song) -> String {
+        if self.is_favorite_song(song) {
+            format!("{label} [fav]")
+        } else {
+            label
+        }
     }
 
     fn current_marked_song_item(&self, label: String, song: &Song) -> ListItem<'static> {
@@ -964,6 +982,12 @@ impl CenterPanel {
         self.current_song
             .as_ref()
             .is_some_and(|current| Self::song_identity_matches(song, current))
+    }
+
+    fn is_favorite_song(&self, song: &Song) -> bool {
+        self.favorite_songs
+            .iter()
+            .any(|favorite| Self::song_identity_matches(song, favorite))
     }
 
     fn song_identity_matches(left: &Song, right: &Song) -> bool {
@@ -1202,7 +1226,10 @@ impl CenterPanel {
                 .filter_map(|index| self.queue_songs.get(*index).map(|song| (*index, song)))
                 .map(|(index, song)| {
                     let is_current = index == self.queue_position;
-                    let display = Self::queue_song_row_label(index, queue_len, song, is_current);
+                    let display = self.favorite_marked_song_label(
+                        Self::queue_song_row_label(index, queue_len, song, is_current),
+                        song,
+                    );
                     let style = if is_current {
                         theme::current_style()
                     } else {
@@ -1286,7 +1313,7 @@ impl CenterPanel {
             self.history_visible_indices
                 .iter()
                 .filter_map(|index| self.history_songs.get(*index).map(|song| (*index, song)))
-                .map(|(index, song)| ListItem::new(Self::numbered_song_row_label(index, song)))
+                .map(|(index, song)| self.numbered_song_list_item(index, song))
                 .collect()
         };
 

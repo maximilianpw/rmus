@@ -223,12 +223,15 @@ impl App {
         Self::restore_player_queue(player.as_mut(), restored_queue, &logger);
         let (last_saved_queue_len, last_saved_queue_position) =
             Self::queue_save_marker(player.as_ref());
+        let favorite_songs = playlist_store.songs_for_name(FAVORITES_PLAYLIST_NAME);
+        let mut center_panel = CenterPanel::new();
+        center_panel.set_favorite_songs(favorite_songs);
 
         Self {
             running: false,
             focused_window: FocusedWindow::default(),
             left_panel: LeftPanel::new(sources, logger.clone()),
-            center_panel: CenterPanel::new(),
+            center_panel,
             right_panel: RightPanel::new(log_panel),
             settings_panel: SettingsPanel::new(config.clone()),
             player,
@@ -416,12 +419,15 @@ impl App {
         Self::restore_player_queue(player.as_mut(), restored_queue, &logger);
         let (last_saved_queue_len, last_saved_queue_position) =
             Self::queue_save_marker(player.as_ref());
+        let favorite_songs = playlist_store.songs_for_name(FAVORITES_PLAYLIST_NAME);
+        let mut center_panel = CenterPanel::new();
+        center_panel.set_favorite_songs(favorite_songs);
 
         Self {
             running: false,
             focused_window: FocusedWindow::default(),
             left_panel: LeftPanel::new(sources, logger.clone()),
-            center_panel: CenterPanel::new(),
+            center_panel,
             right_panel: RightPanel::new(log_panel),
             settings_panel: SettingsPanel::new(config.clone()),
             player,
@@ -1121,6 +1127,7 @@ impl App {
             Ok(summary) => {
                 self.logger
                     .info(Self::favorites_add_feedback(&summary, &songs));
+                self.refresh_favorite_songs();
                 self.rebuild_left_panel();
                 self.refresh_open_playlist_by_name(&summary.playlist_name);
             }
@@ -1142,6 +1149,7 @@ impl App {
             Ok(summary) => {
                 self.logger
                     .info(Self::favorites_remove_feedback(&summary, &songs));
+                self.refresh_favorite_songs();
                 self.rebuild_left_panel();
                 self.refresh_open_playlist_by_name(&summary.playlist_name);
             }
@@ -2001,6 +2009,7 @@ impl App {
     }
 
     fn rebuild_left_panel_with_local_discovery(&mut self, local_discovery: LocalDiscoveryMode) {
+        self.refresh_favorite_songs();
         let active_tab = self.left_panel.active_tab_name();
         let sources = Self::sources_for_config(
             &self.config,
@@ -2011,6 +2020,11 @@ impl App {
         let mut left_panel = LeftPanel::new(sources, self.logger.clone());
         left_panel.select_tab_by_name(&active_tab);
         self.left_panel = left_panel;
+    }
+
+    fn refresh_favorite_songs(&mut self) {
+        self.center_panel
+            .set_favorite_songs(self.playlist_store.songs_for_name(FAVORITES_PLAYLIST_NAME));
     }
 
     fn start_local_cache_scan(&mut self) {
