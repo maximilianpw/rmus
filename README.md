@@ -74,7 +74,7 @@ The clear-history and clear-queue commands remove saved playback history or save
 
 ```sh
 rmus list-playlists
-rmus show-playlist "Road Mix"
+rmus show-playlist "Road Mix" --limit 25
 rmus delete-playlist "Road Mix"
 rmus import-playlist ~/Music/Mix.m3u
 rmus import-playlist ~/Music/Mix.m3u "Road Mix"
@@ -83,7 +83,7 @@ rmus export-playlist "Road Mix" ~/Music/Road-Mix.m3u8
 
 The list-playlists command prints saved playlists with track counts.
 
-The show-playlist command prints the saved tracks in a playlist, including local paths or streaming track references.
+The show-playlist command prints the saved tracks in a playlist, including local paths or streaming track references. Use `--limit N` to inspect large playlists without printing every track.
 
 The delete-playlist command removes a saved playlist by name without opening the TUI.
 

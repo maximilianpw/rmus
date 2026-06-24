@@ -681,6 +681,23 @@ stream_track_id = "qbz-1"
     assert!(stdout.contains("1. Local Artist - Local Song (Local Album) [local] /music/local.flac"));
     assert!(stdout.contains("2. Stream Artist - Stream Song (Stream Album) [Qobuz: qbz-1]"));
 
+    let mut limited_command = rmus_binary();
+    state_env(
+        limited_command.args(["show-playlist", "road mix", "--limit", "1"]),
+        &state_dir,
+    );
+    let limited_output = limited_command
+        .output()
+        .expect("rmus show-playlist --limit should run");
+    assert!(limited_output.status.success());
+    assert!(limited_output.stderr.is_empty());
+    let limited_stdout = String::from_utf8(limited_output.stdout).unwrap();
+    assert!(limited_stdout.contains("Playlist 'Road Mix' (2 tracks)"));
+    assert!(limited_stdout
+        .contains("1. Local Artist - Local Song (Local Album) [local] /music/local.flac"));
+    assert!(!limited_stdout.contains("Stream Song"));
+    assert!(limited_stdout.contains("... 1 more track; rerun with --limit 2 to show all"));
+
     let mut missing_command = rmus_binary();
     state_env(
         missing_command.args(["show-playlist", "Missing"]),

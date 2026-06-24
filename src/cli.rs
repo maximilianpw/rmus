@@ -58,6 +58,7 @@ pub enum CliAction {
     },
     ShowPlaylist {
         name: String,
+        limit: Option<usize>,
     },
     DeletePlaylist {
         name: String,
@@ -317,14 +318,7 @@ where
             help_text()
         ));
     };
-    if args.next().is_some() {
-        return Err(format!(
-            "unexpected argument after playlist name\n\n{}",
-            help_text()
-        ));
-    }
-
-    Ok(CliAction::ShowPlaylist { name })
+    parse_optional_limit_args(args, |limit| CliAction::ShowPlaylist { name, limit })
 }
 
 fn parse_delete_playlist_args<I>(mut args: I) -> Result<CliAction, String>
@@ -431,7 +425,7 @@ pub fn help_text() -> &'static str {
         "                  Remove a local music folder from config\n",
         "  move-source <NAME> <up|down|top|bottom>\n",
         "                  Reorder configured local music folders\n",
-        "  show-playlist <NAME>\n",
+        "  show-playlist <NAME> [--limit N]\n",
         "                  Print saved tracks in a playlist\n",
         "  delete-playlist <NAME>\n",
         "                  Delete a saved playlist\n",
@@ -654,6 +648,7 @@ fn append_limited_tracks_notice(text: &mut String, total: usize, visible_count: 
 pub struct PlaylistDetailSummary {
     pub name: String,
     pub tracks: Vec<crate::playlist::PlaylistTrack>,
+    pub limit: Option<usize>,
 }
 
 impl PlaylistDetailSummary {
@@ -669,24 +664,42 @@ impl PlaylistDetailSummary {
             return text;
         }
 
-        for (index, track) in self.tracks.iter().enumerate() {
+        let visible_count = limited_visible_count(self.tracks.len(), self.limit);
+        for (index, track) in self.tracks.iter().take(visible_count).enumerate() {
             text.push_str(&format!(
                 "{}. {}\n",
                 index + 1,
                 playlist_track_detail(track)
             ));
         }
+        append_limited_tracks_notice(&mut text, self.tracks.len(), visible_count);
         text
     }
 }
 
 pub fn show_playlist(name: &str) -> Result<PlaylistDetailSummary, String> {
-    show_playlist_with_store(PlaylistStore::default(), name)
+    show_playlist_with_limit(name, None)
 }
 
+pub fn show_playlist_with_limit(
+    name: &str,
+    limit: Option<usize>,
+) -> Result<PlaylistDetailSummary, String> {
+    show_playlist_with_store_and_limit(PlaylistStore::default(), name, limit)
+}
+
+#[cfg(test)]
 fn show_playlist_with_store(
     store: PlaylistStore,
     name: &str,
+) -> Result<PlaylistDetailSummary, String> {
+    show_playlist_with_store_and_limit(store, name, None)
+}
+
+fn show_playlist_with_store_and_limit(
+    store: PlaylistStore,
+    name: &str,
+    limit: Option<usize>,
 ) -> Result<PlaylistDetailSummary, String> {
     let name = name.trim();
     if name.is_empty() {
@@ -704,6 +717,7 @@ fn show_playlist_with_store(
     Ok(PlaylistDetailSummary {
         name: playlist.name,
         tracks: playlist.tracks,
+        limit,
     })
 }
 
@@ -1943,8 +1957,8 @@ mod tests {
         move_source_in_config, parse_args, paths_text_with_options, remove_source_from_config,
         scan_local_with_cache_path, search_local_with_config_and_cache_path,
         show_history_with_store, show_history_with_store_and_limit, show_playlist_with_store,
-        show_queue_with_store, show_queue_with_store_and_limit, CliAction, DoctorOptions,
-        LocalSourceMoveTarget, DEFAULT_LOCAL_SEARCH_LIMIT,
+        show_playlist_with_store_and_limit, show_queue_with_store, show_queue_with_store_and_limit,
+        CliAction, DoctorOptions, LocalSourceMoveTarget, DEFAULT_LOCAL_SEARCH_LIMIT,
     };
     use crate::{
         history::HistoryStore,
@@ -2423,7 +2437,15 @@ title = "Only"
         assert_eq!(
             parse_args(["rmus", "show-playlist", "Road Mix"]),
             Ok(CliAction::ShowPlaylist {
-                name: "Road Mix".to_string()
+                name: "Road Mix".to_string(),
+                limit: None,
+            })
+        );
+        assert_eq!(
+            parse_args(["rmus", "show-playlist", "Road Mix", "--limit", "1"]),
+            Ok(CliAction::ShowPlaylist {
+                name: "Road Mix".to_string(),
+                limit: Some(1),
             })
         );
         let missing_name =
@@ -2431,7 +2453,13 @@ title = "Only"
         assert!(missing_name.contains("missing playlist name for show-playlist"));
         let extra = parse_args(["rmus", "show-playlist", "Road Mix", "extra"])
             .expect_err("extra args should fail");
-        assert!(extra.contains("unexpected argument after playlist name"));
+        assert!(extra.contains("unexpected argument 'extra'"));
+        let missing_limit = parse_args(["rmus", "show-playlist", "Road Mix", "--limit"])
+            .expect_err("limit should require value");
+        assert!(missing_limit.contains("missing value for --limit"));
+        let invalid_limit = parse_args(["rmus", "show-playlist", "Road Mix", "--limit", "0"])
+            .expect_err("zero limit should fail");
+        assert!(invalid_limit.contains("--limit must be greater than 0"));
 
         let dir = test_dir("show-playlist");
         let playlists_dir = dir.join("playlists");
@@ -2474,6 +2502,15 @@ tracks = []
         assert!(message
             .contains("1. Local Artist - Local Song (Local Album) [local] /music/local.flac"));
         assert!(message.contains("2. Stream Artist - Stream Song (Stream Album) [Qobuz: qbz-1]"));
+
+        let limited = show_playlist_with_store_and_limit(store.clone(), "road mix", Some(1))
+            .expect("playlist limit should be applied");
+        let limited_message = limited.message();
+        assert!(limited_message.contains("Playlist 'Road Mix' (2 tracks)"));
+        assert!(limited_message
+            .contains("1. Local Artist - Local Song (Local Album) [local] /music/local.flac"));
+        assert!(!limited_message.contains("Stream Song"));
+        assert!(limited_message.contains("... 1 more track; rerun with --limit 2 to show all"));
 
         let empty = show_playlist_with_store(store.clone(), "Empty").unwrap();
         assert_eq!(

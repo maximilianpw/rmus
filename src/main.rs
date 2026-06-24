@@ -103,16 +103,18 @@ fn main() -> color_eyre::Result<()> {
                 }
             }
         }
-        Ok(rmus::cli::CliAction::ShowPlaylist { name }) => match rmus::cli::show_playlist(&name) {
-            Ok(summary) => {
-                print!("{}", summary.message());
-                return Ok(());
+        Ok(rmus::cli::CliAction::ShowPlaylist { name, limit }) => {
+            match rmus::cli::show_playlist_with_limit(&name, limit) {
+                Ok(summary) => {
+                    print!("{}", summary.message());
+                    return Ok(());
+                }
+                Err(error) => {
+                    eprintln!("{error}");
+                    std::process::exit(2);
+                }
             }
-            Err(error) => {
-                eprintln!("{error}");
-                std::process::exit(2);
-            }
-        },
+        }
         Ok(rmus::cli::CliAction::DeletePlaylist { name }) => {
             match rmus::cli::delete_playlist(&name) {
                 Ok(summary) => {
