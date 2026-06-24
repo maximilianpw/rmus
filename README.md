@@ -186,6 +186,8 @@ Left panel:
 - `f`: filter the focused Local or Playlists list.
 - `Space` / `Enter`: open selected album or playlist.
 - Empty Local tab: `Space` / `Enter` opens Settings for adding a source.
+- Empty Playlists tab: `Space` / `Enter` opens playlist creation.
+- Empty Qobuz/Tidal tabs: `Space` / `Enter` opens streaming search.
 - `P`: play selected album or playlist.
 - `a`: add selected album or playlist to queue.
 - `F`: add selected album or playlist to Favorites.

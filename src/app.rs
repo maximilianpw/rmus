@@ -995,6 +995,26 @@ impl App {
         self.logger.info(message.to_string());
     }
 
+    fn open_empty_left_tab_action(&mut self) -> bool {
+        match self.left_panel.active_tab_name().as_str() {
+            "Local" if self.config.local.sources.is_empty() => {
+                self.open_source_settings();
+                true
+            }
+            "Playlists" if self.playlist_store.playlist_names().is_empty() => {
+                self.focused_window = FocusedWindow::Center;
+                self.center_panel.open_create_playlist();
+                true
+            }
+            "Qobuz" | "Tidal" => {
+                self.focused_window = FocusedWindow::Center;
+                self.center_panel.open_search();
+                true
+            }
+            _ => false,
+        }
+    }
+
     fn play_selected_collection(&mut self) {
         if self.left_panel.selected_all_local_tracks() {
             self.play_all_local_tracks();
@@ -1499,11 +1519,7 @@ impl App {
                         self.center_panel.set_album(path, songs);
                     }
                     self.focused_window = FocusedWindow::Center;
-                } else if self.left_panel.active_tab_name() == "Local"
-                    && self.config.local.sources.is_empty()
-                {
-                    self.open_source_settings();
-                } else {
+                } else if !self.open_empty_left_tab_action() {
                     self.log_empty_left_selection();
                 }
             }

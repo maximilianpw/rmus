@@ -2870,13 +2870,13 @@ fn test_renaming_open_local_source_updates_center_title() {
 }
 
 #[test]
-fn test_selecting_empty_non_local_tabs_shows_contextual_feedback() {
+fn test_empty_playlist_selection_opens_playlist_creation() {
     let mut app = make_app(None, None);
 
     switch_to_tab(&mut app, "Playlists");
     app.execute(Action::SelectAlbum);
-    switch_to_tab(&mut app, "Qobuz");
-    app.execute(Action::SelectAlbum);
+
+    assert_eq!(app.focused_window, FocusedWindow::Center);
 
     let backend = TestBackend::new(320, 40);
     let mut terminal = Terminal::new(backend).unwrap();
@@ -2884,13 +2884,31 @@ fn test_selecting_empty_non_local_tabs_shows_contextual_feedback() {
     let text = extract_buffer_text(frame.buffer);
 
     assert!(
-        text.contains("No playlists yet"),
-        "empty Playlists selection should explain how to create a playlist"
+        text.contains("New Playlist Name"),
+        "empty Playlists selection should open playlist creation"
     );
-    assert!(
-        text.contains("Use / to search Qobuz"),
-        "empty streaming tabs should point users to search"
-    );
+}
+
+#[test]
+fn test_empty_streaming_selection_opens_search_input() {
+    for tab in ["Qobuz", "Tidal"] {
+        let mut app = make_app(None, None);
+        switch_to_tab(&mut app, tab);
+
+        app.execute(Action::SelectAlbum);
+
+        assert_eq!(app.focused_window, FocusedWindow::Center);
+
+        let backend = TestBackend::new(180, 40);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let frame = terminal.draw(|frame| app.render(frame)).unwrap();
+        let text = extract_buffer_text(frame.buffer);
+
+        assert!(
+            text.contains("Search Albums (Tab to switch)"),
+            "empty {tab} selection should open streaming search"
+        );
+    }
 }
 
 #[test]
