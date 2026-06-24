@@ -185,6 +185,7 @@ Left panel:
 - Mouse wheel: scroll the list under the pointer.
 - `f`: filter the focused Local or Playlists list.
 - `Space` / `Enter`: open selected album or playlist.
+- Empty Local tab: `Space` / `Enter` opens Settings for adding a source.
 - `P`: play selected album or playlist.
 - `a`: add selected album or playlist to queue.
 - `F`: add selected album or playlist to Favorites.

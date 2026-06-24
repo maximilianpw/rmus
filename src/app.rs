@@ -1499,6 +1499,10 @@ impl App {
                         self.center_panel.set_album(path, songs);
                     }
                     self.focused_window = FocusedWindow::Center;
+                } else if self.left_panel.active_tab_name() == "Local"
+                    && self.config.local.sources.is_empty()
+                {
+                    self.open_source_settings();
                 } else {
                     self.log_empty_left_selection();
                 }
@@ -2264,6 +2268,20 @@ impl App {
             self.settings_panel.toggle_open();
             self.focused_window = FocusedWindow::Settings;
         }
+    }
+
+    fn open_source_settings(&mut self) {
+        self.login_notice = None;
+        if !self.settings_panel.opened {
+            self.previous_focus_before_settings = Some(match self.focused_window {
+                FocusedWindow::Settings => FocusedWindow::Left,
+                other => other,
+            });
+            self.settings_panel.toggle_open();
+        }
+        self.settings_panel
+            .select_tab(crate::ui::settings::SettingsTab::General);
+        self.focused_window = FocusedWindow::Settings;
     }
 
     fn open_keybinds(&mut self) {

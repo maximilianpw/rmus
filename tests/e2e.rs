@@ -2209,6 +2209,30 @@ fn test_empty_left_tabs_render_contextual_guidance() {
 }
 
 #[test]
+fn test_empty_local_selection_opens_source_settings() {
+    let mut app = make_app(None, None);
+    let backend = TestBackend::new(160, 40);
+    let mut terminal = Terminal::new(backend).unwrap();
+
+    app.execute(Action::SelectAlbum);
+
+    assert!(app.settings_panel.opened);
+    assert_eq!(app.focused_window, FocusedWindow::Settings);
+
+    let frame = terminal.draw(|frame| app.render(frame)).unwrap();
+    let text = extract_buffer_text(frame.buffer);
+    assert!(text.contains("Settings"));
+    assert!(
+        text.contains("General | Quality"),
+        "empty Local selection should open the source settings tab"
+    );
+    assert!(
+        text.contains("Volume: 50%"),
+        "source settings should be ready for local library setup"
+    );
+}
+
+#[test]
 fn test_initial_local_source_can_be_selected_without_cursor_movement() {
     let dir = test_dir("initial-local-source");
     std::fs::create_dir_all(&dir).unwrap();
@@ -2846,10 +2870,9 @@ fn test_renaming_open_local_source_updates_center_title() {
 }
 
 #[test]
-fn test_selecting_empty_left_tab_shows_contextual_feedback() {
+fn test_selecting_empty_non_local_tabs_shows_contextual_feedback() {
     let mut app = make_app(None, None);
 
-    app.execute(Action::SelectAlbum);
     switch_to_tab(&mut app, "Playlists");
     app.execute(Action::SelectAlbum);
     switch_to_tab(&mut app, "Qobuz");
@@ -2860,10 +2883,6 @@ fn test_selecting_empty_left_tab_shows_contextual_feedback() {
     let frame = terminal.draw(|frame| app.render(frame)).unwrap();
     let text = extract_buffer_text(frame.buffer);
 
-    assert!(
-        text.contains("No local albums"),
-        "empty Local selection should explain how to populate the library"
-    );
     assert!(
         text.contains("No playlists yet"),
         "empty Playlists selection should explain how to create a playlist"
