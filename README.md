@@ -60,6 +60,7 @@ rmus local-stats
 rmus search-local "artist, album, title, or filename"
 rmus show-history --limit 25
 rmus show-queue --limit 25
+rmus clear-accounts
 rmus clear-history
 rmus clear-queue
 ```
@@ -81,6 +82,8 @@ The local-stats command counts configured local sources, missing source folders,
 The search-local command searches configured local tracks without opening the TUI. It matches title, artist, album, filename, and path using cached metadata when available, with filename/path fallback for uncached tracks. Use `--limit N` to show more or fewer matches.
 
 The show-history and show-queue commands print saved recently played tracks and saved playback queue state without opening the TUI. Use `--limit N` to inspect large saved state without printing every track.
+
+The clear-accounts command removes saved Qobuz credentials and Tidal tokens without touching local sources, playlists, queue, history, or the local metadata cache.
 
 The clear-history and clear-queue commands remove saved playback history or saved queue state without touching config, playlists, streaming accounts, or the local metadata cache.
 

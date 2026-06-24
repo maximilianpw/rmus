@@ -76,6 +76,7 @@ pub enum CliAction {
         path: PathBuf,
     },
     ClearCache,
+    ClearAccounts,
     ClearHistory,
     ClearQueue,
 }
@@ -130,6 +131,7 @@ where
         "import-playlist" => parse_import_playlist_args(args),
         "export-playlist" => parse_export_playlist_args(args),
         "clear-cache" => no_more_args(args, CliAction::ClearCache, &first),
+        "clear-accounts" => no_more_args(args, CliAction::ClearAccounts, &first),
         "clear-history" => no_more_args(args, CliAction::ClearHistory, &first),
         "clear-queue" => no_more_args(args, CliAction::ClearQueue, &first),
         _ => Err(format!("unknown argument '{first}'\n\n{}", help_text())),
@@ -490,6 +492,7 @@ pub fn help_text() -> &'static str {
         "  export-playlist <NAME> <PATH>\n",
         "                  Export a playlist to .m3u8\n",
         "  clear-cache     Remove cached local discovery and metadata\n",
+        "  clear-accounts  Remove saved Qobuz/Tidal credentials and tokens\n",
         "  clear-history   Remove saved recently played history\n",
         "  clear-queue     Remove saved playback queue state\n",
         "\n",
@@ -505,7 +508,7 @@ _rmus() {
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
-    commands="status doctor paths completions list-sources list-playlists show-history show-queue local-stats search-local scan-local add-source remove-source move-source show-playlist delete-playlist import-playlist export-playlist clear-cache clear-history clear-queue"
+    commands="status doctor paths completions list-sources list-playlists show-history show-queue local-stats search-local scan-local add-source remove-source move-source show-playlist delete-playlist import-playlist export-playlist clear-cache clear-accounts clear-history clear-queue"
     global_opts="-h --help -V --version"
 
     case "$prev" in
@@ -561,6 +564,7 @@ _rmus() {
         'import-playlist:import a local m3u playlist'
         'export-playlist:export a playlist to m3u8'
         'clear-cache:remove cached local discovery and metadata'
+        'clear-accounts:remove saved streaming accounts'
         'clear-history:remove saved recently played history'
         'clear-queue:remove saved playback queue state'
     )
@@ -621,6 +625,7 @@ complete -c rmus -n '__fish_use_subcommand' -a delete-playlist -d 'Delete a save
 complete -c rmus -n '__fish_use_subcommand' -a import-playlist -d 'Import a local m3u playlist'
 complete -c rmus -n '__fish_use_subcommand' -a export-playlist -d 'Export a playlist to m3u8'
 complete -c rmus -n '__fish_use_subcommand' -a clear-cache -d 'Remove cached local discovery and metadata'
+complete -c rmus -n '__fish_use_subcommand' -a clear-accounts -d 'Remove saved streaming accounts'
 complete -c rmus -n '__fish_use_subcommand' -a clear-history -d 'Remove saved recently played history'
 complete -c rmus -n '__fish_use_subcommand' -a clear-queue -d 'Remove saved playback queue state'
 complete -c rmus -n '__fish_seen_subcommand_from completions' -a 'bash zsh fish'
@@ -1759,6 +1764,55 @@ fn clear_cache_at(path: &Path) -> Result<CacheClearSummary, std::io::Error> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccountClearSummary {
+    pub removed_qobuz: bool,
+    pub removed_tidal: bool,
+}
+
+impl AccountClearSummary {
+    pub fn message(&self) -> String {
+        let mut removed = Vec::new();
+        if self.removed_qobuz {
+            removed.push("Qobuz");
+        }
+        if self.removed_tidal {
+            removed.push("Tidal");
+        }
+
+        if removed.is_empty() {
+            "Streaming accounts already absent".to_string()
+        } else {
+            format!("Cleared streaming accounts: {}", removed.join(", "))
+        }
+    }
+
+    fn changed(&self) -> bool {
+        self.removed_qobuz || self.removed_tidal
+    }
+}
+
+pub fn clear_accounts() -> Result<AccountClearSummary, String> {
+    let mut config = Config::load();
+    let summary = clear_accounts_in_config(&mut config);
+    if summary.changed() {
+        config
+            .save()
+            .map_err(|error| format!("failed to save config: {error}"))?;
+    }
+    Ok(summary)
+}
+
+fn clear_accounts_in_config(config: &mut Config) -> AccountClearSummary {
+    let removed_qobuz = config.qobuz.take().is_some();
+    let removed_tidal = config.tidal.take().is_some();
+
+    AccountClearSummary {
+        removed_qobuz,
+        removed_tidal,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistoryClearSummary {
     pub path: PathBuf,
     pub removed: bool,
@@ -2295,13 +2349,13 @@ fn is_executable_file(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        add_source_and_scan_with_config_and_cache_path, add_source_to_config, clear_cache_at,
-        clear_history_at, clear_queue_at, completions_text, delete_playlist_with_store,
-        doctor_report_with_options, list_playlists_with_store, list_sources_from_config,
-        local_stats_with_cache_path, move_source_in_config, parse_args, paths_text_with_options,
-        remove_source_from_config, scan_local_with_cache_path,
-        search_local_with_config_and_cache_path, show_history_with_store,
-        show_history_with_store_and_limit, show_playlist_with_store,
+        add_source_and_scan_with_config_and_cache_path, add_source_to_config,
+        clear_accounts_in_config, clear_cache_at, clear_history_at, clear_queue_at,
+        completions_text, delete_playlist_with_store, doctor_report_with_options,
+        list_playlists_with_store, list_sources_from_config, local_stats_with_cache_path,
+        move_source_in_config, parse_args, paths_text_with_options, remove_source_from_config,
+        scan_local_with_cache_path, search_local_with_config_and_cache_path,
+        show_history_with_store, show_history_with_store_and_limit, show_playlist_with_store,
         show_playlist_with_store_and_limit, show_queue_with_store, show_queue_with_store_and_limit,
         status_with_config_and_stores, CliAction, CompletionShell, DoctorOptions,
         LocalSourceMoveTarget, DEFAULT_LOCAL_SEARCH_LIMIT,
@@ -2577,18 +2631,21 @@ album_name = {}
         let bash = completions_text(CompletionShell::Bash);
         assert!(bash.contains("complete -F _rmus rmus"));
         assert!(bash.contains("status"));
+        assert!(bash.contains("clear-accounts"));
         assert!(bash.contains("show-playlist"));
         assert!(bash.contains("--limit"));
 
         let zsh = completions_text(CompletionShell::Zsh);
         assert!(zsh.contains("#compdef rmus"));
         assert!(zsh.contains("status:print saved app state summary"));
+        assert!(zsh.contains("clear-accounts:remove saved streaming accounts"));
         assert!(zsh.contains("move-source:reorder configured local music folders"));
         assert!(zsh.contains("bash zsh fish"));
 
         let fish = completions_text(CompletionShell::Fish);
         assert!(fish.contains("complete -c rmus"));
         assert!(fish.contains("__fish_use_subcommand' -a status"));
+        assert!(fish.contains("__fish_use_subcommand' -a clear-accounts"));
         assert!(fish.contains("clear-queue"));
         assert!(fish.contains("__fish_seen_subcommand_from completions"));
     }
@@ -3786,6 +3843,14 @@ tracks = []
     }
 
     #[test]
+    fn clear_accounts_command_runs_maintenance_action() {
+        assert_eq!(
+            parse_args(["rmus", "clear-accounts"]),
+            Ok(CliAction::ClearAccounts)
+        );
+    }
+
+    #[test]
     fn clear_history_command_runs_maintenance_action() {
         assert_eq!(
             parse_args(["rmus", "clear-history"]),
@@ -3844,6 +3909,64 @@ tracks = []
 
         let summary = clear_cache_at(&summary.path).unwrap();
         assert!(!summary.removed);
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn clear_accounts_removes_streaming_credentials_without_touching_other_config() {
+        let dir = test_dir("clear-accounts");
+        let mut config = Config {
+            local: LocalConfig {
+                sources: vec![LocalSource {
+                    name: "Library".to_string(),
+                    path: dir.join("music"),
+                }],
+            },
+            qobuz: Some(QobuzConfig {
+                email: "listener@example.com".to_string(),
+                password: "secret".to_string(),
+                app_id: "app-id".to_string(),
+                app_secret: "app-secret".to_string(),
+            }),
+            tidal: Some(TidalConfig {
+                access_token: "access".to_string(),
+                refresh_token: "refresh".to_string(),
+                country_code: "US".to_string(),
+                token_expiry: 4_102_444_800,
+            }),
+            audio: AudioConfig {
+                default_volume: 64,
+                max_stream_quality: MaxStreamQuality::Cd,
+                default_shuffle: ShuffleMode::On,
+                default_repeat: RepeatMode::All,
+            },
+        };
+
+        let summary = clear_accounts_in_config(&mut config);
+
+        assert!(summary.removed_qobuz);
+        assert!(summary.removed_tidal);
+        assert_eq!(
+            summary.message(),
+            "Cleared streaming accounts: Qobuz, Tidal"
+        );
+        assert!(config.qobuz.is_none());
+        assert!(config.tidal.is_none());
+        assert_eq!(config.local.sources.len(), 1);
+        assert_eq!(config.local.sources[0].name, "Library");
+        assert_eq!(config.audio.default_volume, 64);
+        assert_eq!(config.audio.max_stream_quality, MaxStreamQuality::Cd);
+        assert_eq!(config.audio.default_shuffle, ShuffleMode::On);
+        assert_eq!(config.audio.default_repeat, RepeatMode::All);
+
+        let second_summary = clear_accounts_in_config(&mut config);
+        assert!(!second_summary.removed_qobuz);
+        assert!(!second_summary.removed_tidal);
+        assert_eq!(
+            second_summary.message(),
+            "Streaming accounts already absent"
+        );
 
         let _ = fs::remove_dir_all(dir);
     }

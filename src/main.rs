@@ -150,6 +150,16 @@ fn main() -> color_eyre::Result<()> {
             println!("{}", summary.message());
             return Ok(());
         }
+        Ok(rmus::cli::CliAction::ClearAccounts) => match rmus::cli::clear_accounts() {
+            Ok(summary) => {
+                println!("{}", summary.message());
+                return Ok(());
+            }
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(2);
+            }
+        },
         Ok(rmus::cli::CliAction::ClearHistory) => {
             let summary = rmus::cli::clear_history()?;
             println!("{}", summary.message());

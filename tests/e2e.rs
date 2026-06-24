@@ -237,6 +237,7 @@ fn test_cli_help_prints_without_launching_tui() {
     assert!(stdout.contains("import-playlist"));
     assert!(stdout.contains("export-playlist"));
     assert!(stdout.contains("clear-cache"));
+    assert!(stdout.contains("clear-accounts"));
     assert!(stdout.contains("clear-history"));
     assert!(stdout.contains("clear-queue"));
     assert!(stdout.contains("--version"));
@@ -1240,6 +1241,105 @@ fn test_cli_show_queue_limit_truncates_saved_queue_without_launching_tui() {
     assert!(stdout.contains("  1. Queue Artist - First Queue [local] /music/first.flac"));
     assert!(!stdout.contains("Second Queue"));
     assert!(stdout.contains("... 1 more track; rerun with --limit 2 to show all"));
+
+    let _ = std::fs::remove_dir_all(state_dir);
+}
+
+#[test]
+fn test_cli_clear_accounts_removes_streaming_credentials_without_launching_tui() {
+    let state_dir = test_dir("cli-clear-accounts");
+    let music_dir = state_dir.join("music");
+    std::fs::create_dir_all(&music_dir).unwrap();
+
+    let config_path = isolated_storage_path(&state_dir, "config");
+    let playlists_dir = isolated_storage_path(&state_dir, "playlists");
+    let history_path = isolated_storage_path(&state_dir, "history");
+    let queue_path = isolated_storage_path(&state_dir, "queue");
+    let cache_path = isolated_storage_path(&state_dir, "local cache");
+    std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(&playlists_dir).unwrap();
+    std::fs::write(playlists_dir.join("Keep.toml"), "playlist sentinel").unwrap();
+    for (path, content) in [
+        (&history_path, "history sentinel"),
+        (&queue_path, "queue sentinel"),
+        (&cache_path, "cache sentinel"),
+    ] {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, content).unwrap();
+    }
+    let config = Config {
+        local: LocalConfig {
+            sources: vec![LocalSource {
+                name: "Library".to_string(),
+                path: music_dir.clone(),
+            }],
+        },
+        qobuz: Some(QobuzConfig {
+            email: "listener@example.com".to_string(),
+            password: "secret".to_string(),
+            app_id: "app-id".to_string(),
+            app_secret: "app-secret".to_string(),
+        }),
+        tidal: Some(TidalConfig {
+            access_token: "tidal-access".to_string(),
+            refresh_token: "tidal-refresh".to_string(),
+            country_code: "US".to_string(),
+            token_expiry: 4_102_444_800,
+        }),
+        audio: AudioConfig {
+            default_volume: 64,
+            max_stream_quality: MaxStreamQuality::Cd,
+            default_shuffle: ShuffleMode::On,
+            default_repeat: RepeatMode::All,
+        },
+    };
+    std::fs::write(&config_path, toml::to_string_pretty(&config).unwrap()).unwrap();
+
+    let mut command = rmus_binary();
+    state_env(command.arg("clear-accounts"), &state_dir);
+    let output = command.output().expect("rmus clear-accounts should run");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Cleared streaming accounts: Qobuz, Tidal"));
+
+    let saved: Config = toml::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+    assert!(saved.qobuz.is_none());
+    assert!(saved.tidal.is_none());
+    assert_eq!(saved.local.sources.len(), 1);
+    assert_eq!(saved.local.sources[0].name, "Library");
+    assert_eq!(saved.local.sources[0].path, music_dir);
+    assert_eq!(saved.audio.default_volume, 64);
+    assert_eq!(saved.audio.max_stream_quality, MaxStreamQuality::Cd);
+    assert_eq!(saved.audio.default_shuffle, ShuffleMode::On);
+    assert_eq!(saved.audio.default_repeat, RepeatMode::All);
+    assert_eq!(
+        std::fs::read_to_string(playlists_dir.join("Keep.toml")).unwrap(),
+        "playlist sentinel"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&history_path).unwrap(),
+        "history sentinel"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&queue_path).unwrap(),
+        "queue sentinel"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&cache_path).unwrap(),
+        "cache sentinel"
+    );
+
+    let mut command = rmus_binary();
+    state_env(command.arg("clear-accounts"), &state_dir);
+    let output = command
+        .output()
+        .expect("second rmus clear-accounts should run");
+    assert!(output.status.success());
+    assert!(String::from_utf8(output.stdout)
+        .unwrap()
+        .contains("Streaming accounts already absent"));
 
     let _ = std::fs::remove_dir_all(state_dir);
 }
