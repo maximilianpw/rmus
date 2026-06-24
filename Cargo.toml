@@ -1,10 +1,12 @@
 [package]
 name = "rmus"
-version = "0.1.2"
-description = "Music Player TUI"
+version = "1.0.0"
+description = "Keyboard-driven terminal music player"
 authors = ["Maximilian PINDER-WHITE <mpinderwhite@proton.me>"]
 license = "MIT"
 edition = "2021"
+repository = "https://github.com/maximilianpw/rmus"
+readme = "README.md"
 
 [dependencies]
 crossterm = "0.29.0"

@@ -138,9 +138,9 @@ If an especially deep source initially appears as `scanning...`, wait for that b
 ## Test
 
 ```sh
-cargo test
+cargo test --locked --all-features --all-targets
 cargo fmt -- --check
-cargo clippy --all-targets -- -D warnings
+cargo clippy --all-features --all-targets -- -D warnings
 ```
 
 ## Configuration
