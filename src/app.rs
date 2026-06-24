@@ -3332,6 +3332,7 @@ mod tests {
     struct VolumeTestPlayer {
         info: PlaybackInfo,
         queue: Vec<Song>,
+        queue_position: usize,
     }
 
     impl VolumeTestPlayer {
@@ -3342,7 +3343,17 @@ mod tests {
                     ..Default::default()
                 },
                 queue: Vec::new(),
+                queue_position: 0,
             }
+        }
+
+        fn sync_info_queue(&mut self) {
+            self.info.queue_len = self.queue.len();
+            self.info.queue_position = if self.queue.is_empty() {
+                0
+            } else {
+                self.queue_position.min(self.queue.len() - 1)
+            };
         }
     }
 
@@ -3350,12 +3361,20 @@ mod tests {
         fn play(&mut self, song: &Song) -> PlayerResult<()> {
             self.info.current_song = Some(song.clone());
             self.queue = vec![song.clone()];
+            self.queue_position = 0;
+            self.sync_info_queue();
             Ok(())
         }
 
         fn play_album(&mut self, songs: Vec<Song>, start_index: usize) -> PlayerResult<()> {
             self.queue = songs;
-            self.info.current_song = self.queue.get(start_index).cloned();
+            self.queue_position = if self.queue.is_empty() {
+                0
+            } else {
+                start_index.min(self.queue.len() - 1)
+            };
+            self.info.current_song = self.queue.get(self.queue_position).cloned();
+            self.sync_info_queue();
             Ok(())
         }
 
@@ -3365,6 +3384,7 @@ mod tests {
 
         fn stop(&mut self) -> PlayerResult<()> {
             self.info.current_song = None;
+            self.sync_info_queue();
             Ok(())
         }
 
@@ -3387,6 +3407,7 @@ mod tests {
         }
 
         fn poll(&mut self) -> PlayerResult<PlaybackInfo> {
+            self.sync_info_queue();
             Ok(self.info.clone())
         }
 
@@ -3412,15 +3433,21 @@ mod tests {
 
         fn enqueue(&mut self, songs: Vec<Song>) -> PlayerResult<()> {
             self.queue.extend(songs);
+            self.sync_info_queue();
             Ok(())
         }
 
         fn restore_queue(&mut self, songs: Vec<Song>, position: usize) -> PlayerResult<()> {
             self.queue = songs;
+            self.queue_position = if self.queue.is_empty() {
+                0
+            } else {
+                position.min(self.queue.len() - 1)
+            };
             self.info.current_song = None;
             self.info.state = PlaybackState::Stopped;
             self.info.position = 0.0;
-            let _ = position;
+            self.sync_info_queue();
             Ok(())
         }
 
@@ -3429,7 +3456,7 @@ mod tests {
         }
 
         fn get_queue_position(&self) -> usize {
-            0
+            self.queue_position
         }
 
         fn remove_from_queue(&mut self, index: usize) -> PlayerResult<()> {

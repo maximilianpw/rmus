@@ -1377,6 +1377,15 @@ impl MockPlayer {
             enqueued,
         )
     }
+
+    fn sync_info_queue(&mut self) {
+        self.info.queue_len = self.queue.len();
+        self.info.queue_position = if self.queue.is_empty() {
+            0
+        } else {
+            self.queue_position.min(self.queue.len() - 1)
+        };
+    }
 }
 
 impl MusicPlayer for MockPlayer {
@@ -1387,6 +1396,7 @@ impl MusicPlayer for MockPlayer {
         self.info.current_song = Some(song.clone());
         self.info.state = PlaybackState::Playing;
         self.info.position = 0.0;
+        self.sync_info_queue();
         Ok(())
     }
 
@@ -1399,6 +1409,7 @@ impl MusicPlayer for MockPlayer {
             self.info.state = PlaybackState::Playing;
             self.info.position = 0.0;
         }
+        self.sync_info_queue();
         Ok(())
     }
 
@@ -1415,6 +1426,7 @@ impl MusicPlayer for MockPlayer {
         self.info.state = PlaybackState::Stopped;
         self.info.current_song = None;
         self.info.position = 0.0;
+        self.sync_info_queue();
         Ok(())
     }
 
@@ -1425,6 +1437,7 @@ impl MusicPlayer for MockPlayer {
             self.info.state = PlaybackState::Playing;
             self.info.position = 0.0;
         }
+        self.sync_info_queue();
         Ok(())
     }
 
@@ -1435,6 +1448,7 @@ impl MusicPlayer for MockPlayer {
             self.info.state = PlaybackState::Playing;
             self.info.position = 0.0;
         }
+        self.sync_info_queue();
         Ok(())
     }
 
@@ -1449,6 +1463,7 @@ impl MusicPlayer for MockPlayer {
     }
 
     fn poll(&mut self) -> PlayerResult<PlaybackInfo> {
+        self.sync_info_queue();
         Ok(self.info.clone())
     }
 
@@ -1480,6 +1495,7 @@ impl MusicPlayer for MockPlayer {
     fn enqueue(&mut self, songs: Vec<Song>) -> PlayerResult<()> {
         self.enqueued.lock().unwrap().extend(songs.clone());
         self.queue.extend(songs);
+        self.sync_info_queue();
         Ok(())
     }
 
@@ -1493,6 +1509,7 @@ impl MusicPlayer for MockPlayer {
         self.info.current_song = None;
         self.info.state = PlaybackState::Stopped;
         self.info.position = 0.0;
+        self.sync_info_queue();
         Ok(())
     }
 
@@ -1508,6 +1525,7 @@ impl MusicPlayer for MockPlayer {
         if index < self.queue.len() {
             self.queue.remove(index);
         }
+        self.sync_info_queue();
         Ok(())
     }
 
@@ -1516,6 +1534,7 @@ impl MusicPlayer for MockPlayer {
             let song = self.queue.remove(from);
             self.queue.insert(to, song);
         }
+        self.sync_info_queue();
         Ok(())
     }
 }

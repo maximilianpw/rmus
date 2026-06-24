@@ -65,6 +65,8 @@ pub struct PlaybackInfo {
     pub last_error: Option<String>,
     pub shuffle: ShuffleMode,
     pub repeat: RepeatMode,
+    pub queue_position: usize,
+    pub queue_len: usize,
 }
 
 #[derive(Debug)]

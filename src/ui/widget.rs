@@ -85,6 +85,13 @@ pub fn now_playing_widget(info: &PlaybackInfo, is_focused: bool, frame: &mut Fra
         status_parts.push(quality);
     }
     status_parts.push(volume);
+    if info.current_song.is_some() && info.queue_len > 0 {
+        status_parts.push(Span::raw(format!(
+            " | Queue: {}/{}",
+            info.queue_position.min(info.queue_len - 1) + 1,
+            info.queue_len
+        )));
+    }
     if info.shuffle == ShuffleMode::On {
         status_parts.push(Span::styled(" | Shuffle", theme::secondary_style()));
     }
@@ -268,6 +275,51 @@ mod tests {
         let text = extract_buffer_text(frame.buffer);
 
         assert!(text.contains("Quality: Lossless"));
+    }
+
+    #[test]
+    fn now_playing_widget_shows_queue_position_when_track_is_active() {
+        let backend = TestBackend::new(80, 5);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let info = PlaybackInfo {
+            state: PlaybackState::Playing,
+            current_song: Some(Song {
+                title: "Needle Drop".to_string(),
+                artist: "Selector".to_string(),
+                ..Default::default()
+            }),
+            volume: 50,
+            queue_position: 1,
+            queue_len: 3,
+            ..Default::default()
+        };
+
+        let frame = terminal
+            .draw(|frame| now_playing_widget(&info, false, frame, frame.area()))
+            .unwrap();
+        let text = extract_buffer_text(frame.buffer);
+
+        assert!(text.contains("Queue: 2/3"));
+    }
+
+    #[test]
+    fn now_playing_widget_omits_queue_position_without_current_track() {
+        let backend = TestBackend::new(80, 5);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let info = PlaybackInfo {
+            state: PlaybackState::Stopped,
+            volume: 50,
+            queue_position: 1,
+            queue_len: 3,
+            ..Default::default()
+        };
+
+        let frame = terminal
+            .draw(|frame| now_playing_widget(&info, false, frame, frame.area()))
+            .unwrap();
+        let text = extract_buffer_text(frame.buffer);
+
+        assert!(!text.contains("Queue:"));
     }
 
     #[test]

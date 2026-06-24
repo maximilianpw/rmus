@@ -487,6 +487,7 @@ impl MpvPlayer {
         self.playback_info.current_song = None;
         self.playback_info.position = 0.0;
         self.playback_info.duration = 0.0;
+        self.update_playback_queue_info();
     }
 
     fn materialize_stream_manifest(
@@ -535,6 +536,15 @@ impl MpvPlayer {
 
         Ok(())
     }
+
+    fn update_playback_queue_info(&mut self) {
+        self.playback_info.queue_len = self.playlist.len();
+        self.playback_info.queue_position = if self.playlist.is_empty() {
+            0
+        } else {
+            self.playlist_index.min(self.playlist.len() - 1)
+        };
+    }
 }
 
 impl MusicPlayer for MpvPlayer {
@@ -546,6 +556,7 @@ impl MusicPlayer for MpvPlayer {
         self.playback_info.position = 0.0;
         self.playback_info.duration = 0.0;
         self.playback_info.last_error = None;
+        self.update_playback_queue_info();
         self.load_song(song)?;
         self.playback_info.state = PlaybackState::Stopped;
         Ok(())
@@ -566,6 +577,7 @@ impl MusicPlayer for MpvPlayer {
         self.playback_info.position = 0.0;
         self.playback_info.duration = 0.0;
         self.playback_info.last_error = None;
+        self.update_playback_queue_info();
         self.load_song(&song)?;
         self.playback_info.state = PlaybackState::Stopped;
         Ok(())
@@ -586,6 +598,7 @@ impl MusicPlayer for MpvPlayer {
 
     fn next(&mut self) -> PlayerResult<()> {
         self.advance_to_next_track();
+        self.update_playback_queue_info();
         Ok(())
     }
 
@@ -596,6 +609,7 @@ impl MusicPlayer for MpvPlayer {
         } else {
             self.go_to_previous_track();
         }
+        self.update_playback_queue_info();
         Ok(())
     }
 
@@ -614,6 +628,7 @@ impl MusicPlayer for MpvPlayer {
         }
         self.playback_info.shuffle = self.shuffle;
         self.playback_info.repeat = self.repeat;
+        self.update_playback_queue_info();
         Ok(self.playback_info.clone())
     }
 
@@ -664,10 +679,12 @@ impl MusicPlayer for MpvPlayer {
             self.playback_info.position = 0.0;
             self.playback_info.duration = 0.0;
             self.playback_info.last_error = None;
+            self.update_playback_queue_info();
             self.load_song(&song)?;
             self.playback_info.state = PlaybackState::Stopped;
         }
 
+        self.update_playback_queue_info();
         Ok(())
     }
 
@@ -689,6 +706,7 @@ impl MusicPlayer for MpvPlayer {
         self.playback_info.position = 0.0;
         self.playback_info.duration = 0.0;
         self.playback_info.last_error = None;
+        self.update_playback_queue_info();
         Ok(())
     }
 
@@ -728,6 +746,7 @@ impl MusicPlayer for MpvPlayer {
             self.generate_shuffle_order(true);
         }
 
+        self.update_playback_queue_info();
         Ok(())
     }
 
@@ -758,6 +777,7 @@ impl MusicPlayer for MpvPlayer {
             self.generate_shuffle_order(true);
         }
 
+        self.update_playback_queue_info();
         Ok(())
     }
 
@@ -976,6 +996,9 @@ mod tests {
 
         assert_eq!(player.get_queue().len(), 2);
         assert_eq!(player.get_queue_position(), 1);
+        let info = player.get_playback_info();
+        assert_eq!(info.queue_len, 2);
+        assert_eq!(info.queue_position, 1);
         assert_eq!(player.get_playback_info().state, PlaybackState::Stopped);
         assert!(player.get_playback_info().current_song.is_none());
         assert!(!player.is_alive());
