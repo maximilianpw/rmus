@@ -17,7 +17,7 @@ use rmus::{
     history::HistoryStore,
     keymap::{resolve_key, KeyAction},
     players::{MusicPlayer, PlaybackInfo, PlaybackState, PlayerResult, RepeatMode, ShuffleMode},
-    playlist::PlaylistStore,
+    playlist::{Playlist, PlaylistStore},
     queue::QueueStore,
     sources::{
         song::Song,
@@ -828,13 +828,14 @@ song.flac
     let playlist_path = find_file_named(&state_dir, "Imported Mix.toml")
         .expect("import should create a playlist file under the isolated state dir");
     let playlist = std::fs::read_to_string(playlist_path).unwrap();
-    assert!(playlist.contains("name = \"Imported Mix\""));
-    assert!(playlist.contains("title = \"Artist - Song\""));
-    assert!(playlist.contains("duration_secs = 245.0"));
-    assert!(playlist.contains(&format!(
-        "path = \"{}\"",
-        music_dir.join("song.flac").to_string_lossy()
-    )));
+    let playlist: Playlist = toml::from_str(&playlist).unwrap();
+    assert_eq!(playlist.name, "Imported Mix");
+    assert_eq!(playlist.tracks.len(), 1);
+    let track = &playlist.tracks[0];
+    assert_eq!(track.title, "Artist - Song");
+    assert_eq!(track.duration_secs, Some(245.0));
+    let expected_path = music_dir.join("song.flac").to_string_lossy().into_owned();
+    assert_eq!(track.path.as_deref(), Some(expected_path.as_str()));
 
     let _ = std::fs::remove_dir_all(state_dir);
 }
