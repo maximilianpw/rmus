@@ -619,7 +619,11 @@ impl MusicPlayer for MpvPlayer {
 
     fn set_volume(&mut self, volume: u8) -> PlayerResult<()> {
         let vol = volume.min(100);
-        self.send_command(&["set_property", "volume", &vol.to_string()])
+        if self.socket.is_some() {
+            self.send_command(&["set_property", "volume", &vol.to_string()])?;
+        }
+        self.playback_info.volume = vol;
+        Ok(())
     }
 
     fn poll(&mut self) -> PlayerResult<PlaybackInfo> {
@@ -895,6 +899,18 @@ mod tests {
         assert_eq!(info.volume, 35);
         assert_eq!(info.shuffle, ShuffleMode::On);
         assert_eq!(info.repeat, RepeatMode::All);
+    }
+
+    #[test]
+    fn volume_can_change_before_mpv_starts() {
+        let mut player = MpvPlayer::new_with_default_volume("/tmp/rmus.sock".into(), 35);
+
+        player
+            .set_volume(72)
+            .expect("volume changes before playback should not require mpv IPC");
+
+        assert_eq!(player.get_playback_info().volume, 72);
+        assert!(!player.is_alive());
     }
 
     #[test]
