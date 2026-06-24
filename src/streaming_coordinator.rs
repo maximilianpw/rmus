@@ -246,6 +246,12 @@ impl StreamingCoordinator {
         self.busy_service == Some(service_id)
     }
 
+    pub fn can_submit_search(&self, service_id: StreamingServiceId) -> bool {
+        self.service_ref(service_id).is_some()
+            || self.busy_service == Some(service_id)
+            || self.recovering_service == Some(service_id)
+    }
+
     pub fn replace_qobuz(&mut self, qobuz: Option<Box<dyn StreamingService>>) {
         self.qobuz = qobuz;
     }

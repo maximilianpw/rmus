@@ -1007,8 +1007,11 @@ impl App {
                 true
             }
             "Qobuz" | "Tidal" => {
-                self.focused_window = FocusedWindow::Center;
-                self.center_panel.open_search();
+                if let Some(service_id) =
+                    StreamingServiceId::from_tab_name(&self.left_panel.active_tab_name())
+                {
+                    self.open_streaming_search_or_notice(service_id);
+                }
                 true
             }
             _ => false,
@@ -1826,9 +1829,8 @@ impl App {
             }
             Action::OpenSearch => {
                 let tab = self.left_panel.active_tab_name();
-                if tab == "Qobuz" || tab == "Tidal" {
-                    self.focused_window = FocusedWindow::Center;
-                    self.center_panel.open_search();
+                if let Some(service_id) = StreamingServiceId::from_tab_name(&tab) {
+                    self.open_streaming_search_or_notice(service_id);
                 } else if self.center_panel.can_open_local_filter() {
                     // Local tab with songs loaded — open local filter search
                     self.focused_window = FocusedWindow::Center;
@@ -1894,6 +1896,26 @@ impl App {
     fn show_login_notice(&mut self, message: String) {
         self.login_notice = Some(message.clone());
         self.logger.info(message);
+    }
+
+    fn open_streaming_search_or_notice(&mut self, service_id: StreamingServiceId) {
+        if let Some(message) = self.streaming_search_notice(service_id) {
+            self.center_panel.set_status(Some(message.clone()));
+            self.show_login_notice(message);
+            return;
+        }
+
+        self.focused_window = FocusedWindow::Center;
+        self.center_panel.open_search();
+    }
+
+    fn streaming_search_notice(&self, service_id: StreamingServiceId) -> Option<String> {
+        match service_id {
+            StreamingServiceId::Qobuz if !self.streaming.can_submit_search(service_id) => {
+                Some("Configure Qobuz in Settings".to_string())
+            }
+            StreamingServiceId::Qobuz | StreamingServiceId::Tidal => None,
+        }
     }
 
     pub(crate) fn delegate_scroll_at(&mut self, column: u16, row: u16, key: KeyEvent) {

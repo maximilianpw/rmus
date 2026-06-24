@@ -2890,25 +2890,74 @@ fn test_empty_playlist_selection_opens_playlist_creation() {
 }
 
 #[test]
-fn test_empty_streaming_selection_opens_search_input() {
-    for tab in ["Qobuz", "Tidal"] {
-        let mut app = make_app(None, None);
-        switch_to_tab(&mut app, tab);
+fn test_empty_tidal_selection_opens_search_input() {
+    let mut app = make_app(None, None);
+    switch_to_tab(&mut app, "Tidal");
 
-        app.execute(Action::SelectAlbum);
+    app.execute(Action::SelectAlbum);
 
-        assert_eq!(app.focused_window, FocusedWindow::Center);
+    assert_eq!(app.focused_window, FocusedWindow::Center);
 
-        let backend = TestBackend::new(180, 40);
-        let mut terminal = Terminal::new(backend).unwrap();
-        let frame = terminal.draw(|frame| app.render(frame)).unwrap();
-        let text = extract_buffer_text(frame.buffer);
+    let backend = TestBackend::new(180, 40);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let frame = terminal.draw(|frame| app.render(frame)).unwrap();
+    let text = extract_buffer_text(frame.buffer);
 
-        assert!(
-            text.contains("Search Albums (Tab to switch)"),
-            "empty {tab} selection should open streaming search"
-        );
-    }
+    assert!(
+        text.contains("Search Albums (Tab to switch)"),
+        "empty Tidal selection should open streaming search"
+    );
+}
+
+#[test]
+fn test_empty_qobuz_selection_without_credentials_shows_login_popup() {
+    let mut app = make_app(None, None);
+    switch_to_tab(&mut app, "Qobuz");
+
+    app.execute(Action::SelectAlbum);
+
+    let backend = TestBackend::new(180, 40);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let frame = terminal.draw(|frame| app.render(frame)).unwrap();
+    let text = extract_buffer_text(frame.buffer);
+
+    assert!(
+        text.contains("Configure Qobuz in Settings"),
+        "empty Qobuz selection without credentials should show a configuration hint"
+    );
+    assert!(
+        text.contains("Login Required"),
+        "empty Qobuz selection without credentials should show the login popup"
+    );
+    assert!(
+        !text.contains("Search Albums (Tab to switch)"),
+        "unavailable Qobuz selection should not open a search input"
+    );
+}
+
+#[test]
+fn test_empty_qobuz_selection_with_service_opens_search_input() {
+    let mock = MockStreamingService::new_authenticated("Qobuz", mock_albums());
+    let mut app = make_app(Some(Box::new(mock)), None);
+    switch_to_tab(&mut app, "Qobuz");
+
+    app.execute(Action::SelectAlbum);
+
+    assert_eq!(app.focused_window, FocusedWindow::Center);
+
+    let backend = TestBackend::new(180, 40);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let frame = terminal.draw(|frame| app.render(frame)).unwrap();
+    let text = extract_buffer_text(frame.buffer);
+
+    assert!(
+        text.contains("Search Albums (Tab to switch)"),
+        "empty Qobuz selection with a service should open streaming search"
+    );
+    assert!(
+        !text.contains("Login Required"),
+        "available Qobuz selection should not show the login popup"
+    );
 }
 
 #[test]
@@ -3015,11 +3064,6 @@ fn test_qobuz_search_without_credentials_shows_config_hint() {
 
     switch_to_tab(&mut app, "Qobuz");
     app.execute(Action::OpenSearch);
-    for c in "test".chars() {
-        app.delegate_key_to_panel(make_key(KeyCode::Char(c)));
-    }
-    app.delegate_key_to_panel(make_key(KeyCode::Enter));
-    app.tick();
 
     let backend = TestBackend::new(100, 24);
     let mut terminal = Terminal::new(backend).unwrap();
@@ -3043,11 +3087,15 @@ fn test_qobuz_search_without_credentials_shows_config_hint() {
         "login popup should show its dismiss key"
     );
     assert!(
+        !text.contains("Search Albums (Tab to switch)"),
+        "Qobuz search without credentials should not open a doomed search input"
+    );
+    assert!(
         !text.contains("Waiting for previous request cleanup"),
         "Unavailable Qobuz search should not look like a stuck request"
     );
 
-    dispatch_key(&mut app, make_key(KeyCode::Esc));
+    app.delegate_key_to_panel(make_key(KeyCode::Esc));
     let frame = terminal.draw(|frame| app.render(frame)).unwrap();
     let text = extract_buffer_text(frame.buffer);
     assert!(
@@ -3066,13 +3114,8 @@ fn test_login_popup_enter_opens_account_settings() {
 
     switch_to_tab(&mut app, "Qobuz");
     app.execute(Action::OpenSearch);
-    for c in "test".chars() {
-        app.delegate_key_to_panel(make_key(KeyCode::Char(c)));
-    }
-    app.delegate_key_to_panel(make_key(KeyCode::Enter));
-    app.tick();
 
-    dispatch_key(&mut app, make_key(KeyCode::Enter));
+    app.delegate_key_to_panel(make_key(KeyCode::Enter));
 
     assert_eq!(app.focused_window, FocusedWindow::Settings);
     assert!(app.settings_panel.opened);

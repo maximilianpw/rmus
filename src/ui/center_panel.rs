@@ -827,10 +827,14 @@ impl CenterPanel {
     fn render_album(&mut self, frame: &mut Frame, area: Rect, is_focused: bool) {
         let border_style = theme::focused_border_style(is_focused);
 
-        let title = Self::collection_title(
+        let base_title = Self::collection_title(
             self.selected_album_title.as_deref().unwrap_or("Songs"),
             &self.songs,
         );
+        let title = match &self.status_message {
+            Some(msg) => format!("{} - {}", base_title, msg),
+            None => base_title,
+        };
 
         let list_items: Vec<ListItem> = if self.songs.is_empty() {
             self.empty_album_items()
