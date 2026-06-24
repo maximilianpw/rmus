@@ -64,6 +64,14 @@ pub enum CliAction {
         name: String,
         limit: Option<usize>,
     },
+    RenamePlaylist {
+        name: String,
+        new_name: String,
+    },
+    DuplicatePlaylist {
+        name: String,
+        new_name: Option<String>,
+    },
     DeletePlaylist {
         name: String,
     },
@@ -127,6 +135,8 @@ where
         "remove-source" => parse_remove_source_args(args),
         "move-source" => parse_move_source_args(args),
         "show-playlist" => parse_show_playlist_args(args),
+        "rename-playlist" => parse_rename_playlist_args(args),
+        "duplicate-playlist" => parse_duplicate_playlist_args(args),
         "delete-playlist" => parse_delete_playlist_args(args),
         "import-playlist" => parse_import_playlist_args(args),
         "export-playlist" => parse_export_playlist_args(args),
@@ -368,6 +378,53 @@ where
     parse_optional_limit_args(args, |limit| CliAction::ShowPlaylist { name, limit })
 }
 
+fn parse_rename_playlist_args<I>(mut args: I) -> Result<CliAction, String>
+where
+    I: Iterator<Item = String>,
+{
+    let Some(name) = args.next() else {
+        return Err(format!(
+            "missing playlist name for rename-playlist\n\n{}",
+            help_text()
+        ));
+    };
+    let Some(new_name) = args.next() else {
+        return Err(format!(
+            "missing new playlist name for rename-playlist\n\n{}",
+            help_text()
+        ));
+    };
+    if args.next().is_some() {
+        return Err(format!(
+            "unexpected argument after new playlist name\n\n{}",
+            help_text()
+        ));
+    }
+
+    Ok(CliAction::RenamePlaylist { name, new_name })
+}
+
+fn parse_duplicate_playlist_args<I>(mut args: I) -> Result<CliAction, String>
+where
+    I: Iterator<Item = String>,
+{
+    let Some(name) = args.next() else {
+        return Err(format!(
+            "missing playlist name for duplicate-playlist\n\n{}",
+            help_text()
+        ));
+    };
+    let new_name = args.next();
+    if args.next().is_some() {
+        return Err(format!(
+            "unexpected argument after new playlist name\n\n{}",
+            help_text()
+        ));
+    }
+
+    Ok(CliAction::DuplicatePlaylist { name, new_name })
+}
+
 fn parse_delete_playlist_args<I>(mut args: I) -> Result<CliAction, String>
 where
     I: Iterator<Item = String>,
@@ -485,6 +542,10 @@ pub fn help_text() -> &'static str {
         "                  Reorder configured local music folders\n",
         "  show-playlist <NAME> [--limit N]\n",
         "                  Print saved tracks in a playlist\n",
+        "  rename-playlist <NAME> <NEW_NAME>\n",
+        "                  Rename a saved playlist\n",
+        "  duplicate-playlist <NAME> [NEW_NAME]\n",
+        "                  Duplicate a saved playlist\n",
         "  delete-playlist <NAME>\n",
         "                  Delete a saved playlist\n",
         "  import-playlist <PATH> [NAME]\n",
@@ -508,7 +569,7 @@ _rmus() {
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
-    commands="status doctor paths completions list-sources list-playlists show-history show-queue local-stats search-local scan-local add-source remove-source move-source show-playlist delete-playlist import-playlist export-playlist clear-cache clear-accounts clear-history clear-queue"
+    commands="status doctor paths completions list-sources list-playlists show-history show-queue local-stats search-local scan-local add-source remove-source move-source show-playlist rename-playlist duplicate-playlist delete-playlist import-playlist export-playlist clear-cache clear-accounts clear-history clear-queue"
     global_opts="-h --help -V --version"
 
     case "$prev" in
@@ -560,6 +621,8 @@ _rmus() {
         'remove-source:remove a local music folder'
         'move-source:reorder configured local music folders'
         'show-playlist:print saved tracks in a playlist'
+        'rename-playlist:rename a saved playlist'
+        'duplicate-playlist:duplicate a saved playlist'
         'delete-playlist:delete a saved playlist'
         'import-playlist:import a local m3u playlist'
         'export-playlist:export a playlist to m3u8'
@@ -621,6 +684,8 @@ complete -c rmus -n '__fish_use_subcommand' -a add-source -d 'Add a local music 
 complete -c rmus -n '__fish_use_subcommand' -a remove-source -d 'Remove a local music folder'
 complete -c rmus -n '__fish_use_subcommand' -a move-source -d 'Reorder configured local music folders'
 complete -c rmus -n '__fish_use_subcommand' -a show-playlist -d 'Print saved tracks in a playlist'
+complete -c rmus -n '__fish_use_subcommand' -a rename-playlist -d 'Rename a saved playlist'
+complete -c rmus -n '__fish_use_subcommand' -a duplicate-playlist -d 'Duplicate a saved playlist'
 complete -c rmus -n '__fish_use_subcommand' -a delete-playlist -d 'Delete a saved playlist'
 complete -c rmus -n '__fish_use_subcommand' -a import-playlist -d 'Import a local m3u playlist'
 complete -c rmus -n '__fish_use_subcommand' -a export-playlist -d 'Export a playlist to m3u8'
@@ -1155,6 +1220,162 @@ fn nonblank(value: &str) -> Option<&str> {
         None
     } else {
         Some(value)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlaylistRenameSummary {
+    pub old_name: String,
+    pub new_name: String,
+    pub track_count: usize,
+}
+
+impl PlaylistRenameSummary {
+    pub fn message(&self) -> String {
+        format!(
+            "Renamed playlist '{}' to '{}' ({})",
+            self.old_name,
+            self.new_name,
+            track_count_label(self.track_count)
+        )
+    }
+}
+
+pub fn rename_playlist(name: &str, new_name: &str) -> Result<PlaylistRenameSummary, String> {
+    rename_playlist_with_store(PlaylistStore::default(), name, new_name)
+}
+
+fn rename_playlist_with_store(
+    store: PlaylistStore,
+    name: &str,
+    new_name: &str,
+) -> Result<PlaylistRenameSummary, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("Playlist name is required".to_string());
+    }
+    if new_name.trim().is_empty() {
+        return Err("New playlist name is required".to_string());
+    }
+
+    let playlists = store.load_all();
+    let Some((index, playlist)) = playlists
+        .iter()
+        .enumerate()
+        .find(|(_, playlist)| playlist.name.eq_ignore_ascii_case(name))
+    else {
+        return Err(format!("Playlist '{name}' not found"));
+    };
+
+    let track_count = playlist.tracks.len();
+    let (old_name, new_name) = store
+        .rename_at(index, new_name.to_string())
+        .map_err(|error| playlist_store_error("rename", &playlist.name, error))?
+        .ok_or_else(|| format!("Playlist '{name}' not found"))?;
+
+    Ok(PlaylistRenameSummary {
+        old_name,
+        new_name,
+        track_count,
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlaylistDuplicateSummary {
+    pub old_name: String,
+    pub new_name: String,
+    pub track_count: usize,
+}
+
+impl PlaylistDuplicateSummary {
+    pub fn message(&self) -> String {
+        format!(
+            "Duplicated playlist '{}' as '{}' ({})",
+            self.old_name,
+            self.new_name,
+            track_count_label(self.track_count)
+        )
+    }
+}
+
+pub fn duplicate_playlist(
+    name: &str,
+    new_name: Option<&str>,
+) -> Result<PlaylistDuplicateSummary, String> {
+    duplicate_playlist_with_store(PlaylistStore::default(), name, new_name)
+}
+
+fn duplicate_playlist_with_store(
+    store: PlaylistStore,
+    name: &str,
+    new_name: Option<&str>,
+) -> Result<PlaylistDuplicateSummary, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("Playlist name is required".to_string());
+    }
+
+    let playlists = store.load_all();
+    let Some((index, playlist)) = playlists
+        .iter()
+        .enumerate()
+        .find(|(_, playlist)| playlist.name.eq_ignore_ascii_case(name))
+    else {
+        return Err(format!("Playlist '{name}' not found"));
+    };
+
+    let new_name = match new_name {
+        Some(new_name) if new_name.trim().is_empty() => {
+            return Err("New playlist name is required".to_string());
+        }
+        Some(new_name) => new_name.trim().to_string(),
+        None => {
+            let names: Vec<String> = playlists
+                .iter()
+                .map(|playlist| playlist.name.clone())
+                .collect();
+            playlist_copy_name(&playlist.name, &names)
+        }
+    };
+
+    let track_count = playlist.tracks.len();
+    let (old_name, new_name) = store
+        .duplicate_at(index, new_name)
+        .map_err(|error| playlist_store_error("duplicate", &playlist.name, error))?
+        .ok_or_else(|| format!("Playlist '{name}' not found"))?;
+
+    Ok(PlaylistDuplicateSummary {
+        old_name,
+        new_name,
+        track_count,
+    })
+}
+
+fn playlist_copy_name(current_name: &str, names: &[String]) -> String {
+    let base = format!("{} Copy", current_name.trim());
+    if !names.iter().any(|name| name.eq_ignore_ascii_case(&base)) {
+        return base;
+    }
+
+    let mut copy_number = 2;
+    loop {
+        let candidate = format!("{base} {copy_number}");
+        if !names
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case(&candidate))
+        {
+            return candidate;
+        }
+        copy_number += 1;
+    }
+}
+
+fn playlist_store_error(action: &str, name: &str, error: std::io::Error) -> String {
+    match error.kind() {
+        std::io::ErrorKind::AlreadyExists
+        | std::io::ErrorKind::InvalidInput
+        | std::io::ErrorKind::NotFound => error.to_string(),
+        _ => format!("failed to {action} playlist '{name}': {error}"),
     }
 }
 
@@ -2352,13 +2573,15 @@ mod tests {
         add_source_and_scan_with_config_and_cache_path, add_source_to_config,
         clear_accounts_in_config, clear_cache_at, clear_history_at, clear_queue_at,
         completions_text, delete_playlist_with_store, doctor_report_with_options,
-        list_playlists_with_store, list_sources_from_config, local_stats_with_cache_path,
-        move_source_in_config, parse_args, paths_text_with_options, remove_source_from_config,
-        scan_local_with_cache_path, search_local_with_config_and_cache_path,
-        show_history_with_store, show_history_with_store_and_limit, show_playlist_with_store,
+        duplicate_playlist_with_store, list_playlists_with_store, list_sources_from_config,
+        local_stats_with_cache_path, move_source_in_config, parse_args, paths_text_with_options,
+        remove_source_from_config, rename_playlist_with_store, scan_local_with_cache_path,
+        search_local_with_config_and_cache_path, show_history_with_store,
+        show_history_with_store_and_limit, show_playlist_with_store,
         show_playlist_with_store_and_limit, show_queue_with_store, show_queue_with_store_and_limit,
         status_with_config_and_stores, CliAction, CompletionShell, DoctorOptions,
-        LocalSourceMoveTarget, DEFAULT_LOCAL_SEARCH_LIMIT,
+        LocalSourceMoveTarget, PlaylistDuplicateSummary, PlaylistRenameSummary,
+        DEFAULT_LOCAL_SEARCH_LIMIT,
     };
     use crate::{
         config::{
@@ -3167,6 +3390,160 @@ tracks = []
         assert_eq!(blank, "Playlist name is required");
         let missing = delete_playlist_with_store(store, "Missing")
             .expect_err("unknown playlists should fail");
+        assert_eq!(missing, "Playlist 'Missing' not found");
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn rename_playlist_command_renames_saved_playlist() {
+        assert_eq!(
+            parse_args(["rmus", "rename-playlist", "Road Mix", "Night Mix"]),
+            Ok(CliAction::RenamePlaylist {
+                name: "Road Mix".to_string(),
+                new_name: "Night Mix".to_string(),
+            })
+        );
+        let missing_name =
+            parse_args(["rmus", "rename-playlist"]).expect_err("name should be required");
+        assert!(missing_name.contains("missing playlist name for rename-playlist"));
+        let missing_new_name = parse_args(["rmus", "rename-playlist", "Road Mix"])
+            .expect_err("new name should be required");
+        assert!(missing_new_name.contains("missing new playlist name for rename-playlist"));
+        let extra = parse_args(["rmus", "rename-playlist", "Road Mix", "Night Mix", "extra"])
+            .expect_err("extra args should fail");
+        assert!(extra.contains("unexpected argument after new playlist name"));
+
+        let dir = test_dir("rename-playlist-cli");
+        let playlists_dir = dir.join("playlists");
+        let store = crate::playlist::PlaylistStore::with_dir(playlists_dir.clone());
+        store.create("Road Mix".to_string()).unwrap();
+        store
+            .add_songs_to_index(
+                0,
+                &[Song {
+                    title: "Night Drive".to_string(),
+                    artist: "Driver".to_string(),
+                    path: PathBuf::from("/music/night.flac"),
+                    ..Default::default()
+                }],
+            )
+            .unwrap();
+
+        let summary = rename_playlist_with_store(store.clone(), "road mix", " Night Mix ")
+            .expect("rename should succeed");
+
+        assert_eq!(
+            summary,
+            PlaylistRenameSummary {
+                old_name: "Road Mix".to_string(),
+                new_name: "Night Mix".to_string(),
+                track_count: 1,
+            }
+        );
+        assert_eq!(
+            summary.message(),
+            "Renamed playlist 'Road Mix' to 'Night Mix' (1 track)"
+        );
+        assert!(!playlists_dir.join("Road Mix.toml").exists());
+        assert!(playlists_dir.join("Night Mix.toml").exists());
+        let renamed = show_playlist_with_store(store.clone(), "Night Mix").unwrap();
+        assert_eq!(renamed.tracks[0].title, "Night Drive");
+
+        store.create("Sleep".to_string()).unwrap();
+        let duplicate = rename_playlist_with_store(store.clone(), "Night Mix", "sleep")
+            .expect_err("duplicate names should fail");
+        assert_eq!(duplicate, "Playlist 'sleep' already exists");
+        let blank = rename_playlist_with_store(store.clone(), "Night Mix", " ")
+            .expect_err("blank new names should fail");
+        assert_eq!(blank, "New playlist name is required");
+        let missing =
+            rename_playlist_with_store(store, "Missing", "Other").expect_err("missing should fail");
+        assert_eq!(missing, "Playlist 'Missing' not found");
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn duplicate_playlist_command_copies_saved_playlist() {
+        assert_eq!(
+            parse_args(["rmus", "duplicate-playlist", "Road Mix"]),
+            Ok(CliAction::DuplicatePlaylist {
+                name: "Road Mix".to_string(),
+                new_name: None,
+            })
+        );
+        assert_eq!(
+            parse_args(["rmus", "duplicate-playlist", "Road Mix", "Night Mix"]),
+            Ok(CliAction::DuplicatePlaylist {
+                name: "Road Mix".to_string(),
+                new_name: Some("Night Mix".to_string()),
+            })
+        );
+        let missing_name =
+            parse_args(["rmus", "duplicate-playlist"]).expect_err("name should be required");
+        assert!(missing_name.contains("missing playlist name for duplicate-playlist"));
+        let extra = parse_args([
+            "rmus",
+            "duplicate-playlist",
+            "Road Mix",
+            "Night Mix",
+            "extra",
+        ])
+        .expect_err("extra args should fail");
+        assert!(extra.contains("unexpected argument after new playlist name"));
+
+        let dir = test_dir("duplicate-playlist-cli");
+        let playlists_dir = dir.join("playlists");
+        let store = crate::playlist::PlaylistStore::with_dir(playlists_dir.clone());
+        store.create("Road Mix".to_string()).unwrap();
+        store.create("Road Mix Copy".to_string()).unwrap();
+        store
+            .add_songs_to_index(
+                0,
+                &[Song {
+                    title: "Night Drive".to_string(),
+                    artist: "Driver".to_string(),
+                    path: PathBuf::from("/music/night.flac"),
+                    ..Default::default()
+                }],
+            )
+            .unwrap();
+
+        let summary = duplicate_playlist_with_store(store.clone(), "road mix", None)
+            .expect("default duplicate should succeed");
+
+        assert_eq!(
+            summary,
+            PlaylistDuplicateSummary {
+                old_name: "Road Mix".to_string(),
+                new_name: "Road Mix Copy 2".to_string(),
+                track_count: 1,
+            }
+        );
+        assert_eq!(
+            summary.message(),
+            "Duplicated playlist 'Road Mix' as 'Road Mix Copy 2' (1 track)"
+        );
+        assert!(playlists_dir.join("Road Mix.toml").exists());
+        assert!(playlists_dir.join("Road Mix Copy 2.toml").exists());
+        let copy = show_playlist_with_store(store.clone(), "Road Mix Copy 2").unwrap();
+        assert_eq!(copy.tracks[0].title, "Night Drive");
+
+        let explicit =
+            duplicate_playlist_with_store(store.clone(), "road mix", Some(" Night Mix "))
+                .expect("explicit duplicate should succeed");
+        assert_eq!(explicit.new_name, "Night Mix");
+        assert!(playlists_dir.join("Night Mix.toml").exists());
+
+        let duplicate = duplicate_playlist_with_store(store.clone(), "Road Mix", Some("night mix"))
+            .expect_err("duplicate names should fail");
+        assert_eq!(duplicate, "Playlist 'night mix' already exists");
+        let blank = duplicate_playlist_with_store(store.clone(), "Road Mix", Some(" "))
+            .expect_err("blank new names should fail");
+        assert_eq!(blank, "New playlist name is required");
+        let missing =
+            duplicate_playlist_with_store(store, "Missing", None).expect_err("missing should fail");
         assert_eq!(missing, "Playlist 'Missing' not found");
 
         let _ = fs::remove_dir_all(dir);

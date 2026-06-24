@@ -902,6 +902,147 @@ tracks = []
 }
 
 #[test]
+fn test_cli_rename_playlist_updates_saved_playlist_without_launching_tui() {
+    let state_dir = test_dir("cli-rename-playlist");
+    std::fs::create_dir_all(&state_dir).unwrap();
+    let playlists_dir = isolated_playlists_dir(&state_dir);
+    std::fs::create_dir_all(&playlists_dir).unwrap();
+    std::fs::write(
+        playlists_dir.join("Road Mix.toml"),
+        r#"
+name = "Road Mix"
+
+[[tracks]]
+title = "Night Drive"
+artist = "Driver"
+path = "/music/night.flac"
+"#,
+    )
+    .unwrap();
+
+    let mut command = rmus_binary();
+    state_env(
+        command.args(["rename-playlist", "road mix", "Night Mix"]),
+        &state_dir,
+    );
+    let output = command.output().expect("rmus rename-playlist should run");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Renamed playlist 'Road Mix' to 'Night Mix' (1 track)"));
+    assert!(!playlists_dir.join("Road Mix.toml").exists());
+    assert!(playlists_dir.join("Night Mix.toml").exists());
+
+    let mut show_command = rmus_binary();
+    state_env(
+        show_command.args(["show-playlist", "night mix"]),
+        &state_dir,
+    );
+    let show_output = show_command
+        .output()
+        .expect("rmus show-playlist should run after rename");
+    assert!(show_output.status.success());
+    let show_stdout = String::from_utf8(show_output.stdout).unwrap();
+    assert!(show_stdout.contains("Playlist 'Night Mix' (1 track)"));
+    assert!(show_stdout.contains("1. Driver - Night Drive [local] /music/night.flac"));
+
+    let mut missing_command = rmus_binary();
+    state_env(
+        missing_command.args(["rename-playlist", "Missing", "Other"]),
+        &state_dir,
+    );
+    let missing_output = missing_command
+        .output()
+        .expect("missing rmus rename-playlist should run");
+    assert!(!missing_output.status.success());
+    let stderr = String::from_utf8(missing_output.stderr).unwrap();
+    assert!(stderr.contains("Playlist 'Missing' not found"));
+
+    let _ = std::fs::remove_dir_all(state_dir);
+}
+
+#[test]
+fn test_cli_duplicate_playlist_copies_saved_playlist_without_launching_tui() {
+    let state_dir = test_dir("cli-duplicate-playlist");
+    std::fs::create_dir_all(&state_dir).unwrap();
+    let playlists_dir = isolated_playlists_dir(&state_dir);
+    std::fs::create_dir_all(&playlists_dir).unwrap();
+    std::fs::write(
+        playlists_dir.join("Road Mix.toml"),
+        r#"
+name = "Road Mix"
+
+[[tracks]]
+title = "Night Drive"
+artist = "Driver"
+path = "/music/night.flac"
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        playlists_dir.join("Road Mix Copy.toml"),
+        r#"
+name = "Road Mix Copy"
+tracks = []
+"#,
+    )
+    .unwrap();
+
+    let mut command = rmus_binary();
+    state_env(command.args(["duplicate-playlist", "road mix"]), &state_dir);
+    let output = command
+        .output()
+        .expect("rmus duplicate-playlist should run");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Duplicated playlist 'Road Mix' as 'Road Mix Copy 2' (1 track)"));
+    assert!(playlists_dir.join("Road Mix.toml").exists());
+    assert!(playlists_dir.join("Road Mix Copy 2.toml").exists());
+
+    let mut explicit_command = rmus_binary();
+    state_env(
+        explicit_command.args(["duplicate-playlist", "road mix", "Night Mix"]),
+        &state_dir,
+    );
+    let explicit_output = explicit_command
+        .output()
+        .expect("rmus duplicate-playlist with name should run");
+    assert!(explicit_output.status.success());
+    let explicit_stdout = String::from_utf8(explicit_output.stdout).unwrap();
+    assert!(explicit_stdout.contains("Duplicated playlist 'Road Mix' as 'Night Mix' (1 track)"));
+
+    let mut show_command = rmus_binary();
+    state_env(
+        show_command.args(["show-playlist", "road mix copy 2"]),
+        &state_dir,
+    );
+    let show_output = show_command
+        .output()
+        .expect("rmus show-playlist should run after duplicate");
+    assert!(show_output.status.success());
+    let show_stdout = String::from_utf8(show_output.stdout).unwrap();
+    assert!(show_stdout.contains("Playlist 'Road Mix Copy 2' (1 track)"));
+    assert!(show_stdout.contains("1. Driver - Night Drive [local] /music/night.flac"));
+
+    let mut duplicate_command = rmus_binary();
+    state_env(
+        duplicate_command.args(["duplicate-playlist", "road mix", "night mix"]),
+        &state_dir,
+    );
+    let duplicate_output = duplicate_command
+        .output()
+        .expect("duplicate rmus duplicate-playlist should run");
+    assert!(!duplicate_output.status.success());
+    let stderr = String::from_utf8(duplicate_output.stderr).unwrap();
+    assert!(stderr.contains("Playlist 'night mix' already exists"));
+
+    let _ = std::fs::remove_dir_all(state_dir);
+}
+
+#[test]
 fn test_cli_local_stats_reports_configured_library_without_launching_tui() {
     let state_dir = test_dir("cli-local-stats");
     let music_dir = state_dir.join("music").join("Album");

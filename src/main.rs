@@ -123,6 +123,30 @@ fn main() -> color_eyre::Result<()> {
                 }
             }
         }
+        Ok(rmus::cli::CliAction::RenamePlaylist { name, new_name }) => {
+            match rmus::cli::rename_playlist(&name, &new_name) {
+                Ok(summary) => {
+                    println!("{}", summary.message());
+                    return Ok(());
+                }
+                Err(error) => {
+                    eprintln!("{error}");
+                    std::process::exit(2);
+                }
+            }
+        }
+        Ok(rmus::cli::CliAction::DuplicatePlaylist { name, new_name }) => {
+            match rmus::cli::duplicate_playlist(&name, new_name.as_deref()) {
+                Ok(summary) => {
+                    println!("{}", summary.message());
+                    return Ok(());
+                }
+                Err(error) => {
+                    eprintln!("{error}");
+                    std::process::exit(2);
+                }
+            }
+        }
         Ok(rmus::cli::CliAction::DeletePlaylist { name }) => {
             match rmus::cli::delete_playlist(&name) {
                 Ok(summary) => {
