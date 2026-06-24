@@ -1883,7 +1883,9 @@ impl App {
             return false;
         }
 
-        if matches!(key.code, KeyCode::Esc | KeyCode::Enter) {
+        if matches!(key.code, KeyCode::Enter) {
+            self.open_account_settings();
+        } else if matches!(key.code, KeyCode::Esc) {
             self.login_notice = None;
         }
         true
@@ -2302,6 +2304,20 @@ impl App {
         }
         self.settings_panel
             .select_tab(crate::ui::settings::SettingsTab::General);
+        self.focused_window = FocusedWindow::Settings;
+    }
+
+    fn open_account_settings(&mut self) {
+        self.login_notice = None;
+        if !self.settings_panel.opened {
+            self.previous_focus_before_settings = Some(match self.focused_window {
+                FocusedWindow::Settings => FocusedWindow::Left,
+                other => other,
+            });
+            self.settings_panel.toggle_open();
+        }
+        self.settings_panel
+            .select_tab(crate::ui::settings::SettingsTab::Account);
         self.focused_window = FocusedWindow::Settings;
     }
 
@@ -3048,7 +3064,9 @@ impl App {
         frame.render_widget(message, message_area);
 
         let hint = Paragraph::new(Line::from(vec![
-            Span::styled("Enter/Esc", theme::accent_bold_style()),
+            Span::styled("Enter", theme::accent_bold_style()),
+            Span::styled(" account settings  ", theme::muted_style()),
+            Span::styled("Esc", theme::accent_bold_style()),
             Span::styled(" dismiss", theme::muted_style()),
         ]))
         .alignment(Alignment::Center);

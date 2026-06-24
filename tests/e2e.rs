@@ -3035,8 +3035,12 @@ fn test_qobuz_search_without_credentials_shows_config_hint() {
         "Qobuz search without credentials should show the login popup"
     );
     assert!(
-        text.contains("Enter/Esc"),
-        "login popup should show its dismiss keys"
+        text.contains("Enter account settings"),
+        "login popup should show its account settings action"
+    );
+    assert!(
+        text.contains("Esc dismiss"),
+        "login popup should show its dismiss key"
     );
     assert!(
         !text.contains("Waiting for previous request cleanup"),
@@ -3053,6 +3057,45 @@ fn test_qobuz_search_without_credentials_shows_config_hint() {
     assert!(
         text.contains("Configure Qobuz in Settings"),
         "dismissing the popup should keep the underlying status hint"
+    );
+}
+
+#[test]
+fn test_login_popup_enter_opens_account_settings() {
+    let mut app = make_app(None, None);
+
+    switch_to_tab(&mut app, "Qobuz");
+    app.execute(Action::OpenSearch);
+    for c in "test".chars() {
+        app.delegate_key_to_panel(make_key(KeyCode::Char(c)));
+    }
+    app.delegate_key_to_panel(make_key(KeyCode::Enter));
+    app.tick();
+
+    dispatch_key(&mut app, make_key(KeyCode::Enter));
+
+    assert_eq!(app.focused_window, FocusedWindow::Settings);
+    assert!(app.settings_panel.opened);
+
+    let backend = TestBackend::new(120, 32);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let text = render_app_text(&mut app, &mut terminal);
+
+    assert!(
+        !text.contains("Login Required"),
+        "Enter should dismiss the login popup"
+    );
+    assert!(
+        text.contains("── Qobuz ──"),
+        "Enter should open the Account settings tab"
+    );
+    assert!(
+        text.contains("Email:"),
+        "Account settings should show Qobuz credential fields"
+    );
+    assert!(
+        text.contains("Password:"),
+        "Account settings should show Qobuz credential fields"
     );
 }
 
