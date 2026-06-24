@@ -220,6 +220,7 @@ fn test_cli_help_prints_without_launching_tui() {
     assert!(stdout.contains("keyboard-driven terminal music player"));
     assert!(stdout.contains("doctor"));
     assert!(stdout.contains("paths"));
+    assert!(stdout.contains("completions"));
     assert!(stdout.contains("list-sources"));
     assert!(stdout.contains("list-playlists"));
     assert!(stdout.contains("show-history"));
@@ -238,6 +239,29 @@ fn test_cli_help_prints_without_launching_tui() {
     assert!(stdout.contains("clear-history"));
     assert!(stdout.contains("clear-queue"));
     assert!(stdout.contains("--version"));
+}
+
+#[test]
+fn test_cli_completions_print_without_launching_tui() {
+    let output = rmus_binary()
+        .args(["completions", "fish"])
+        .output()
+        .expect("rmus completions fish should run");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("complete -c rmus"));
+    assert!(stdout.contains("show-playlist"));
+    assert!(stdout.contains("-l limit"));
+
+    let missing = rmus_binary()
+        .arg("completions")
+        .output()
+        .expect("rmus completions without shell should run");
+    assert!(!missing.status.success());
+    let stderr = String::from_utf8(missing.stderr).unwrap();
+    assert!(stderr.contains("missing shell for completions"));
 }
 
 #[test]

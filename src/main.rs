@@ -18,6 +18,10 @@ fn main() -> color_eyre::Result<()> {
             print!("{}", rmus::cli::paths_text());
             return Ok(());
         }
+        Ok(rmus::cli::CliAction::Completions { shell }) => {
+            print!("{}", rmus::cli::completions_text(shell));
+            return Ok(());
+        }
         Ok(rmus::cli::CliAction::ListSources) => {
             print!("{}", rmus::cli::list_sources().message());
             return Ok(());

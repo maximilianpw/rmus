@@ -28,6 +28,9 @@ pub enum CliAction {
     Version,
     Doctor,
     Paths,
+    Completions {
+        shell: CompletionShell,
+    },
     ListSources,
     ListPlaylists,
     ShowHistory {
@@ -84,6 +87,13 @@ pub enum LocalSourceMoveTarget {
     Bottom,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompletionShell {
+    Bash,
+    Zsh,
+    Fish,
+}
+
 pub fn parse_args<I, S>(args: I) -> Result<CliAction, String>
 where
     I: IntoIterator<Item = S>,
@@ -102,6 +112,7 @@ where
         "-V" | "--version" => no_more_args(args, CliAction::Version, &first),
         "doctor" => no_more_args(args, CliAction::Doctor, &first),
         "paths" => no_more_args(args, CliAction::Paths, &first),
+        "completions" => parse_completions_args(args),
         "list-sources" => no_more_args(args, CliAction::ListSources, &first),
         "list-playlists" => no_more_args(args, CliAction::ListPlaylists, &first),
         "show-history" => parse_optional_limit_args(args, |limit| CliAction::ShowHistory { limit }),
@@ -121,6 +132,25 @@ where
         "clear-queue" => no_more_args(args, CliAction::ClearQueue, &first),
         _ => Err(format!("unknown argument '{first}'\n\n{}", help_text())),
     }
+}
+
+fn parse_completions_args<I>(mut args: I) -> Result<CliAction, String>
+where
+    I: Iterator<Item = String>,
+{
+    let Some(shell) = args.next() else {
+        return Err(format!("missing shell for completions\n\n{}", help_text()));
+    };
+    if args.next().is_some() {
+        return Err(format!(
+            "unexpected argument after completions shell\n\n{}",
+            help_text()
+        ));
+    }
+
+    Ok(CliAction::Completions {
+        shell: CompletionShell::parse(&shell)?,
+    })
 }
 
 fn no_more_args<I>(mut args: I, action: CliAction, first: &str) -> Result<CliAction, String>
@@ -220,6 +250,19 @@ impl LocalSourceMoveTarget {
             "bottom" => Ok(Self::Bottom),
             other => Err(format!(
                 "move-source position must be one of up, down, top, bottom: {other}"
+            )),
+        }
+    }
+}
+
+impl CompletionShell {
+    fn parse(value: &str) -> Result<Self, String> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "bash" => Ok(Self::Bash),
+            "zsh" => Ok(Self::Zsh),
+            "fish" => Ok(Self::Fish),
+            other => Err(format!(
+                "completions shell must be one of bash, zsh, fish: {other}"
             )),
         }
     }
@@ -398,6 +441,14 @@ pub fn version_text() -> String {
     format!("rmus {}", env!("CARGO_PKG_VERSION"))
 }
 
+pub fn completions_text(shell: CompletionShell) -> &'static str {
+    match shell {
+        CompletionShell::Bash => BASH_COMPLETIONS,
+        CompletionShell::Zsh => ZSH_COMPLETIONS,
+        CompletionShell::Fish => FISH_COMPLETIONS,
+    }
+}
+
 pub fn help_text() -> &'static str {
     concat!(
         "rmus - keyboard-driven terminal music player\n",
@@ -408,6 +459,8 @@ pub fn help_text() -> &'static str {
         "Commands:\n",
         "  doctor          Check runtime dependencies and app paths\n",
         "  paths           Print app storage paths\n",
+        "  completions <bash|zsh|fish>\n",
+        "                  Print shell completions\n",
         "  list-sources    Print configured local music folders\n",
         "  list-playlists  Print saved playlists and track counts\n",
         "  show-history [--limit N]\n",
@@ -442,6 +495,134 @@ pub fn help_text() -> &'static str {
         "  -V, --version    Print version\n"
     )
 }
+
+const BASH_COMPLETIONS: &str = r#"# bash completion for rmus
+_rmus() {
+    local cur prev commands global_opts
+    COMPREPLY=()
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+    commands="doctor paths completions list-sources list-playlists show-history show-queue local-stats search-local scan-local add-source remove-source move-source show-playlist delete-playlist import-playlist export-playlist clear-cache clear-history clear-queue"
+    global_opts="-h --help -V --version"
+
+    case "$prev" in
+        completions)
+            COMPREPLY=( $(compgen -W "bash zsh fish" -- "$cur") )
+            return 0
+            ;;
+        move-source)
+            COMPREPLY=( $(compgen -W "up down top bottom" -- "$cur") )
+            return 0
+            ;;
+    esac
+
+    case "${COMP_WORDS[1]}" in
+        add-source)
+            COMPREPLY=( $(compgen -W "--scan" -- "$cur") )
+            return 0
+            ;;
+        search-local|show-history|show-queue|show-playlist)
+            COMPREPLY=( $(compgen -W "--limit" -- "$cur") )
+            return 0
+            ;;
+    esac
+
+    if [[ "$COMP_CWORD" -eq 1 ]]; then
+        COMPREPLY=( $(compgen -W "$global_opts $commands" -- "$cur") )
+    fi
+}
+complete -F _rmus rmus
+"#;
+
+const ZSH_COMPLETIONS: &str = r#"#compdef rmus
+# zsh completion for rmus
+_rmus() {
+    local -a commands shells move_targets
+    commands=(
+        'doctor:check runtime dependencies and app paths'
+        'paths:print app storage paths'
+        'completions:print shell completions'
+        'list-sources:print configured local music folders'
+        'list-playlists:print saved playlists and track counts'
+        'show-history:print saved recently played tracks'
+        'show-queue:print saved playback queue state'
+        'local-stats:count configured local sources albums and tracks'
+        'search-local:search configured local tracks'
+        'scan-local:scan local sources into the metadata cache'
+        'add-source:add a local music folder'
+        'remove-source:remove a local music folder'
+        'move-source:reorder configured local music folders'
+        'show-playlist:print saved tracks in a playlist'
+        'delete-playlist:delete a saved playlist'
+        'import-playlist:import a local m3u playlist'
+        'export-playlist:export a playlist to m3u8'
+        'clear-cache:remove cached local discovery and metadata'
+        'clear-history:remove saved recently played history'
+        'clear-queue:remove saved playback queue state'
+    )
+    shells=(bash zsh fish)
+    move_targets=(up down top bottom)
+
+    _arguments -C \
+        '(-h --help)'{-h,--help}'[print help]' \
+        '(-V --version)'{-V,--version}'[print version]' \
+        '1:command:->command' \
+        '*::arg:->args'
+
+    case "$state" in
+        command)
+            _describe 'command' commands
+            ;;
+        args)
+            case "$words[2]" in
+                completions)
+                    _describe 'shell' shells
+                    ;;
+                move-source)
+                    _describe 'position' move_targets
+                    ;;
+                add-source)
+                    _values 'option' '--scan'
+                    ;;
+                search-local|show-history|show-queue|show-playlist)
+                    _values 'option' '--limit'
+                    ;;
+            esac
+            ;;
+    esac
+}
+_rmus "$@"
+"#;
+
+const FISH_COMPLETIONS: &str = r#"# fish completion for rmus
+complete -c rmus -f
+complete -c rmus -s h -l help -d 'Print help'
+complete -c rmus -s V -l version -d 'Print version'
+complete -c rmus -n '__fish_use_subcommand' -a doctor -d 'Check runtime dependencies and app paths'
+complete -c rmus -n '__fish_use_subcommand' -a paths -d 'Print app storage paths'
+complete -c rmus -n '__fish_use_subcommand' -a completions -d 'Print shell completions'
+complete -c rmus -n '__fish_use_subcommand' -a list-sources -d 'Print configured local music folders'
+complete -c rmus -n '__fish_use_subcommand' -a list-playlists -d 'Print saved playlists and track counts'
+complete -c rmus -n '__fish_use_subcommand' -a show-history -d 'Print saved recently played tracks'
+complete -c rmus -n '__fish_use_subcommand' -a show-queue -d 'Print saved playback queue state'
+complete -c rmus -n '__fish_use_subcommand' -a local-stats -d 'Count configured local sources albums and tracks'
+complete -c rmus -n '__fish_use_subcommand' -a search-local -d 'Search configured local tracks'
+complete -c rmus -n '__fish_use_subcommand' -a scan-local -d 'Scan local sources into the metadata cache'
+complete -c rmus -n '__fish_use_subcommand' -a add-source -d 'Add a local music folder'
+complete -c rmus -n '__fish_use_subcommand' -a remove-source -d 'Remove a local music folder'
+complete -c rmus -n '__fish_use_subcommand' -a move-source -d 'Reorder configured local music folders'
+complete -c rmus -n '__fish_use_subcommand' -a show-playlist -d 'Print saved tracks in a playlist'
+complete -c rmus -n '__fish_use_subcommand' -a delete-playlist -d 'Delete a saved playlist'
+complete -c rmus -n '__fish_use_subcommand' -a import-playlist -d 'Import a local m3u playlist'
+complete -c rmus -n '__fish_use_subcommand' -a export-playlist -d 'Export a playlist to m3u8'
+complete -c rmus -n '__fish_use_subcommand' -a clear-cache -d 'Remove cached local discovery and metadata'
+complete -c rmus -n '__fish_use_subcommand' -a clear-history -d 'Remove saved recently played history'
+complete -c rmus -n '__fish_use_subcommand' -a clear-queue -d 'Remove saved playback queue state'
+complete -c rmus -n '__fish_seen_subcommand_from completions' -a 'bash zsh fish'
+complete -c rmus -n '__fish_seen_subcommand_from move-source' -a 'up down top bottom'
+complete -c rmus -n '__fish_seen_subcommand_from add-source' -l scan -d 'Warm the cache after adding the source'
+complete -c rmus -n '__fish_seen_subcommand_from search-local show-history show-queue show-playlist' -l limit -d 'Limit printed rows'
+"#;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalSourceListEntry {
@@ -1952,13 +2133,15 @@ fn is_executable_file(path: &Path) -> bool {
 mod tests {
     use super::{
         add_source_and_scan_with_config_and_cache_path, add_source_to_config, clear_cache_at,
-        clear_history_at, clear_queue_at, delete_playlist_with_store, doctor_report_with_options,
-        list_playlists_with_store, list_sources_from_config, local_stats_with_cache_path,
-        move_source_in_config, parse_args, paths_text_with_options, remove_source_from_config,
-        scan_local_with_cache_path, search_local_with_config_and_cache_path,
-        show_history_with_store, show_history_with_store_and_limit, show_playlist_with_store,
+        clear_history_at, clear_queue_at, completions_text, delete_playlist_with_store,
+        doctor_report_with_options, list_playlists_with_store, list_sources_from_config,
+        local_stats_with_cache_path, move_source_in_config, parse_args, paths_text_with_options,
+        remove_source_from_config, scan_local_with_cache_path,
+        search_local_with_config_and_cache_path, show_history_with_store,
+        show_history_with_store_and_limit, show_playlist_with_store,
         show_playlist_with_store_and_limit, show_queue_with_store, show_queue_with_store_and_limit,
-        CliAction, DoctorOptions, LocalSourceMoveTarget, DEFAULT_LOCAL_SEARCH_LIMIT,
+        CliAction, CompletionShell, DoctorOptions, LocalSourceMoveTarget,
+        DEFAULT_LOCAL_SEARCH_LIMIT,
     };
     use crate::{
         history::HistoryStore,
@@ -2063,6 +2246,57 @@ album_name = {}
     fn version_flags_print_version() {
         assert_eq!(parse_args(["rmus", "--version"]), Ok(CliAction::Version));
         assert_eq!(parse_args(["rmus", "-V"]), Ok(CliAction::Version));
+    }
+
+    #[test]
+    fn completions_command_accepts_supported_shells() {
+        assert_eq!(
+            parse_args(["rmus", "completions", "bash"]),
+            Ok(CliAction::Completions {
+                shell: CompletionShell::Bash
+            })
+        );
+        assert_eq!(
+            parse_args(["rmus", "completions", "zsh"]),
+            Ok(CliAction::Completions {
+                shell: CompletionShell::Zsh
+            })
+        );
+        assert_eq!(
+            parse_args(["rmus", "completions", "fish"]),
+            Ok(CliAction::Completions {
+                shell: CompletionShell::Fish
+            })
+        );
+
+        let missing = parse_args(["rmus", "completions"]).expect_err("shell should be required");
+        assert!(missing.contains("missing shell for completions"));
+
+        let unsupported = parse_args(["rmus", "completions", "powershell"])
+            .expect_err("unsupported shells should fail");
+        assert!(unsupported.contains("completions shell must be one of bash, zsh, fish"));
+
+        let extra = parse_args(["rmus", "completions", "bash", "extra"])
+            .expect_err("extra completions args should fail");
+        assert!(extra.contains("unexpected argument after completions shell"));
+    }
+
+    #[test]
+    fn completions_text_includes_commands_and_shell_specific_hooks() {
+        let bash = completions_text(CompletionShell::Bash);
+        assert!(bash.contains("complete -F _rmus rmus"));
+        assert!(bash.contains("show-playlist"));
+        assert!(bash.contains("--limit"));
+
+        let zsh = completions_text(CompletionShell::Zsh);
+        assert!(zsh.contains("#compdef rmus"));
+        assert!(zsh.contains("move-source:reorder configured local music folders"));
+        assert!(zsh.contains("bash zsh fish"));
+
+        let fish = completions_text(CompletionShell::Fish);
+        assert!(fish.contains("complete -c rmus"));
+        assert!(fish.contains("clear-queue"));
+        assert!(fish.contains("__fish_seen_subcommand_from completions"));
     }
 
     #[test]
