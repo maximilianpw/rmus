@@ -30,6 +30,7 @@ pub struct LeftPanel {
     cached_items: Vec<String>,
     visible_indices: Vec<usize>,
     filter_input: InputLine,
+    status_line: Option<String>,
     logger: Logger,
 }
 
@@ -43,6 +44,7 @@ impl LeftPanel {
             cached_items: Vec::new(),
             visible_indices: Vec::new(),
             filter_input: InputLine::new(),
+            status_line: None,
             logger,
         };
         panel.update_cache();
@@ -80,18 +82,45 @@ impl LeftPanel {
 
     pub fn render(&mut self, frame: &mut Frame, area: Rect, is_focused: bool) {
         let show_filter = self.filter_input.is_input_mode() || self.has_filter_query();
-        let (tabs_area, filter_area, list_area) = if show_filter {
-            let layout = Layout::vertical([
-                Constraint::Length(TABS_HEIGHT),
-                Constraint::Length(3),
-                Constraint::Fill(1),
-            ]);
-            let [tabs_area, filter_area, list_area] = layout.areas(area);
-            (tabs_area, Some(filter_area), list_area)
-        } else {
-            let layout = Layout::vertical([Constraint::Length(TABS_HEIGHT), Constraint::Fill(1)]);
-            let [tabs_area, list_area] = layout.areas(area);
-            (tabs_area, None, list_area)
+        let show_status = self
+            .status_line
+            .as_deref()
+            .is_some_and(|line| !line.trim().is_empty());
+        let (tabs_area, filter_area, status_area, list_area) = match (show_filter, show_status) {
+            (true, true) => {
+                let layout = Layout::vertical([
+                    Constraint::Length(TABS_HEIGHT),
+                    Constraint::Length(3),
+                    Constraint::Length(1),
+                    Constraint::Fill(1),
+                ]);
+                let [tabs_area, filter_area, status_area, list_area] = layout.areas(area);
+                (tabs_area, Some(filter_area), Some(status_area), list_area)
+            }
+            (true, false) => {
+                let layout = Layout::vertical([
+                    Constraint::Length(TABS_HEIGHT),
+                    Constraint::Length(3),
+                    Constraint::Fill(1),
+                ]);
+                let [tabs_area, filter_area, list_area] = layout.areas(area);
+                (tabs_area, Some(filter_area), None, list_area)
+            }
+            (false, true) => {
+                let layout = Layout::vertical([
+                    Constraint::Length(TABS_HEIGHT),
+                    Constraint::Length(1),
+                    Constraint::Fill(1),
+                ]);
+                let [tabs_area, status_area, list_area] = layout.areas(area);
+                (tabs_area, None, Some(status_area), list_area)
+            }
+            (false, false) => {
+                let layout =
+                    Layout::vertical([Constraint::Length(TABS_HEIGHT), Constraint::Fill(1)]);
+                let [tabs_area, list_area] = layout.areas(area);
+                (tabs_area, None, None, list_area)
+            }
         };
         let tab_names: Vec<String> = self.items.iter().map(|s| s.name()).collect();
 
@@ -100,6 +129,9 @@ impl LeftPanel {
 
         if let Some(filter_area) = filter_area {
             self.render_filter(frame, filter_area, is_focused);
+        }
+        if let Some(status_area) = status_area {
+            self.render_status(frame, status_area);
         }
 
         let list_items = if self.cached_items.is_empty() {
@@ -287,6 +319,10 @@ impl LeftPanel {
         self.filter_input.is_input_mode()
     }
 
+    pub fn set_status_line(&mut self, status_line: Option<String>) {
+        self.status_line = status_line;
+    }
+
     pub fn handles_escape(&self) -> bool {
         self.filter_input.is_input_mode() || self.has_filter_query()
     }
@@ -314,6 +350,17 @@ impl LeftPanel {
                 .border_style(border_style),
         );
         frame.render_widget(paragraph, area);
+    }
+
+    fn render_status(&self, frame: &mut Frame, area: Rect) {
+        let Some(status) = self.status_line.as_deref() else {
+            return;
+        };
+        let line = Line::from(vec![
+            Span::styled("Scan: ", theme::section_style()),
+            Span::styled(status.to_string(), theme::info_style()),
+        ]);
+        frame.render_widget(Paragraph::new(line), area);
     }
 
     fn list_from_items<'a>(&self, list_items: Vec<ListItem<'a>>, is_focused: bool) -> List<'a> {
@@ -383,6 +430,8 @@ impl LeftPanel {
 
 #[cfg(test)]
 mod tests {
+    use ratatui::{backend::TestBackend, buffer::Buffer, Terminal};
+
     use super::*;
 
     #[derive(Debug)]
@@ -418,6 +467,19 @@ mod tests {
         fn get_songs_from_album(&self, _path: PathBuf) -> Vec<Song> {
             Vec::new()
         }
+    }
+
+    fn extract_buffer_text(buffer: &Buffer) -> String {
+        let mut text = String::new();
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                if let Some(cell) = buffer.cell((x, y)) {
+                    text.push_str(cell.symbol());
+                }
+            }
+            text.push('\n');
+        }
+        text
     }
 
     #[test]
@@ -511,5 +573,26 @@ mod tests {
         assert!(!panel.handles_escape());
         assert_eq!(panel.selected_item_index(), Some(0));
         assert_eq!(panel.selected_item_label().as_deref(), Some("Jazz Records"));
+    }
+
+    #[test]
+    fn render_shows_scan_status_without_hiding_library_items() {
+        let (_log_panel, logger) = crate::ui::log_panel::LogPanel::new();
+        let mut panel = LeftPanel::new(
+            vec![Box::new(FakeSource::new("Local", &["Jazz Records"]))],
+            logger,
+        );
+        panel.set_status_line(Some("Indexing 1 source".to_string()));
+        let backend = TestBackend::new(60, 12);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let frame = terminal
+            .draw(|frame| panel.render(frame, frame.area(), true))
+            .unwrap();
+        let text = extract_buffer_text(frame.buffer);
+
+        assert!(text.contains("Scan:"));
+        assert!(text.contains("Indexing 1 source"));
+        assert!(text.contains("Jazz Records"));
     }
 }

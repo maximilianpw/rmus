@@ -57,6 +57,45 @@ enum LocalDiscoveryMode {
     Bounded(usize),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LocalScanStatus {
+    Running { source_count: usize, queued: bool },
+    Complete { track_count: usize },
+    Failed(String),
+}
+
+impl LocalScanStatus {
+    fn label(&self) -> String {
+        match self {
+            Self::Running {
+                source_count,
+                queued,
+            } => {
+                let source_label = if *source_count == 1 {
+                    "1 source".to_string()
+                } else {
+                    format!("{source_count} sources")
+                };
+                if *queued {
+                    format!("Queued; indexing {source_label}")
+                } else {
+                    format!("Indexing {source_label}")
+                }
+            }
+            Self::Complete { track_count } => {
+                format!("Indexed {}", track_count_label(*track_count))
+            }
+            Self::Failed(error) => format!("Scan failed: {error}"),
+        }
+    }
+
+    fn mark_queued(&mut self) {
+        if let Self::Running { queued, .. } = self {
+            *queued = true;
+        }
+    }
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub enum FocusedWindow {
     #[default]
@@ -121,6 +160,7 @@ pub struct App {
     logger: Logger,
     local_scan_result: Option<Receiver<Result<usize, String>>>,
     local_scan_restart_requested: bool,
+    local_scan_status: Option<LocalScanStatus>,
     local_cache_path: PathBuf,
     /// Which service has a pending auth flow.
     pending_auth_service: Option<StreamingServiceId>,
@@ -211,6 +251,7 @@ impl App {
             logger,
             local_scan_result: None,
             local_scan_restart_requested: false,
+            local_scan_status: None,
             local_cache_path,
             pending_auth_service: None,
             deferred_search: None,
@@ -390,6 +431,7 @@ impl App {
             logger,
             local_scan_result: None,
             local_scan_restart_requested: false,
+            local_scan_status: None,
             local_cache_path,
             pending_auth_service: None,
             deferred_search: None,
@@ -1953,6 +1995,9 @@ impl App {
     fn start_local_cache_scan(&mut self) {
         if self.local_scan_result.is_some() {
             self.local_scan_restart_requested = true;
+            if let Some(status) = self.local_scan_status.as_mut() {
+                status.mark_queued();
+            }
             self.logger.info(
                 "Local cache scan is already running; another scan will start afterward"
                     .to_string(),
@@ -1976,6 +2021,10 @@ impl App {
         };
         let (sender, receiver) = mpsc::channel();
         self.local_scan_result = Some(receiver);
+        self.local_scan_status = Some(LocalScanStatus::Running {
+            source_count,
+            queued: false,
+        });
         self.logger
             .info(format!("Scanning {source_label} in background..."));
 
@@ -2004,11 +2053,13 @@ impl App {
                     "Scanned {} into local cache",
                     track_count_label(track_count)
                 ));
+                self.local_scan_status = Some(LocalScanStatus::Complete { track_count });
                 self.start_queued_local_cache_scan();
             }
             Ok(Err(error)) => {
                 self.logger
                     .error(format!("Local cache scan failed: {error}"));
+                self.local_scan_status = Some(LocalScanStatus::Failed(error));
                 self.start_queued_local_cache_scan();
             }
             Err(TryRecvError::Empty) => {
@@ -2017,6 +2068,8 @@ impl App {
             Err(TryRecvError::Disconnected) => {
                 self.logger
                     .error("Local cache scan failed: worker disconnected".to_string());
+                self.local_scan_status =
+                    Some(LocalScanStatus::Failed("worker disconnected".to_string()));
                 self.start_queued_local_cache_scan();
             }
         }
@@ -2804,6 +2857,8 @@ impl App {
         };
 
         self.left_panel
+            .set_status_line(self.local_scan_status.as_ref().map(LocalScanStatus::label));
+        self.left_panel
             .render(frame, left_area, self.focused_window == FocusedWindow::Left);
         self.center_panel.render(
             frame,
@@ -3221,6 +3276,19 @@ mod tests {
         }
 
         panic!("local scan did not finish");
+    }
+
+    fn extract_buffer_text(buffer: &ratatui::buffer::Buffer) -> String {
+        let mut text = String::new();
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                if let Some(cell) = buffer.cell((x, y)) {
+                    text.push_str(cell.symbol());
+                }
+            }
+            text.push('\n');
+        }
+        text
     }
 
     fn default_config() -> Config {
@@ -3770,6 +3838,50 @@ mod tests {
         assert_eq!(
             app.left_panel.selected_item_label().as_deref(),
             Some("Fresh Album")
+        );
+
+        let _ = fs::remove_dir_all(dir);
+        let _ = fs::remove_dir_all(cache_dir);
+    }
+
+    #[test]
+    fn warm_local_cache_status_is_visible_while_running_queued_and_complete() {
+        let dir = temp_dir("background-local-cache-status");
+        fs::write(dir.join("01 - Status.flac"), "audio").unwrap();
+        let cache_dir = temp_dir("background-local-cache-status-cache");
+        let cache_path = cache_dir.join("cache.toml");
+        let mut config = default_config();
+        config.local.sources.push(LocalSource {
+            name: "Library".to_string(),
+            path: dir.clone(),
+        });
+        let mut app = App::new_for_test(config, None, None);
+        app.local_cache_path = cache_path;
+        let backend = TestBackend::new(200, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        app.execute(Action::WarmLocalCache);
+        let frame = terminal.draw(|frame| app.render(frame)).unwrap();
+        let text = extract_buffer_text(frame.buffer);
+        assert!(
+            text.contains("Scan:") && text.contains("Indexing 1 source"),
+            "running local scans should be visible in the left panel"
+        );
+
+        app.execute(Action::WarmLocalCache);
+        let frame = terminal.draw(|frame| app.render(frame)).unwrap();
+        let text = extract_buffer_text(frame.buffer);
+        assert!(
+            text.contains("Queued; indexing 1 source"),
+            "requesting another scan while one is active should show queued status"
+        );
+
+        wait_for_local_scan(&mut app);
+        let frame = terminal.draw(|frame| app.render(frame)).unwrap();
+        let text = extract_buffer_text(frame.buffer);
+        assert!(
+            text.contains("Indexed 1 track"),
+            "completed local scans should leave visible last-scan feedback"
         );
 
         let _ = fs::remove_dir_all(dir);
