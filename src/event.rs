@@ -14,6 +14,10 @@ pub fn handle_crossterm_events(app: &mut App) -> color_eyre::Result<()> {
     if event::poll(POLL_TIMEOUT)? {
         match event::read()? {
             Event::Key(key) if key.kind == KeyEventKind::Press => {
+                if app.consume_login_notice_key(key) {
+                    return Ok(());
+                }
+
                 let text_input_active = app.center_panel.is_text_input_active()
                     || app.left_panel.is_filter_input_active();
                 match resolve_key(

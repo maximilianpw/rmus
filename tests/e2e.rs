@@ -2727,8 +2727,28 @@ fn test_qobuz_search_without_credentials_shows_config_hint() {
         "Qobuz search without credentials should show a configuration hint"
     );
     assert!(
+        text.contains("Login Required"),
+        "Qobuz search without credentials should show the login popup"
+    );
+    assert!(
+        text.contains("Enter/Esc"),
+        "login popup should show its dismiss keys"
+    );
+    assert!(
         !text.contains("Waiting for previous request cleanup"),
         "Unavailable Qobuz search should not look like a stuck request"
+    );
+
+    dispatch_key(&mut app, make_key(KeyCode::Esc));
+    let frame = terminal.draw(|frame| app.render(frame)).unwrap();
+    let text = extract_buffer_text(frame.buffer);
+    assert!(
+        !text.contains("Login Required"),
+        "Esc should dismiss the login popup"
+    );
+    assert!(
+        text.contains("Configure Qobuz in Settings"),
+        "dismissing the popup should keep the underlying status hint"
     );
 }
 
@@ -7760,8 +7780,24 @@ fn test_pending_auth_deferred_search() {
         "pending Tidal auth should be visible in the main search panel"
     );
     assert!(
+        text.contains("Login Required"),
+        "pending Tidal auth should show the login popup"
+    );
+    assert!(
         !text.contains("Albums (0) - Searching Tidal"),
         "pending auth should replace stale searching status"
+    );
+
+    dispatch_key(&mut app, make_key(KeyCode::Esc));
+    let frame = terminal.draw(|frame| app.render(frame)).unwrap();
+    let text = extract_buffer_text(frame.buffer);
+    assert!(
+        !text.contains("Login Required"),
+        "Esc should dismiss the Tidal login popup"
+    );
+    assert!(
+        text.contains("Please authorize at: https://example.com"),
+        "dismissing the popup should keep the Tidal auth message visible"
     );
 
     // Second tick: poll_auth returns false (1st poll)

@@ -1,6 +1,8 @@
-use crossterm::event::KeyEvent;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
-    layout::{Constraint, Layout, Rect},
+    layout::{Alignment, Constraint, Layout, Rect},
+    text::{Line, Span},
+    widgets::{Block, Borders, Clear, Paragraph, Wrap},
     DefaultTerminal, Frame,
 };
 use std::{
@@ -41,7 +43,7 @@ use crate::{
         settings::settings_panel::SettingsPanel,
         theme, AppPanel,
     },
-    utils::track_count_label,
+    utils::{centered_rect, track_count_label},
 };
 
 use crate::event::handle_crossterm_events;
@@ -173,6 +175,7 @@ pub struct App {
     last_saved_queue_len: usize,
     last_saved_queue_position: usize,
     last_panel_layout: PanelLayout,
+    login_notice: Option<String>,
 }
 
 impl App {
@@ -266,6 +269,7 @@ impl App {
             last_saved_queue_len,
             last_saved_queue_position,
             last_panel_layout: PanelLayout::default(),
+            login_notice: None,
         }
     }
 
@@ -462,6 +466,7 @@ impl App {
             last_saved_queue_len,
             last_saved_queue_position,
             last_panel_layout: PanelLayout::default(),
+            login_notice: None,
         }
     }
 
@@ -1807,6 +1812,10 @@ impl App {
     }
 
     pub fn delegate_key_to_panel(&mut self, key: KeyEvent) {
+        if self.consume_login_notice_key(key) {
+            return;
+        }
+
         if self.settings_panel.opened {
             self.settings_panel.handle_events(key);
             if !self.settings_panel.opened {
@@ -1815,6 +1824,27 @@ impl App {
             return;
         }
         self.delegate_key_to_window(self.focused_window, key);
+    }
+
+    pub(crate) fn consume_login_notice_key(&mut self, key: KeyEvent) -> bool {
+        if self.login_notice.is_none() {
+            return false;
+        }
+
+        if matches!(
+            (key.modifiers, key.code),
+            (
+                KeyModifiers::CONTROL,
+                KeyCode::Char('c') | KeyCode::Char('C')
+            )
+        ) {
+            return false;
+        }
+
+        if matches!(key.code, KeyCode::Esc | KeyCode::Enter) {
+            self.login_notice = None;
+        }
+        true
     }
 
     pub(crate) fn delegate_scroll_at(&mut self, column: u16, row: u16, key: KeyEvent) {
@@ -1909,6 +1939,7 @@ impl App {
             if clear_tidal {
                 self.pending_auth_service = None;
                 self.deferred_search = None;
+                self.login_notice = None;
                 self.search_source = None;
                 self.center_panel.set_status(None);
 
@@ -1978,10 +2009,10 @@ impl App {
             .as_ref()
             .is_some_and(crate::config::QobuzConfig::has_credentials)
         {
-            self.settings_panel.set_qobuz_status_message(
-                Some("Enter Qobuz email and password first".to_string()),
-                true,
-            );
+            let message = "Enter Qobuz email and password first".to_string();
+            self.settings_panel
+                .set_qobuz_status_message(Some(message.clone()), true);
+            self.login_notice = Some(message);
             return;
         }
 
@@ -2203,6 +2234,7 @@ impl App {
             self.settings_panel.close();
             self.restore_focus_after_settings();
         } else {
+            self.login_notice = None;
             self.previous_focus_before_settings = Some(match self.focused_window {
                 FocusedWindow::Settings => FocusedWindow::Left,
                 other => other,
@@ -2213,6 +2245,7 @@ impl App {
     }
 
     fn open_keybinds(&mut self) {
+        self.login_notice = None;
         if !self.settings_panel.opened {
             self.previous_focus_before_settings = Some(match self.focused_window {
                 FocusedWindow::Settings => FocusedWindow::Left,
@@ -2374,6 +2407,7 @@ impl App {
             }
             StreamingSubmitResult::Unavailable { status } => {
                 self.center_panel.set_status(Some(status.clone()));
+                self.login_notice = Some(status.clone());
                 self.logger.info(status);
             }
             StreamingSubmitResult::Busy => {
@@ -2910,6 +2944,38 @@ impl App {
         );
         self.settings_panel
             .render(frame, area, self.focused_window == FocusedWindow::Settings);
+        self.render_login_notice(frame, area);
+    }
+
+    fn render_login_notice(&self, frame: &mut Frame, area: Rect) {
+        let Some(message) = self.login_notice.as_deref() else {
+            return;
+        };
+
+        let popup_area = centered_rect(62, 30, area);
+        frame.render_widget(Clear, popup_area);
+
+        let block = Block::bordered()
+            .title(" Login Required ")
+            .borders(Borders::ALL)
+            .border_style(theme::warning_style());
+        let inner = block.inner(popup_area);
+        frame.render_widget(block, popup_area);
+
+        let [message_area, hint_area] =
+            Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(inner);
+
+        let message = Paragraph::new(message)
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: true });
+        frame.render_widget(message, message_area);
+
+        let hint = Paragraph::new(Line::from(vec![
+            Span::styled("Enter/Esc", theme::accent_bold_style()),
+            Span::styled(" dismiss", theme::muted_style()),
+        ]))
+        .alignment(Alignment::Center);
+        frame.render_widget(hint, hint_area);
     }
 
     pub(crate) fn quit(&mut self) {
@@ -2991,6 +3057,7 @@ impl App {
                 self.pending_auth_service = Some(service_id);
                 self.deferred_search = deferred_query;
                 self.center_panel.set_status(Some(message.clone()));
+                self.login_notice = Some(message.clone());
                 match service_id {
                     StreamingServiceId::Qobuz => self
                         .settings_panel
@@ -3005,6 +3072,7 @@ impl App {
                 self.logger
                     .info(format!("Authenticated with {}", service_id.as_str()));
                 self.pending_auth_service = None;
+                self.login_notice = None;
                 self.persist_streaming_credentials(service_id);
                 match service_id {
                     StreamingServiceId::Qobuz => self.settings_panel.set_qobuz_status_message(
