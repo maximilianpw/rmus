@@ -43,13 +43,14 @@ rmus add-source "Music" ~/Documents/Music
 rmus add-source "Music" ~/Documents/Music --scan
 rmus list-sources
 rmus remove-source "Music"
+rmus move-source "Music" up
 rmus doctor
 rmus paths
 rmus local-stats
 rmus search-local "artist, album, title, or filename"
 ```
 
-The add-source command validates and stores a local music folder without opening the TUI. It canonicalizes the path and rejects duplicate source names or paths. Pass `--scan` to warm that new source into the local metadata cache immediately. The remove-source command removes a configured local source by name.
+The add-source command validates and stores a local music folder without opening the TUI. It canonicalizes the path and rejects duplicate source names or paths. Pass `--scan` to warm that new source into the local metadata cache immediately. The remove-source command removes a configured local source by name. The move-source command reorders configured local sources with `up`, `down`, `top`, or `bottom`.
 
 The list-sources command prints configured local source names, paths, and whether each folder currently exists.
 

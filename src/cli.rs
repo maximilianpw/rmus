@@ -46,6 +46,10 @@ pub enum CliAction {
     RemoveSource {
         name: String,
     },
+    MoveSource {
+        name: String,
+        target: LocalSourceMoveTarget,
+    },
     ShowPlaylist {
         name: String,
     },
@@ -61,6 +65,14 @@ pub enum CliAction {
         path: PathBuf,
     },
     ClearCache,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocalSourceMoveTarget {
+    Up,
+    Down,
+    Top,
+    Bottom,
 }
 
 pub fn parse_args<I, S>(args: I) -> Result<CliAction, String>
@@ -88,6 +100,7 @@ where
         "scan-local" => parse_scan_local_args(args),
         "add-source" => parse_add_source_args(args),
         "remove-source" => parse_remove_source_args(args),
+        "move-source" => parse_move_source_args(args),
         "show-playlist" => parse_show_playlist_args(args),
         "delete-playlist" => parse_delete_playlist_args(args),
         "import-playlist" => parse_import_playlist_args(args),
@@ -159,6 +172,44 @@ where
     }
 
     Ok(CliAction::RemoveSource { name })
+}
+
+fn parse_move_source_args<I>(mut args: I) -> Result<CliAction, String>
+where
+    I: Iterator<Item = String>,
+{
+    let Some(name) = args.next() else {
+        return Err(format!("missing name for move-source\n\n{}", help_text()));
+    };
+    let Some(target) = args.next() else {
+        return Err(format!(
+            "missing position for move-source\n\n{}",
+            help_text()
+        ));
+    };
+    if args.next().is_some() {
+        return Err(format!(
+            "unexpected argument after move-source position\n\n{}",
+            help_text()
+        ));
+    }
+
+    let target = LocalSourceMoveTarget::parse(&target)?;
+    Ok(CliAction::MoveSource { name, target })
+}
+
+impl LocalSourceMoveTarget {
+    fn parse(value: &str) -> Result<Self, String> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "up" => Ok(Self::Up),
+            "down" => Ok(Self::Down),
+            "top" => Ok(Self::Top),
+            "bottom" => Ok(Self::Bottom),
+            other => Err(format!(
+                "move-source position must be one of up, down, top, bottom: {other}"
+            )),
+        }
+    }
 }
 
 fn parse_scan_local_args<I>(mut args: I) -> Result<CliAction, String>
@@ -338,6 +389,8 @@ pub fn help_text() -> &'static str {
         "                  Add a local music folder to config, optionally warming the cache\n",
         "  remove-source <NAME>\n",
         "                  Remove a local music folder from config\n",
+        "  move-source <NAME> <up|down|top|bottom>\n",
+        "                  Reorder configured local music folders\n",
         "  show-playlist <NAME>\n",
         "                  Print saved tracks in a playlist\n",
         "  delete-playlist <NAME>\n",
@@ -652,6 +705,87 @@ fn remove_source_from_config(
         name: removed.name,
         path: removed.path,
         source_count: config.local.sources.len(),
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalSourceMoveSummary {
+    pub name: String,
+    pub source_count: usize,
+    pub old_position: usize,
+    pub new_position: usize,
+    pub changed: bool,
+}
+
+impl LocalSourceMoveSummary {
+    pub fn message(&self) -> String {
+        if self.changed {
+            format!(
+                "Moved local source '{}' from {} to {} of {}",
+                self.name, self.old_position, self.new_position, self.source_count
+            )
+        } else {
+            format!(
+                "Local source '{}' already at {} of {}; order unchanged",
+                self.name, self.new_position, self.source_count
+            )
+        }
+    }
+}
+
+pub fn move_source(
+    name: &str,
+    target: LocalSourceMoveTarget,
+) -> Result<LocalSourceMoveSummary, String> {
+    let mut config = Config::load();
+    let summary = move_source_in_config(&mut config, name, target)?;
+    if summary.changed {
+        config
+            .save()
+            .map_err(|error| format!("failed to save config: {error}"))?;
+    }
+    Ok(summary)
+}
+
+fn move_source_in_config(
+    config: &mut Config,
+    name: &str,
+    target: LocalSourceMoveTarget,
+) -> Result<LocalSourceMoveSummary, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("source name is required".to_string());
+    }
+
+    let source_count = config.local.sources.len();
+    let Some(old_index) = config
+        .local
+        .sources
+        .iter()
+        .position(|source| source.name.eq_ignore_ascii_case(name))
+    else {
+        return Err(format!("source not found: {name}"));
+    };
+
+    let new_index = match target {
+        LocalSourceMoveTarget::Up => old_index.saturating_sub(1),
+        LocalSourceMoveTarget::Down => (old_index + 1).min(source_count.saturating_sub(1)),
+        LocalSourceMoveTarget::Top => 0,
+        LocalSourceMoveTarget::Bottom => source_count.saturating_sub(1),
+    };
+
+    let source_name = config.local.sources[old_index].name.clone();
+    if old_index != new_index {
+        let source = config.local.sources.remove(old_index);
+        config.local.sources.insert(new_index, source);
+    }
+
+    Ok(LocalSourceMoveSummary {
+        name: source_name,
+        source_count,
+        old_position: old_index + 1,
+        new_position: new_index + 1,
+        changed: old_index != new_index,
     })
 }
 
@@ -1526,10 +1660,10 @@ mod tests {
     use super::{
         add_source_and_scan_with_config_and_cache_path, add_source_to_config, clear_cache_at,
         delete_playlist_with_store, doctor_report_with_options, list_playlists_with_store,
-        list_sources_from_config, local_stats_with_cache_path, parse_args, paths_text_with_options,
-        remove_source_from_config, scan_local_with_cache_path,
+        list_sources_from_config, local_stats_with_cache_path, move_source_in_config, parse_args,
+        paths_text_with_options, remove_source_from_config, scan_local_with_cache_path,
         search_local_with_config_and_cache_path, show_playlist_with_store, CliAction,
-        DoctorOptions, DEFAULT_LOCAL_SEARCH_LIMIT,
+        DoctorOptions, LocalSourceMoveTarget, DEFAULT_LOCAL_SEARCH_LIMIT,
     };
     use std::{
         env, fs,
@@ -2296,6 +2430,42 @@ tracks = []
     }
 
     #[test]
+    fn move_source_command_accepts_name_and_position() {
+        assert_eq!(
+            parse_args(["rmus", "move-source", "Library", "up"]),
+            Ok(CliAction::MoveSource {
+                name: "Library".to_string(),
+                target: LocalSourceMoveTarget::Up,
+            })
+        );
+        assert_eq!(
+            parse_args(["rmus", "move-source", "Library", "bottom"]),
+            Ok(CliAction::MoveSource {
+                name: "Library".to_string(),
+                target: LocalSourceMoveTarget::Bottom,
+            })
+        );
+    }
+
+    #[test]
+    fn move_source_command_requires_name_and_position() {
+        let error = parse_args(["rmus", "move-source"]).expect_err("name should be required");
+        assert!(error.contains("missing name for move-source"));
+
+        let error = parse_args(["rmus", "move-source", "Library"])
+            .expect_err("position should be required");
+        assert!(error.contains("missing position for move-source"));
+
+        let error = parse_args(["rmus", "move-source", "Library", "sideways"])
+            .expect_err("invalid positions should fail");
+        assert!(error.contains("move-source position must be one of up, down, top, bottom"));
+
+        let error = parse_args(["rmus", "move-source", "Library", "up", "extra"])
+            .expect_err("extra args should fail");
+        assert!(error.contains("unexpected argument after move-source position"));
+    }
+
+    #[test]
     fn remove_source_from_config_removes_source_by_name_case_insensitively() {
         let first = test_dir("remove-source-first");
         let second = test_dir("remove-source-second");
@@ -2311,6 +2481,84 @@ tracks = []
         assert_eq!(config.local.sources.len(), 1);
         assert_eq!(config.local.sources[0].name, "First");
         assert!(summary.message().contains("Removed local source 'Second'"));
+
+        let _ = fs::remove_dir_all(first);
+        let _ = fs::remove_dir_all(second);
+    }
+
+    #[test]
+    fn move_source_in_config_reorders_sources_and_reports_positions() {
+        let first = test_dir("move-source-first");
+        let second = test_dir("move-source-second");
+        let third = test_dir("move-source-third");
+        let mut config = crate::config::Config::default();
+        add_source_to_config(&mut config, "First", &first).unwrap();
+        add_source_to_config(&mut config, "Second", &second).unwrap();
+        add_source_to_config(&mut config, "Third", &third).unwrap();
+
+        let summary =
+            move_source_in_config(&mut config, " second ", LocalSourceMoveTarget::Up).unwrap();
+        assert_eq!(summary.name, "Second");
+        assert_eq!(summary.old_position, 2);
+        assert_eq!(summary.new_position, 1);
+        assert!(summary.changed);
+        let names: Vec<_> = config
+            .local
+            .sources
+            .iter()
+            .map(|source| source.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["Second", "First", "Third"]);
+        assert_eq!(
+            summary.message(),
+            "Moved local source 'Second' from 2 to 1 of 3"
+        );
+
+        let summary =
+            move_source_in_config(&mut config, "Second", LocalSourceMoveTarget::Bottom).unwrap();
+        assert_eq!(summary.old_position, 1);
+        assert_eq!(summary.new_position, 3);
+        assert!(summary.changed);
+        let names: Vec<_> = config
+            .local
+            .sources
+            .iter()
+            .map(|source| source.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["First", "Third", "Second"]);
+
+        let _ = fs::remove_dir_all(first);
+        let _ = fs::remove_dir_all(second);
+        let _ = fs::remove_dir_all(third);
+    }
+
+    #[test]
+    fn move_source_in_config_treats_boundaries_as_noop() {
+        let first = test_dir("move-source-boundary-first");
+        let second = test_dir("move-source-boundary-second");
+        let mut config = crate::config::Config::default();
+        add_source_to_config(&mut config, "First", &first).unwrap();
+        add_source_to_config(&mut config, "Second", &second).unwrap();
+
+        let summary =
+            move_source_in_config(&mut config, "First", LocalSourceMoveTarget::Up).unwrap();
+        assert!(!summary.changed);
+        assert_eq!(summary.old_position, 1);
+        assert_eq!(summary.new_position, 1);
+        assert_eq!(
+            summary.message(),
+            "Local source 'First' already at 1 of 2; order unchanged"
+        );
+
+        let summary =
+            move_source_in_config(&mut config, "Second", LocalSourceMoveTarget::Down).unwrap();
+        assert!(!summary.changed);
+        assert_eq!(summary.old_position, 2);
+        assert_eq!(summary.new_position, 2);
+
+        let missing = move_source_in_config(&mut config, "Missing", LocalSourceMoveTarget::Top)
+            .expect_err("missing sources should fail");
+        assert!(missing.contains("source not found: Missing"));
 
         let _ = fs::remove_dir_all(first);
         let _ = fs::remove_dir_all(second);

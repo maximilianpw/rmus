@@ -202,6 +202,7 @@ fn test_cli_help_prints_without_launching_tui() {
     assert!(stdout.contains("scan-local"));
     assert!(stdout.contains("add-source"));
     assert!(stdout.contains("remove-source"));
+    assert!(stdout.contains("move-source"));
     assert!(stdout.contains("show-playlist"));
     assert!(stdout.contains("delete-playlist"));
     assert!(stdout.contains("import-playlist"));
@@ -435,6 +436,74 @@ fn test_cli_remove_source_updates_config_without_launching_tui() {
     assert!(!missing_output.status.success());
     let missing_stderr = String::from_utf8(missing_output.stderr).unwrap();
     assert!(missing_stderr.contains("source not found: Library"));
+
+    let _ = std::fs::remove_dir_all(state_dir);
+}
+
+#[test]
+fn test_cli_move_source_reorders_config_without_launching_tui() {
+    let state_dir = test_dir("cli-move-source");
+    let first_dir = state_dir.join("first");
+    let second_dir = state_dir.join("second");
+    std::fs::create_dir_all(&first_dir).unwrap();
+    std::fs::create_dir_all(&second_dir).unwrap();
+
+    let mut add_first = rmus_binary();
+    state_env(
+        add_first.args(["add-source", "First", first_dir.to_str().unwrap()]),
+        &state_dir,
+    );
+    let add_first_output = add_first.output().expect("first add-source should run");
+    assert!(add_first_output.status.success());
+
+    let mut add_second = rmus_binary();
+    state_env(
+        add_second.args(["add-source", "Second", second_dir.to_str().unwrap()]),
+        &state_dir,
+    );
+    let add_second_output = add_second.output().expect("second add-source should run");
+    assert!(add_second_output.status.success());
+
+    let mut move_command = rmus_binary();
+    state_env(
+        move_command.args(["move-source", "second", "up"]),
+        &state_dir,
+    );
+    let move_output = move_command.output().expect("rmus move-source should run");
+
+    assert!(move_output.status.success());
+    assert!(move_output.stderr.is_empty());
+    let move_stdout = String::from_utf8(move_output.stdout).unwrap();
+    assert!(move_stdout.contains("Moved local source 'Second' from 2 to 1 of 2"));
+
+    let config_text = std::fs::read_to_string(isolated_config_path(&state_dir)).unwrap();
+    let config: Config = toml::from_str(&config_text).unwrap();
+    assert_eq!(config.local.sources[0].name, "Second");
+    assert_eq!(config.local.sources[1].name, "First");
+
+    let mut boundary_command = rmus_binary();
+    state_env(
+        boundary_command.args(["move-source", "Second", "up"]),
+        &state_dir,
+    );
+    let boundary_output = boundary_command
+        .output()
+        .expect("boundary rmus move-source should run");
+    assert!(boundary_output.status.success());
+    let boundary_stdout = String::from_utf8(boundary_output.stdout).unwrap();
+    assert!(boundary_stdout.contains("Local source 'Second' already at 1 of 2"));
+
+    let mut missing_command = rmus_binary();
+    state_env(
+        missing_command.args(["move-source", "Missing", "top"]),
+        &state_dir,
+    );
+    let missing_output = missing_command
+        .output()
+        .expect("missing rmus move-source should run");
+    assert!(!missing_output.status.success());
+    let missing_stderr = String::from_utf8(missing_output.stderr).unwrap();
+    assert!(missing_stderr.contains("source not found: Missing"));
 
     let _ = std::fs::remove_dir_all(state_dir);
 }
