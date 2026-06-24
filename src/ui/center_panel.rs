@@ -147,6 +147,8 @@ pub struct CenterPanel {
     playlist_picker_state: ListState,
     /// The mode to return to when closing playlist create/picker.
     pre_playlist_mode: Option<CenterPanelMode>,
+    /// Currently playing song, used to mark matching rows while browsing.
+    current_song: Option<Song>,
 }
 
 impl CenterPanel {
@@ -184,11 +186,16 @@ impl CenterPanel {
             playlist_picker_names: Vec::new(),
             playlist_picker_state: ListState::default(),
             pre_playlist_mode: None,
+            current_song: None,
         }
     }
 
     pub fn set_status(&mut self, message: Option<String>) {
         self.status_message = message;
+    }
+
+    pub fn set_current_song(&mut self, song: Option<Song>) {
+        self.current_song = song;
     }
 
     pub fn set_album(&mut self, path: PathBuf, songs: Vec<Song>) {
@@ -810,7 +817,7 @@ impl CenterPanel {
             self.songs
                 .iter()
                 .enumerate()
-                .map(|(i, s)| ListItem::new(Self::numbered_song_row_label(i, s)))
+                .map(|(i, s)| self.numbered_song_list_item(i, s))
                 .collect()
         };
 
@@ -866,11 +873,8 @@ impl CenterPanel {
         frame.render_widget(input_paragraph, input_area);
 
         if self.local_filter_mode {
-            let list_items: Vec<ListItem> = self
-                .songs
-                .iter()
-                .map(|s| ListItem::new(Self::song_row_label(s)))
-                .collect();
+            let list_items: Vec<ListItem> =
+                self.songs.iter().map(|s| self.song_list_item(s)).collect();
             let base_title =
                 Self::collection_title(&format!("Songs ({})", self.songs.len()), &self.songs);
             let title = match &self.status_message {
@@ -930,6 +934,10 @@ impl CenterPanel {
         label
     }
 
+    fn song_list_item(&self, song: &Song) -> ListItem<'static> {
+        self.current_marked_song_item(Self::song_row_label(song), song)
+    }
+
     fn numbered_song_row_label(index: usize, song: &Song) -> String {
         let number = match (song.disc_number, song.track_number) {
             (Some(disc), Some(track)) => format!("{disc}.{track:02}"),
@@ -938,6 +946,60 @@ impl CenterPanel {
             (None, None) => format!("{:>2}.", index + 1),
         };
         format!("{} {}", number, Self::song_row_label(song))
+    }
+
+    fn numbered_song_list_item(&self, index: usize, song: &Song) -> ListItem<'static> {
+        self.current_marked_song_item(Self::numbered_song_row_label(index, song), song)
+    }
+
+    fn current_marked_song_item(&self, label: String, song: &Song) -> ListItem<'static> {
+        if self.is_current_song(song) {
+            return ListItem::new(format!("> {label}")).style(theme::current_style());
+        }
+
+        ListItem::new(label)
+    }
+
+    fn is_current_song(&self, song: &Song) -> bool {
+        self.current_song
+            .as_ref()
+            .is_some_and(|current| Self::song_identity_matches(song, current))
+    }
+
+    fn song_identity_matches(left: &Song, right: &Song) -> bool {
+        match (
+            left.stream_service.as_deref(),
+            left.stream_track_id.as_deref(),
+            right.stream_service.as_deref(),
+            right.stream_track_id.as_deref(),
+        ) {
+            (Some(left_service), Some(left_id), Some(right_service), Some(right_id))
+                if !left_service.trim().is_empty()
+                    && !left_id.trim().is_empty()
+                    && left_service
+                        .trim()
+                        .eq_ignore_ascii_case(right_service.trim())
+                    && left_id.trim() == right_id.trim() =>
+            {
+                return true;
+            }
+            _ => {}
+        }
+
+        if !left.path.as_os_str().is_empty()
+            && !right.path.as_os_str().is_empty()
+            && left.path == right.path
+        {
+            return true;
+        }
+
+        if let (Some(left_url), Some(right_url)) = (left.url.as_deref(), right.url.as_deref()) {
+            let left_url = left_url.trim();
+            let right_url = right_url.trim();
+            return !left_url.is_empty() && left_url == right_url;
+        }
+
+        false
     }
 
     fn queue_song_row_label(
@@ -1000,10 +1062,7 @@ impl CenterPanel {
                 ListItem::new("Press / to search again.").style(theme::muted_style()),
             ]
         } else {
-            self.songs
-                .iter()
-                .map(|s| ListItem::new(Self::song_row_label(s)))
-                .collect()
+            self.songs.iter().map(|s| self.song_list_item(s)).collect()
         };
 
         let result_count = self.songs.len();
@@ -1071,7 +1130,7 @@ impl CenterPanel {
             self.songs
                 .iter()
                 .enumerate()
-                .map(|(i, s)| ListItem::new(Self::numbered_song_row_label(i, s)))
+                .map(|(i, s)| self.numbered_song_list_item(i, s))
                 .collect()
         };
 
@@ -2788,6 +2847,54 @@ mod tests {
             CenterPanel::queue_song_row_label(9, 12, &song, false),
             "  10. Second Artist - Second Song"
         );
+    }
+
+    #[test]
+    fn current_song_identity_matches_local_paths() {
+        let listed = Song {
+            title: "Listed".to_string(),
+            path: PathBuf::from("/music/track.flac"),
+            ..Default::default()
+        };
+        let current = Song {
+            title: "Current".to_string(),
+            path: PathBuf::from("/music/track.flac"),
+            ..Default::default()
+        };
+        let other = Song {
+            title: "Other".to_string(),
+            path: PathBuf::from("/music/other.flac"),
+            ..Default::default()
+        };
+
+        assert!(CenterPanel::song_identity_matches(&listed, &current));
+        assert!(!CenterPanel::song_identity_matches(&listed, &other));
+    }
+
+    #[test]
+    fn current_song_identity_matches_stream_references() {
+        let listed = Song {
+            title: "Listed".to_string(),
+            stream_service: Some("Qobuz".to_string()),
+            stream_track_id: Some("track-1".to_string()),
+            ..Default::default()
+        };
+        let current = Song {
+            title: "Current".to_string(),
+            stream_service: Some("qobuz".to_string()),
+            stream_track_id: Some("track-1".to_string()),
+            url: Some("https://cdn.example/stream.flac".to_string()),
+            ..Default::default()
+        };
+        let other = Song {
+            title: "Other".to_string(),
+            stream_service: Some("Tidal".to_string()),
+            stream_track_id: Some("track-1".to_string()),
+            ..Default::default()
+        };
+
+        assert!(CenterPanel::song_identity_matches(&listed, &current));
+        assert!(!CenterPanel::song_identity_matches(&listed, &other));
     }
 
     #[test]

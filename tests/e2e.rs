@@ -5334,6 +5334,51 @@ fn test_enter_on_open_album_song_starts_playback() {
 }
 
 #[test]
+fn test_open_album_marks_current_track() {
+    let (player, _played, _enqueued) = MockPlayer::new();
+    let mut app = App::new_for_test_with_playlist_store_and_player(
+        default_config(),
+        None,
+        None,
+        PlaylistStore::with_dir(test_dir("current-track-marker")),
+        Box::new(player),
+    );
+
+    app.center_panel.set_album(
+        PathBuf::from("/music/album"),
+        vec![
+            Song {
+                title: "First Song".to_string(),
+                path: PathBuf::from("/music/first.flac"),
+                ..Default::default()
+            },
+            Song {
+                title: "Second Song".to_string(),
+                path: PathBuf::from("/music/second.flac"),
+                ..Default::default()
+            },
+        ],
+    );
+    app.focused_window = FocusedWindow::Center;
+    app.execute(Action::PlaySelected);
+    app.tick();
+
+    let backend = TestBackend::new(160, 40);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let frame = terminal.draw(|frame| app.render(frame)).unwrap();
+    let text = extract_buffer_text(frame.buffer);
+
+    assert!(
+        text.contains(">  1. First Song"),
+        "open albums should mark the currently playing track"
+    );
+    assert!(
+        !text.contains(">  2. Second Song"),
+        "only the matching currently playing track should be marked"
+    );
+}
+
+#[test]
 fn test_enqueue_selected_without_song_shows_feedback() {
     let mut app = make_app(None, None);
 

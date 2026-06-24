@@ -2879,6 +2879,8 @@ impl App {
 
         self.left_panel
             .set_status_line(self.local_scan_status.as_ref().map(LocalScanStatus::label));
+        self.center_panel
+            .set_current_song(self.player.get_playback_info().current_song.clone());
         self.left_panel
             .render(frame, left_area, self.focused_window == FocusedWindow::Left);
         self.center_panel.render(
