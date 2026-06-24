@@ -4,6 +4,8 @@
 
 It is focused on fast local-library playback with playlist and queue workflows, plus first-class Qobuz and Tidal search/playback support.
 
+![rmus terminal UI showing local albums, a track list, now-playing details, and logs](assets/screenshot.png)
+
 ## Features
 
 - Local music sources configured from the settings UI, with cached album-folder discovery under each source and an all-local-tracks collection for whole-library playback.
