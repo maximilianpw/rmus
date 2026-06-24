@@ -48,6 +48,8 @@ rmus doctor
 rmus paths
 rmus local-stats
 rmus search-local "artist, album, title, or filename"
+rmus show-history
+rmus show-queue
 rmus clear-history
 rmus clear-queue
 ```
@@ -63,6 +65,8 @@ The paths command prints only the app storage paths, which is useful when inspec
 The local-stats command counts configured local sources, missing source folders, discoverable albums, playable audio files, and the local cache state without opening the TUI.
 
 The search-local command searches configured local tracks without opening the TUI. It matches title, artist, album, filename, and path using cached metadata when available, with filename/path fallback for uncached tracks. Use `--limit N` to show more or fewer matches.
+
+The show-history and show-queue commands print saved recently played tracks and saved playback queue state without opening the TUI.
 
 The clear-history and clear-queue commands remove saved playback history or saved queue state without touching config, playlists, streaming accounts, or the local metadata cache.
 

@@ -30,6 +30,8 @@ pub enum CliAction {
     Paths,
     ListSources,
     ListPlaylists,
+    ShowHistory,
+    ShowQueue,
     LocalStats,
     SearchLocal {
         query: String,
@@ -97,6 +99,8 @@ where
         "paths" => no_more_args(args, CliAction::Paths, &first),
         "list-sources" => no_more_args(args, CliAction::ListSources, &first),
         "list-playlists" => no_more_args(args, CliAction::ListPlaylists, &first),
+        "show-history" => no_more_args(args, CliAction::ShowHistory, &first),
+        "show-queue" => no_more_args(args, CliAction::ShowQueue, &first),
         "local-stats" => no_more_args(args, CliAction::LocalStats, &first),
         "search-local" => parse_search_local_args(args),
         "scan-local" => parse_scan_local_args(args),
@@ -384,6 +388,8 @@ pub fn help_text() -> &'static str {
         "  paths           Print app storage paths\n",
         "  list-sources    Print configured local music folders\n",
         "  list-playlists  Print saved playlists and track counts\n",
+        "  show-history    Print saved recently played tracks\n",
+        "  show-queue      Print saved playback queue state\n",
         "  local-stats     Count configured local sources, albums, and tracks\n",
         "  search-local <QUERY> [--limit N]\n",
         "                  Search configured local tracks without launching the TUI\n",
@@ -493,6 +499,83 @@ fn list_playlists_with_store(store: PlaylistStore) -> PlaylistListSummary {
 }
 
 #[derive(Debug, Clone)]
+pub struct HistoryDetailSummary {
+    pub tracks: Vec<Song>,
+}
+
+impl HistoryDetailSummary {
+    pub fn message(&self) -> String {
+        let mut text = format!(
+            "Recently played ({})\n",
+            track_count_label(self.tracks.len())
+        );
+        if self.tracks.is_empty() {
+            text.push_str("No playback history saved.\n");
+            return text;
+        }
+
+        for (index, song) in self.tracks.iter().enumerate() {
+            text.push_str(&format!("{}. {}\n", index + 1, song_detail(song)));
+        }
+        text
+    }
+}
+
+pub fn show_history() -> HistoryDetailSummary {
+    show_history_with_store(HistoryStore::default())
+}
+
+fn show_history_with_store(store: HistoryStore) -> HistoryDetailSummary {
+    HistoryDetailSummary {
+        tracks: store.load(),
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct QueueDetailSummary {
+    pub tracks: Vec<Song>,
+    pub position: usize,
+}
+
+impl QueueDetailSummary {
+    pub fn message(&self) -> String {
+        let mut text = if self.tracks.is_empty() {
+            format!("Saved queue ({})\n", track_count_label(0))
+        } else {
+            format!(
+                "Saved queue ({}, position {} of {})\n",
+                track_count_label(self.tracks.len()),
+                self.position + 1,
+                self.tracks.len()
+            )
+        };
+
+        if self.tracks.is_empty() {
+            text.push_str("No saved queue tracks.\n");
+            return text;
+        }
+
+        for (index, song) in self.tracks.iter().enumerate() {
+            let marker = if index == self.position { ">" } else { " " };
+            text.push_str(&format!("{marker} {}. {}\n", index + 1, song_detail(song)));
+        }
+        text
+    }
+}
+
+pub fn show_queue() -> QueueDetailSummary {
+    show_queue_with_store(QueueStore::default())
+}
+
+fn show_queue_with_store(store: QueueStore) -> QueueDetailSummary {
+    let state = store.load();
+    QueueDetailSummary {
+        tracks: state.tracks,
+        position: state.position,
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct PlaylistDetailSummary {
     pub name: String,
     pub tracks: Vec<crate::playlist::PlaylistTrack>,
@@ -594,6 +677,47 @@ fn playlist_track_source_label(track: &crate::playlist::PlaylistTrack) -> String
 
     let service = track.stream_service.as_deref().and_then(nonblank);
     let track_id = track.stream_track_id.as_deref().and_then(nonblank);
+    match (service, track_id) {
+        (Some(service), Some(track_id)) => format!("{service}: {track_id}"),
+        (Some(service), None) => service.to_string(),
+        (None, Some(track_id)) => format!("stream: {track_id}"),
+        (None, None) => "saved".to_string(),
+    }
+}
+
+fn song_detail(song: &Song) -> String {
+    let mut detail = song.to_string();
+    if detail.trim().is_empty() {
+        detail = song
+            .path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.trim().is_empty())
+            .or_else(|| song.stream_track_id.as_deref().and_then(nonblank))
+            .unwrap_or("Unknown Track")
+            .to_string();
+    }
+
+    if let Some(album) = nonblank(&song.album_name) {
+        detail.push_str(&format!(" ({album})"));
+    }
+    detail.push_str(&format!(" [{}]", song_source_label(song)));
+
+    if !song.path.as_os_str().is_empty() {
+        detail.push(' ');
+        detail.push_str(&song.path.to_string_lossy());
+    }
+
+    detail
+}
+
+fn song_source_label(song: &Song) -> String {
+    if !song.path.as_os_str().is_empty() {
+        return "local".to_string();
+    }
+
+    let service = song.stream_service.as_deref().and_then(nonblank);
+    let track_id = song.stream_track_id.as_deref().and_then(nonblank);
     match (service, track_id) {
         (Some(service), Some(track_id)) => format!("{service}: {track_id}"),
         (Some(service), None) => service.to_string(),
@@ -1743,8 +1867,8 @@ mod tests {
         list_playlists_with_store, list_sources_from_config, local_stats_with_cache_path,
         move_source_in_config, parse_args, paths_text_with_options, remove_source_from_config,
         scan_local_with_cache_path, search_local_with_config_and_cache_path,
-        show_playlist_with_store, CliAction, DoctorOptions, LocalSourceMoveTarget,
-        DEFAULT_LOCAL_SEARCH_LIMIT,
+        show_history_with_store, show_playlist_with_store, show_queue_with_store, CliAction,
+        DoctorOptions, LocalSourceMoveTarget, DEFAULT_LOCAL_SEARCH_LIMIT,
     };
     use crate::{
         history::HistoryStore,
@@ -2010,6 +2134,104 @@ title = "Only"
             summary.message(),
             "No playlists found; create one in the Playlists tab or import with `rmus import-playlist`"
         );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn show_history_command_prints_saved_history() {
+        assert_eq!(
+            parse_args(["rmus", "show-history"]),
+            Ok(CliAction::ShowHistory)
+        );
+
+        let dir = test_dir("show-history");
+        let store = HistoryStore::with_path(dir.join("history.toml"));
+        store
+            .save(&[
+                Song {
+                    title: "Local Song".to_string(),
+                    artist: "Local Artist".to_string(),
+                    album_name: "Local Album".to_string(),
+                    path: PathBuf::from("/music/local.flac"),
+                    ..Default::default()
+                },
+                Song {
+                    title: "Stream Song".to_string(),
+                    artist: "Stream Artist".to_string(),
+                    album_name: "Stream Album".to_string(),
+                    stream_service: Some("Qobuz".to_string()),
+                    stream_track_id: Some("stream-1".to_string()),
+                    ..Default::default()
+                },
+            ])
+            .unwrap();
+
+        let text = show_history_with_store(store).message();
+
+        assert!(text.contains("Recently played (2 tracks)"));
+        assert!(
+            text.contains("1. Local Artist - Local Song (Local Album) [local] /music/local.flac")
+        );
+        assert!(text.contains("2. Stream Artist - Stream Song (Stream Album) [Qobuz: stream-1]"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn show_history_reports_empty_store() {
+        let dir = test_dir("show-history-empty");
+        let text =
+            show_history_with_store(HistoryStore::with_path(dir.join("missing.toml"))).message();
+
+        assert!(text.contains("Recently played (0 tracks)"));
+        assert!(text.contains("No playback history saved."));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn show_queue_command_prints_saved_queue_position() {
+        assert_eq!(parse_args(["rmus", "show-queue"]), Ok(CliAction::ShowQueue));
+
+        let dir = test_dir("show-queue");
+        let store = QueueStore::with_path(dir.join("queue.toml"));
+        store
+            .save(&QueueState::new(
+                vec![
+                    Song {
+                        title: "First".to_string(),
+                        artist: "Queue Artist".to_string(),
+                        path: PathBuf::from("/music/first.flac"),
+                        ..Default::default()
+                    },
+                    Song {
+                        title: "Second".to_string(),
+                        artist: "Queue Artist".to_string(),
+                        path: PathBuf::from("/music/second.flac"),
+                        ..Default::default()
+                    },
+                ],
+                1,
+            ))
+            .unwrap();
+
+        let text = show_queue_with_store(store).message();
+
+        assert!(text.contains("Saved queue (2 tracks, position 2 of 2)"));
+        assert!(text.contains("  1. Queue Artist - First [local] /music/first.flac"));
+        assert!(text.contains("> 2. Queue Artist - Second [local] /music/second.flac"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn show_queue_reports_empty_store() {
+        let dir = test_dir("show-queue-empty");
+        let text = show_queue_with_store(QueueStore::with_path(dir.join("missing.toml"))).message();
+
+        assert!(text.contains("Saved queue (0 tracks)"));
+        assert!(text.contains("No saved queue tracks."));
 
         let _ = fs::remove_dir_all(dir);
     }

@@ -222,6 +222,8 @@ fn test_cli_help_prints_without_launching_tui() {
     assert!(stdout.contains("paths"));
     assert!(stdout.contains("list-sources"));
     assert!(stdout.contains("list-playlists"));
+    assert!(stdout.contains("show-history"));
+    assert!(stdout.contains("show-queue"));
     assert!(stdout.contains("local-stats"));
     assert!(stdout.contains("search-local"));
     assert!(stdout.contains("scan-local"));
@@ -942,6 +944,85 @@ fn test_cli_clear_cache_runs_without_launching_tui() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("Local cache already absent"));
     assert!(stdout.contains("local-cache.toml"));
+
+    let _ = std::fs::remove_dir_all(state_dir);
+}
+
+#[test]
+fn test_cli_show_history_prints_saved_history_without_launching_tui() {
+    let state_dir = test_dir("cli-show-history");
+    let config_dir = state_dir.join("rmus-config");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    HistoryStore::with_path(config_dir.join("history.toml"))
+        .save(&[
+            Song {
+                title: "Local History".to_string(),
+                artist: "History Artist".to_string(),
+                album_name: "History Album".to_string(),
+                path: PathBuf::from("/music/history.flac"),
+                ..Default::default()
+            },
+            Song {
+                title: "Stream History".to_string(),
+                artist: "Stream Artist".to_string(),
+                album_name: "Stream Album".to_string(),
+                stream_service: Some("Tidal".to_string()),
+                stream_track_id: Some("tidal-1".to_string()),
+                ..Default::default()
+            },
+        ])
+        .unwrap();
+
+    let mut command = rmus_binary();
+    state_env(command.arg("show-history"), &state_dir);
+    let output = command.output().expect("rmus show-history should run");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Recently played (2 tracks)"));
+    assert!(stdout
+        .contains("1. History Artist - Local History (History Album) [local] /music/history.flac"));
+    assert!(stdout.contains("2. Stream Artist - Stream History (Stream Album) [Tidal: tidal-1]"));
+
+    let _ = std::fs::remove_dir_all(state_dir);
+}
+
+#[test]
+fn test_cli_show_queue_prints_saved_queue_without_launching_tui() {
+    let state_dir = test_dir("cli-show-queue");
+    let config_dir = state_dir.join("rmus-config");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    QueueStore::with_path(config_dir.join("queue.toml"))
+        .save(&QueueState::new(
+            vec![
+                Song {
+                    title: "First Queue".to_string(),
+                    artist: "Queue Artist".to_string(),
+                    path: PathBuf::from("/music/first.flac"),
+                    ..Default::default()
+                },
+                Song {
+                    title: "Second Queue".to_string(),
+                    artist: "Queue Artist".to_string(),
+                    path: PathBuf::from("/music/second.flac"),
+                    ..Default::default()
+                },
+            ],
+            1,
+        ))
+        .unwrap();
+
+    let mut command = rmus_binary();
+    state_env(command.arg("show-queue"), &state_dir);
+    let output = command.output().expect("rmus show-queue should run");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Saved queue (2 tracks, position 2 of 2)"));
+    assert!(stdout.contains("  1. Queue Artist - First Queue [local] /music/first.flac"));
+    assert!(stdout.contains("> 2. Queue Artist - Second Queue [local] /music/second.flac"));
 
     let _ = std::fs::remove_dir_all(state_dir);
 }

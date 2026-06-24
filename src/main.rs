@@ -26,6 +26,14 @@ fn main() -> color_eyre::Result<()> {
             print!("{}", rmus::cli::list_playlists().message());
             return Ok(());
         }
+        Ok(rmus::cli::CliAction::ShowHistory) => {
+            print!("{}", rmus::cli::show_history().message());
+            return Ok(());
+        }
+        Ok(rmus::cli::CliAction::ShowQueue) => {
+            print!("{}", rmus::cli::show_queue().message());
+            return Ok(());
+        }
         Ok(rmus::cli::CliAction::LocalStats) => {
             let summary = rmus::cli::local_stats();
             println!("{}", summary.message());
