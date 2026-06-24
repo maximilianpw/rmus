@@ -60,8 +60,12 @@ pub fn resolve_key(
         (_, KeyCode::Char('H')) => return KeyAction::Execute(Action::ShowHistory),
         (_, KeyCode::Char('R')) => return KeyAction::Execute(Action::RefreshLibrary),
         (_, KeyCode::Char('W')) => return KeyAction::Execute(Action::WarmLocalCache),
+        (_, KeyCode::Char('x')) => return KeyAction::Execute(Action::TogglePause),
+        (_, KeyCode::Char('v')) => return KeyAction::Execute(Action::StopPlayback),
         (_, KeyCode::Char('n')) => return KeyAction::Execute(Action::NextTrack),
         (_, KeyCode::Char('p')) => return KeyAction::Execute(Action::PreviousTrack),
+        (_, KeyCode::Char(',')) => return KeyAction::Execute(Action::SeekBackward(5.0)),
+        (_, KeyCode::Char('.')) => return KeyAction::Execute(Action::SeekForward(5.0)),
         (_, KeyCode::Char('+') | KeyCode::Char('=')) => {
             return KeyAction::Execute(Action::VolumeUp(5));
         }
@@ -508,6 +512,26 @@ mod tests {
             assert!(matches!(
                 previous,
                 KeyAction::Execute(Action::PreviousTrack)
+            ));
+
+            let pause = resolve_key(key(KeyCode::Char('x')), focus, false, false, false, false);
+            assert!(matches!(pause, KeyAction::Execute(Action::TogglePause)));
+
+            let stop = resolve_key(key(KeyCode::Char('v')), focus, false, false, false, false);
+            assert!(matches!(stop, KeyAction::Execute(Action::StopPlayback)));
+
+            let seek_backward =
+                resolve_key(key(KeyCode::Char(',')), focus, false, false, false, false);
+            assert!(matches!(
+                seek_backward,
+                KeyAction::Execute(Action::SeekBackward(5.0))
+            ));
+
+            let seek_forward =
+                resolve_key(key(KeyCode::Char('.')), focus, false, false, false, false);
+            assert!(matches!(
+                seek_forward,
+                KeyAction::Execute(Action::SeekForward(5.0))
             ));
 
             let volume_up = resolve_key(key(KeyCode::Char('+')), focus, false, false, false, false);

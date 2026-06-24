@@ -138,7 +138,10 @@ Global:
 - `H`: show recently played tracks.
 - `R`: refresh library and playlists.
 - `W`: warm local metadata cache in the background.
+- `x`: pause/resume.
+- `v`: stop playback.
 - `n` / `p`: next/previous track.
+- `,` / `.`: seek backward/forward 5 seconds.
 - `+` / `-`: adjust volume.
 - `m`: mute or restore the previous volume.
 - `V`: save the current volume as startup volume.

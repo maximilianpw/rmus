@@ -5886,6 +5886,79 @@ fn test_playback_controls_show_feedback() {
 }
 
 #[test]
+fn test_global_transport_shortcuts_work_while_browsing() {
+    let (player, _played, _enqueued) = MockPlayer::new();
+    let mut app = App::new_for_test_with_playlist_store_and_player(
+        default_config(),
+        None,
+        None,
+        PlaylistStore::with_dir(test_dir("global-transport-shortcuts")),
+        Box::new(player),
+    );
+
+    app.center_panel.set_album(
+        PathBuf::from("/music/album"),
+        vec![
+            Song {
+                title: "First Song".to_string(),
+                path: PathBuf::from("/music/first.flac"),
+                ..Default::default()
+            },
+            Song {
+                title: "Second Song".to_string(),
+                path: PathBuf::from("/music/second.flac"),
+                ..Default::default()
+            },
+        ],
+    );
+    app.focused_window = FocusedWindow::Center;
+    app.execute(Action::PlaySelected);
+
+    dispatch_key(&mut app, make_key(KeyCode::Char('x')));
+    dispatch_key(&mut app, make_key(KeyCode::Char('x')));
+    dispatch_key(&mut app, make_key(KeyCode::Char('.')));
+    dispatch_key(&mut app, make_key(KeyCode::Char(',')));
+    dispatch_key(&mut app, make_key(KeyCode::Char('n')));
+    dispatch_key(&mut app, make_key(KeyCode::Char('p')));
+    dispatch_key(&mut app, make_key(KeyCode::Char('v')));
+    app.tick();
+
+    let backend = TestBackend::new(220, 40);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let frame = terminal.draw(|frame| app.render(frame)).unwrap();
+    let text = extract_buffer_text(frame.buffer);
+
+    assert!(
+        text.contains("Paused"),
+        "global pause shortcut should work without focusing the right panel"
+    );
+    assert!(
+        text.contains("Playing"),
+        "global pause shortcut should resume playback without focusing the right panel"
+    );
+    assert!(
+        text.contains("Seeked to 0:05"),
+        "global seek-forward shortcut should work without focusing the right panel"
+    );
+    assert!(
+        text.contains("Seeked to 0:00"),
+        "global seek-backward shortcut should work without focusing the right panel"
+    );
+    assert!(
+        text.contains("Playing Second Song"),
+        "global next shortcut should keep working while browsing"
+    );
+    assert!(
+        text.contains("Playing First Song"),
+        "global previous shortcut should keep working while browsing"
+    );
+    assert!(
+        text.contains("Stopped playback"),
+        "global stop shortcut should work without focusing the right panel"
+    );
+}
+
+#[test]
 fn test_toggle_mute_zeroes_and_restores_previous_volume() {
     let (mut player, _played, _enqueued) = MockPlayer::new();
     player.info.volume = 37;
@@ -8266,6 +8339,18 @@ fn test_keybind_tab_shows_generic_search_text() {
     assert!(
         text.contains("Refresh library"),
         "Keybinds should document library refresh"
+    );
+    assert!(
+        text.contains("Toggle pause"),
+        "Keybinds should document global pause toggling"
+    );
+    assert!(
+        text.contains("Stop playback"),
+        "Keybinds should document global stop playback"
+    );
+    assert!(
+        text.contains("Seek backward / forward 5s"),
+        "Keybinds should document global seek shortcuts"
     );
     assert!(
         text.contains("Play album/playlist"),
