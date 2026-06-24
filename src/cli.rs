@@ -7,7 +7,7 @@ use std::{
 };
 
 use crate::{
-    config::{config_path, Config},
+    config::{config_path, Config, MaxStreamQuality},
     history::HistoryStore,
     local_cache::LocalTrackCache,
     playlist::{PlaylistExportSummary, PlaylistImportSummary, PlaylistStore},
@@ -26,6 +26,7 @@ pub enum CliAction {
     Run,
     Help,
     Version,
+    Status,
     Doctor,
     Paths,
     Completions {
@@ -110,6 +111,7 @@ where
     match first.as_str() {
         "-h" | "--help" => no_more_args(args, CliAction::Help, &first),
         "-V" | "--version" => no_more_args(args, CliAction::Version, &first),
+        "status" => no_more_args(args, CliAction::Status, &first),
         "doctor" => no_more_args(args, CliAction::Doctor, &first),
         "paths" => no_more_args(args, CliAction::Paths, &first),
         "completions" => parse_completions_args(args),
@@ -457,6 +459,7 @@ pub fn help_text() -> &'static str {
         "  rmus [OPTIONS] [COMMAND]\n",
         "\n",
         "Commands:\n",
+        "  status          Print saved app state summary\n",
         "  doctor          Check runtime dependencies and app paths\n",
         "  paths           Print app storage paths\n",
         "  completions <bash|zsh|fish>\n",
@@ -502,7 +505,7 @@ _rmus() {
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
-    commands="doctor paths completions list-sources list-playlists show-history show-queue local-stats search-local scan-local add-source remove-source move-source show-playlist delete-playlist import-playlist export-playlist clear-cache clear-history clear-queue"
+    commands="status doctor paths completions list-sources list-playlists show-history show-queue local-stats search-local scan-local add-source remove-source move-source show-playlist delete-playlist import-playlist export-playlist clear-cache clear-history clear-queue"
     global_opts="-h --help -V --version"
 
     case "$prev" in
@@ -539,6 +542,7 @@ const ZSH_COMPLETIONS: &str = r#"#compdef rmus
 _rmus() {
     local -a commands shells move_targets
     commands=(
+        'status:print saved app state summary'
         'doctor:check runtime dependencies and app paths'
         'paths:print app storage paths'
         'completions:print shell completions'
@@ -598,6 +602,7 @@ const FISH_COMPLETIONS: &str = r#"# fish completion for rmus
 complete -c rmus -f
 complete -c rmus -s h -l help -d 'Print help'
 complete -c rmus -s V -l version -d 'Print version'
+complete -c rmus -n '__fish_use_subcommand' -a status -d 'Print saved app state summary'
 complete -c rmus -n '__fish_use_subcommand' -a doctor -d 'Check runtime dependencies and app paths'
 complete -c rmus -n '__fish_use_subcommand' -a paths -d 'Print app storage paths'
 complete -c rmus -n '__fish_use_subcommand' -a completions -d 'Print shell completions'
@@ -700,6 +705,149 @@ pub fn list_playlists() -> PlaylistListSummary {
 fn list_playlists_with_store(store: PlaylistStore) -> PlaylistListSummary {
     PlaylistListSummary {
         playlists: store.summaries(),
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct StatusSummary {
+    pub source_count: usize,
+    pub missing_source_count: usize,
+    pub qobuz_configured: bool,
+    pub tidal_status: TidalStatusSummary,
+    pub default_volume: u16,
+    pub max_stream_quality: MaxStreamQuality,
+    pub default_shuffle: crate::players::ShuffleMode,
+    pub default_repeat: crate::players::RepeatMode,
+    pub playlist_count: usize,
+    pub history_count: usize,
+    pub queue_track_count: usize,
+    pub queue_position: usize,
+    pub current_queue_song: Option<Song>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TidalStatusSummary {
+    NotAuthenticated,
+    RefreshTokenSaved,
+    Authenticated,
+}
+
+impl TidalStatusSummary {
+    fn from_config(config: Option<&crate::config::TidalConfig>) -> Self {
+        match config {
+            Some(config) if config.has_access_token() => Self::Authenticated,
+            Some(config) if config.has_refresh_token() => Self::RefreshTokenSaved,
+            _ => Self::NotAuthenticated,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::NotAuthenticated => "not authenticated",
+            Self::RefreshTokenSaved => "refresh token saved",
+            Self::Authenticated => "authenticated",
+        }
+    }
+}
+
+impl StatusSummary {
+    pub fn message(&self) -> String {
+        let mut text = String::from("rmus status\n");
+        text.push_str(&format!(
+            "Local sources: {} configured {}, {} missing\n",
+            self.source_count,
+            plural(self.source_count, "source", "sources"),
+            self.missing_source_count
+        ));
+        text.push_str(&format!(
+            "Qobuz: {}\n",
+            if self.qobuz_configured {
+                "configured"
+            } else {
+                "not configured"
+            }
+        ));
+        text.push_str(&format!("Tidal: {}\n", self.tidal_status.label()));
+        text.push_str(&format!(
+            "Audio: volume {}%, quality {}, shuffle {}, repeat {}\n",
+            self.default_volume,
+            quality_label(self.max_stream_quality),
+            shuffle_label(self.default_shuffle),
+            self.default_repeat.label()
+        ));
+        text.push_str(&format!(
+            "Playlists: {} {}\n",
+            self.playlist_count,
+            plural(self.playlist_count, "playlist", "playlists")
+        ));
+        text.push_str(&format!(
+            "History: {}\n",
+            track_count_label(self.history_count)
+        ));
+        if self.queue_track_count == 0 {
+            text.push_str("Saved queue: empty\n");
+            text.push_str("Current saved track: none\n");
+        } else {
+            text.push_str(&format!(
+                "Saved queue: {}, position {} of {}\n",
+                track_count_label(self.queue_track_count),
+                self.queue_position + 1,
+                self.queue_track_count
+            ));
+            if let Some(song) = &self.current_queue_song {
+                text.push_str(&format!("Current saved track: {}\n", song_detail(song)));
+            } else {
+                text.push_str("Current saved track: unavailable\n");
+            }
+        }
+        text
+    }
+}
+
+pub fn status() -> StatusSummary {
+    status_with_config_and_stores(
+        Config::load(),
+        PlaylistStore::default(),
+        HistoryStore::default(),
+        QueueStore::default(),
+    )
+}
+
+fn status_with_config_and_stores(
+    config: Config,
+    playlist_store: PlaylistStore,
+    history_store: HistoryStore,
+    queue_store: QueueStore,
+) -> StatusSummary {
+    let source_count = config.local.sources.len();
+    let missing_source_count = config
+        .local
+        .sources
+        .iter()
+        .filter(|source| !source.path.is_dir())
+        .count();
+    let playlist_count = playlist_store.summaries().len();
+    let history_count = history_store.load().len();
+    let queue = queue_store.load();
+    let current_queue_song = queue.tracks.get(queue.position).cloned();
+
+    StatusSummary {
+        source_count,
+        missing_source_count,
+        qobuz_configured: config
+            .qobuz
+            .as_ref()
+            .is_some_and(crate::config::QobuzConfig::has_credentials),
+        tidal_status: TidalStatusSummary::from_config(config.tidal.as_ref()),
+        default_volume: config.audio.default_volume,
+        max_stream_quality: config.audio.max_stream_quality,
+        default_shuffle: config.audio.default_shuffle,
+        default_repeat: config.audio.default_repeat,
+        playlist_count,
+        history_count,
+        queue_track_count: queue.tracks.len(),
+        queue_position: queue.position,
+        current_queue_song,
     }
 }
 
@@ -1833,6 +1981,21 @@ fn select_scan_sources(
     Ok((vec![source], Some(selected_name)))
 }
 
+fn quality_label(quality: MaxStreamQuality) -> &'static str {
+    match quality {
+        MaxStreamQuality::Mp3 => "MP3",
+        MaxStreamQuality::Cd => "CD",
+        MaxStreamQuality::HiRes => "Hi-Res",
+    }
+}
+
+fn shuffle_label(shuffle: crate::players::ShuffleMode) -> &'static str {
+    match shuffle {
+        crate::players::ShuffleMode::Off => "Off",
+        crate::players::ShuffleMode::On => "On",
+    }
+}
+
 fn plural(count: usize, singular: &'static str, plural: &'static str) -> &'static str {
     if count == 1 {
         singular
@@ -2140,11 +2303,17 @@ mod tests {
         search_local_with_config_and_cache_path, show_history_with_store,
         show_history_with_store_and_limit, show_playlist_with_store,
         show_playlist_with_store_and_limit, show_queue_with_store, show_queue_with_store_and_limit,
-        CliAction, CompletionShell, DoctorOptions, LocalSourceMoveTarget,
-        DEFAULT_LOCAL_SEARCH_LIMIT,
+        status_with_config_and_stores, CliAction, CompletionShell, DoctorOptions,
+        LocalSourceMoveTarget, DEFAULT_LOCAL_SEARCH_LIMIT,
     };
     use crate::{
+        config::{
+            AudioConfig, Config, LocalConfig, LocalSource, MaxStreamQuality, QobuzConfig,
+            TidalConfig,
+        },
         history::HistoryStore,
+        players::{RepeatMode, ShuffleMode},
+        playlist::PlaylistStore,
         queue::{QueueState, QueueStore},
         sources::song::Song,
     };
@@ -2249,6 +2418,128 @@ album_name = {}
     }
 
     #[test]
+    fn status_command_prints_saved_state_summary() {
+        assert_eq!(parse_args(["rmus", "status"]), Ok(CliAction::Status));
+
+        let dir = test_dir("status");
+        let existing_source = dir.join("music");
+        fs::create_dir_all(&existing_source).unwrap();
+        let missing_source = dir.join("missing");
+        let playlist_store = PlaylistStore::with_dir(dir.join("playlists"));
+        playlist_store.create("Road".to_string()).unwrap();
+        let history_store = HistoryStore::with_path(dir.join("history.toml"));
+        history_store
+            .save(&[
+                Song {
+                    title: "History Song".to_string(),
+                    artist: "History Artist".to_string(),
+                    ..Default::default()
+                },
+                Song {
+                    title: "Stream History".to_string(),
+                    stream_service: Some("Qobuz".to_string()),
+                    stream_track_id: Some("qbz-1".to_string()),
+                    ..Default::default()
+                },
+            ])
+            .unwrap();
+        let queue_store = QueueStore::with_path(dir.join("queue.toml"));
+        queue_store
+            .save(&QueueState::new(
+                vec![
+                    Song {
+                        title: "First Queue".to_string(),
+                        artist: "Queue Artist".to_string(),
+                        path: PathBuf::from("/music/first.flac"),
+                        ..Default::default()
+                    },
+                    Song {
+                        title: "Second Queue".to_string(),
+                        artist: "Queue Artist".to_string(),
+                        album_name: "Queue Album".to_string(),
+                        path: PathBuf::from("/music/second.flac"),
+                        ..Default::default()
+                    },
+                ],
+                1,
+            ))
+            .unwrap();
+
+        let summary = status_with_config_and_stores(
+            Config {
+                local: LocalConfig {
+                    sources: vec![
+                        LocalSource {
+                            name: "Library".to_string(),
+                            path: existing_source,
+                        },
+                        LocalSource {
+                            name: "Missing".to_string(),
+                            path: missing_source,
+                        },
+                    ],
+                },
+                qobuz: Some(QobuzConfig {
+                    email: "user@example.com".to_string(),
+                    password: "secret".to_string(),
+                    app_id: String::new(),
+                    app_secret: String::new(),
+                }),
+                tidal: Some(TidalConfig {
+                    refresh_token: "refresh-token".to_string(),
+                    ..Default::default()
+                }),
+                audio: AudioConfig {
+                    default_volume: 72,
+                    max_stream_quality: MaxStreamQuality::Cd,
+                    default_shuffle: ShuffleMode::On,
+                    default_repeat: RepeatMode::All,
+                },
+            },
+            playlist_store,
+            history_store,
+            queue_store,
+        );
+        let text = summary.message();
+
+        assert!(text.contains("rmus status"));
+        assert!(text.contains("Local sources: 2 configured sources, 1 missing"));
+        assert!(text.contains("Qobuz: configured"));
+        assert!(text.contains("Tidal: refresh token saved"));
+        assert!(text.contains("Audio: volume 72%, quality CD, shuffle On, repeat All"));
+        assert!(text.contains("Playlists: 1 playlist"));
+        assert!(text.contains("History: 2 tracks"));
+        assert!(text.contains("Saved queue: 2 tracks, position 2 of 2"));
+        assert!(text.contains(
+            "Current saved track: Queue Artist - Second Queue (Queue Album) [local] /music/second.flac"
+        ));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn status_command_reports_empty_saved_state() {
+        let dir = test_dir("status-empty");
+        let summary = status_with_config_and_stores(
+            Config::default(),
+            PlaylistStore::with_dir(dir.join("playlists")),
+            HistoryStore::with_path(dir.join("history.toml")),
+            QueueStore::with_path(dir.join("queue.toml")),
+        );
+        let text = summary.message();
+
+        assert!(text.contains("Local sources: 0 configured sources, 0 missing"));
+        assert!(text.contains("Qobuz: not configured"));
+        assert!(text.contains("Tidal: not authenticated"));
+        assert!(text.contains("Playlists: 0 playlists"));
+        assert!(text.contains("History: 0 tracks"));
+        assert!(text.contains("Saved queue: empty"));
+        assert!(text.contains("Current saved track: none"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn completions_command_accepts_supported_shells() {
         assert_eq!(
             parse_args(["rmus", "completions", "bash"]),
@@ -2285,16 +2576,19 @@ album_name = {}
     fn completions_text_includes_commands_and_shell_specific_hooks() {
         let bash = completions_text(CompletionShell::Bash);
         assert!(bash.contains("complete -F _rmus rmus"));
+        assert!(bash.contains("status"));
         assert!(bash.contains("show-playlist"));
         assert!(bash.contains("--limit"));
 
         let zsh = completions_text(CompletionShell::Zsh);
         assert!(zsh.contains("#compdef rmus"));
+        assert!(zsh.contains("status:print saved app state summary"));
         assert!(zsh.contains("move-source:reorder configured local music folders"));
         assert!(zsh.contains("bash zsh fish"));
 
         let fish = completions_text(CompletionShell::Fish);
         assert!(fish.contains("complete -c rmus"));
+        assert!(fish.contains("__fish_use_subcommand' -a status"));
         assert!(fish.contains("clear-queue"));
         assert!(fish.contains("__fish_seen_subcommand_from completions"));
     }

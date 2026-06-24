@@ -219,6 +219,7 @@ fn test_cli_help_prints_without_launching_tui() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("keyboard-driven terminal music player"));
     assert!(stdout.contains("doctor"));
+    assert!(stdout.contains("status"));
     assert!(stdout.contains("paths"));
     assert!(stdout.contains("completions"));
     assert!(stdout.contains("list-sources"));
@@ -262,6 +263,104 @@ fn test_cli_completions_print_without_launching_tui() {
     assert!(!missing.status.success());
     let stderr = String::from_utf8(missing.stderr).unwrap();
     assert!(stderr.contains("missing shell for completions"));
+}
+
+#[test]
+fn test_cli_status_prints_saved_state_without_launching_tui() {
+    let state_dir = test_dir("cli-status");
+    std::fs::create_dir_all(&state_dir).unwrap();
+    let music_dir = state_dir.join("music");
+    std::fs::create_dir_all(&music_dir).unwrap();
+
+    let config_path = isolated_storage_path(&state_dir, "config");
+    std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+    let config = Config {
+        local: LocalConfig {
+            sources: vec![
+                LocalSource {
+                    name: "Library".to_string(),
+                    path: music_dir.clone(),
+                },
+                LocalSource {
+                    name: "Missing".to_string(),
+                    path: state_dir.join("missing"),
+                },
+            ],
+        },
+        qobuz: Some(QobuzConfig {
+            email: "listener@example.com".to_string(),
+            password: "secret".to_string(),
+            app_id: String::new(),
+            app_secret: String::new(),
+        }),
+        tidal: Some(TidalConfig {
+            access_token: "tidal-access".to_string(),
+            refresh_token: "tidal-refresh".to_string(),
+            country_code: "US".to_string(),
+            token_expiry: 4_102_444_800,
+        }),
+        audio: AudioConfig {
+            default_volume: 64,
+            max_stream_quality: MaxStreamQuality::Cd,
+            default_shuffle: ShuffleMode::On,
+            default_repeat: RepeatMode::All,
+        },
+    };
+    std::fs::write(config_path, toml::to_string_pretty(&config).unwrap()).unwrap();
+
+    let playlists_dir = isolated_storage_path(&state_dir, "playlists");
+    let playlist_store = PlaylistStore::with_dir(playlists_dir);
+    playlist_store.create("Road".to_string()).unwrap();
+    HistoryStore::with_path(isolated_storage_path(&state_dir, "history"))
+        .save(&[Song {
+            title: "History Song".to_string(),
+            artist: "History Artist".to_string(),
+            path: music_dir.join("history.flac"),
+            ..Default::default()
+        }])
+        .unwrap();
+    QueueStore::with_path(isolated_storage_path(&state_dir, "queue"))
+        .save(&QueueState::new(
+            vec![
+                Song {
+                    title: "First Queue".to_string(),
+                    artist: "Queue Artist".to_string(),
+                    path: music_dir.join("first.flac"),
+                    ..Default::default()
+                },
+                Song {
+                    title: "Second Queue".to_string(),
+                    artist: "Queue Artist".to_string(),
+                    album_name: "Queue Album".to_string(),
+                    path: music_dir.join("second.flac"),
+                    ..Default::default()
+                },
+            ],
+            1,
+        ))
+        .unwrap();
+
+    let mut command = rmus_binary();
+    state_env(command.arg("status"), &state_dir);
+    let output = command.output().expect("rmus status should run");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("rmus status"));
+    assert!(stdout.contains("Local sources: 2 configured sources, 1 missing"));
+    assert!(stdout.contains("Qobuz: configured"));
+    assert!(stdout.contains("Tidal: authenticated"));
+    assert!(stdout.contains("Audio: volume 64%, quality CD, shuffle On, repeat All"));
+    assert!(stdout.contains("Playlists: 1 playlist"));
+    assert!(stdout.contains("History: 1 track"));
+    assert!(stdout.contains("Saved queue: 2 tracks, position 2 of 2"));
+    assert!(
+        stdout.contains("Current saved track: Queue Artist - Second Queue (Queue Album) [local]")
+    );
+    assert!(stdout.contains("second.flac"));
+
+    let _ = std::fs::remove_dir_all(state_dir);
 }
 
 #[test]

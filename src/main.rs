@@ -9,6 +9,10 @@ fn main() -> color_eyre::Result<()> {
             println!("{}", rmus::cli::version_text());
             return Ok(());
         }
+        Ok(rmus::cli::CliAction::Status) => {
+            print!("{}", rmus::cli::status().message());
+            return Ok(());
+        }
         Ok(rmus::cli::CliAction::Doctor) => {
             let report = rmus::cli::doctor_report();
             print!("{}", report.to_text());
