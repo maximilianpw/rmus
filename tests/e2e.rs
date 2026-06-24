@@ -198,6 +198,7 @@ fn test_cli_help_prints_without_launching_tui() {
     assert!(stdout.contains("list-sources"));
     assert!(stdout.contains("list-playlists"));
     assert!(stdout.contains("local-stats"));
+    assert!(stdout.contains("search-local"));
     assert!(stdout.contains("scan-local"));
     assert!(stdout.contains("add-source"));
     assert!(stdout.contains("remove-source"));
@@ -228,6 +229,64 @@ fn test_cli_paths_prints_storage_paths_without_launching_tui() {
     assert!(stdout.contains("queue:"));
     assert!(stdout.contains("local cache:"));
     assert!(stdout.contains("local-cache.toml"));
+
+    let _ = std::fs::remove_dir_all(state_dir);
+}
+
+#[test]
+fn test_cli_search_local_reports_matching_tracks_without_launching_tui() {
+    let state_dir = test_dir("cli-search-local");
+    let music_dir = state_dir.join("music");
+    std::fs::create_dir_all(&music_dir).unwrap();
+    std::fs::write(music_dir.join("01 - First.flac"), "not real audio").unwrap();
+    std::fs::write(music_dir.join("02 - Second.opus"), "not real audio").unwrap();
+
+    let mut add_command = rmus_binary();
+    state_env(
+        add_command.args([
+            "add-source",
+            "Library",
+            music_dir.to_str().unwrap(),
+            "--scan",
+        ]),
+        &state_dir,
+    );
+    let add_output = add_command
+        .output()
+        .expect("rmus add-source --scan should run");
+    assert!(add_output.status.success());
+
+    let mut search_command = rmus_binary();
+    state_env(
+        search_command.args(["search-local", "second", "--limit", "1"]),
+        &state_dir,
+    );
+    let output = search_command
+        .output()
+        .expect("rmus search-local should run");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Local search 'second': 1 match, showing 1"));
+    assert!(stdout.contains("1 configured source"));
+    assert!(stdout.contains("02 - Second.opus [Library]"));
+    assert!(stdout.contains(
+        &music_dir
+            .join("02 - Second.opus")
+            .to_string_lossy()
+            .to_string()
+    ));
+
+    let mut empty_command = rmus_binary();
+    state_env(empty_command.args(["search-local", "missing"]), &state_dir);
+    let empty_output = empty_command
+        .output()
+        .expect("empty rmus search-local should run");
+    assert!(empty_output.status.success());
+    let empty_stdout = String::from_utf8(empty_output.stdout).unwrap();
+    assert!(empty_stdout.contains("Local search 'missing': 0 matches"));
+    assert!(empty_stdout.contains("No matching local tracks."));
 
     let _ = std::fs::remove_dir_all(state_dir);
 }

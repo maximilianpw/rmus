@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     env,
     ffi::OsString,
     fs,
@@ -11,9 +12,14 @@ use crate::{
     local_cache::LocalTrackCache,
     playlist::{PlaylistExportSummary, PlaylistImportSummary, PlaylistStore},
     queue::QueueStore,
-    sources::local::{LocalFiles, LocalLibraryStats},
+    sources::{
+        local::{LocalFiles, LocalLibraryStats},
+        song::Song,
+    },
     utils::{expand_home_path, track_count_label},
 };
+
+const DEFAULT_LOCAL_SEARCH_LIMIT: usize = 25;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CliAction {
@@ -25,6 +31,10 @@ pub enum CliAction {
     ListSources,
     ListPlaylists,
     LocalStats,
+    SearchLocal {
+        query: String,
+        limit: usize,
+    },
     ScanLocal {
         name: Option<String>,
     },
@@ -74,6 +84,7 @@ where
         "list-sources" => no_more_args(args, CliAction::ListSources, &first),
         "list-playlists" => no_more_args(args, CliAction::ListPlaylists, &first),
         "local-stats" => no_more_args(args, CliAction::LocalStats, &first),
+        "search-local" => parse_search_local_args(args),
         "scan-local" => parse_scan_local_args(args),
         "add-source" => parse_add_source_args(args),
         "remove-source" => parse_remove_source_args(args),
@@ -163,6 +174,50 @@ where
     }
 
     Ok(CliAction::ScanLocal { name })
+}
+
+fn parse_search_local_args<I>(mut args: I) -> Result<CliAction, String>
+where
+    I: Iterator<Item = String>,
+{
+    let Some(query) = args.next() else {
+        return Err(format!("missing query for search-local\n\n{}", help_text()));
+    };
+
+    let mut limit = DEFAULT_LOCAL_SEARCH_LIMIT;
+    match args.next() {
+        Some(flag) if flag == "--limit" => {
+            let Some(value) = args.next() else {
+                return Err(format!("missing value for --limit\n\n{}", help_text()));
+            };
+            limit = parse_positive_limit(&value)?;
+        }
+        Some(_) => {
+            return Err(format!(
+                "unexpected argument after search query\n\n{}",
+                help_text()
+            ));
+        }
+        None => {}
+    }
+    if args.next().is_some() {
+        return Err(format!(
+            "unexpected argument after --limit value\n\n{}",
+            help_text()
+        ));
+    }
+
+    Ok(CliAction::SearchLocal { query, limit })
+}
+
+fn parse_positive_limit(value: &str) -> Result<usize, String> {
+    let limit = value
+        .parse::<usize>()
+        .map_err(|_| format!("--limit must be a positive integer: {value}"))?;
+    if limit == 0 {
+        return Err("--limit must be greater than 0".to_string());
+    }
+    Ok(limit)
 }
 
 fn parse_show_playlist_args<I>(mut args: I) -> Result<CliAction, String>
@@ -275,6 +330,8 @@ pub fn help_text() -> &'static str {
         "  list-sources    Print configured local music folders\n",
         "  list-playlists  Print saved playlists and track counts\n",
         "  local-stats     Count configured local sources, albums, and tracks\n",
+        "  search-local <QUERY> [--limit N]\n",
+        "                  Search configured local tracks without launching the TUI\n",
         "  scan-local [NAME]\n",
         "                  Scan all, or a named local source, into the metadata cache\n",
         "  add-source <NAME> <PATH> [--scan]\n",
@@ -794,6 +851,192 @@ fn local_stats_with_cache_path(config: Config, cache_path: PathBuf) -> LocalStat
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalSearchMatch {
+    pub source_name: String,
+    pub title: String,
+    pub artist: String,
+    pub album_name: String,
+    pub path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalSearchSummary {
+    pub query: String,
+    pub source_count: usize,
+    pub missing_source_count: usize,
+    pub match_count: usize,
+    pub limit: usize,
+    pub matches: Vec<LocalSearchMatch>,
+}
+
+impl LocalSearchSummary {
+    pub fn message(&self) -> String {
+        if self.source_count == 0 {
+            return "No local sources configured; add folders in Settings first".to_string();
+        }
+
+        let showing = self.matches.len();
+        let mut text = format!(
+            "Local search '{}': {} {}, showing {}, {} configured {}, {} missing\n",
+            self.query,
+            self.match_count,
+            plural(self.match_count, "match", "matches"),
+            showing,
+            self.source_count,
+            plural(self.source_count, "source", "sources"),
+            self.missing_source_count
+        );
+
+        if self.match_count == 0 {
+            text.push_str("No matching local tracks.\n");
+            return text;
+        }
+
+        for (index, matched) in self.matches.iter().enumerate() {
+            text.push_str(&format!(
+                "{}. {}\n",
+                index + 1,
+                local_search_match_detail(matched)
+            ));
+        }
+
+        if self.match_count > self.matches.len() {
+            text.push_str(&format!(
+                "... {} more {}; rerun with --limit {} to show more\n",
+                self.match_count - self.matches.len(),
+                plural(self.match_count - self.matches.len(), "match", "matches"),
+                self.match_count
+            ));
+        }
+
+        text
+    }
+}
+
+pub fn search_local(query: &str, limit: usize) -> Result<LocalSearchSummary, String> {
+    search_local_with_config_and_cache_path(
+        Config::load(),
+        query,
+        limit,
+        LocalTrackCache::default_path(),
+    )
+}
+
+fn search_local_with_config_and_cache_path(
+    config: Config,
+    query: &str,
+    limit: usize,
+    cache_path: PathBuf,
+) -> Result<LocalSearchSummary, String> {
+    let query = query.trim();
+    if query.is_empty() {
+        return Err("search query is required".to_string());
+    }
+    if limit == 0 {
+        return Err("--limit must be greater than 0".to_string());
+    }
+
+    let sources = config.get_local_sources();
+    let source_count = sources.len();
+    let missing_source_count = sources
+        .iter()
+        .filter(|source| !source.path.is_dir())
+        .count();
+    let query_lower = query.to_lowercase();
+    let mut seen_paths = HashSet::new();
+    let mut matches = Vec::new();
+    let mut match_count = 0;
+
+    for source in sources.iter().filter(|source| source.path.is_dir()) {
+        let songs = LocalFiles::songs_from_path_using_cached_metadata_with_cache_path(
+            source.path.clone(),
+            cache_path.clone(),
+        );
+        for song in songs {
+            if !seen_paths.insert(song.path.clone()) {
+                continue;
+            }
+            if !song_matches_local_query(&song, &query_lower) {
+                continue;
+            }
+
+            match_count += 1;
+            if matches.len() < limit {
+                matches.push(LocalSearchMatch::from_song(&source.name, song));
+            }
+        }
+    }
+
+    Ok(LocalSearchSummary {
+        query: query.to_string(),
+        source_count,
+        missing_source_count,
+        match_count,
+        limit,
+        matches,
+    })
+}
+
+impl LocalSearchMatch {
+    fn from_song(source_name: &str, song: Song) -> Self {
+        Self {
+            source_name: source_name.to_string(),
+            title: song.title,
+            artist: song.artist,
+            album_name: song.album_name,
+            path: song.path,
+        }
+    }
+}
+
+fn song_matches_local_query(song: &Song, query_lower: &str) -> bool {
+    song.title.to_lowercase().contains(query_lower)
+        || song.artist.to_lowercase().contains(query_lower)
+        || song.album_name.to_lowercase().contains(query_lower)
+        || song
+            .path
+            .file_name()
+            .map(|name| name.to_string_lossy().to_lowercase())
+            .unwrap_or_default()
+            .contains(query_lower)
+        || song
+            .path
+            .to_string_lossy()
+            .to_lowercase()
+            .contains(query_lower)
+}
+
+fn local_search_match_detail(matched: &LocalSearchMatch) -> String {
+    let mut detail = local_search_match_title(matched);
+    if let Some(album) = nonblank(&matched.album_name) {
+        detail.push_str(&format!(" ({album})"));
+    }
+    detail.push_str(&format!(
+        " [{}] {}",
+        matched.source_name,
+        matched.path.to_string_lossy()
+    ));
+    detail
+}
+
+fn local_search_match_title(matched: &LocalSearchMatch) -> String {
+    let title = nonblank(&matched.title);
+    let artist = nonblank(&matched.artist);
+    match (artist, title) {
+        (Some(artist), Some(title)) => format!("{artist} - {title}"),
+        (None, Some(title)) => title.to_string(),
+        (Some(artist), None) => artist.to_string(),
+        (None, None) => matched
+            .path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or("Unknown Track")
+            .to_string(),
+    }
+}
+
 pub fn import_playlist(
     path: &Path,
     name: Option<&str>,
@@ -1284,8 +1527,9 @@ mod tests {
         add_source_and_scan_with_config_and_cache_path, add_source_to_config, clear_cache_at,
         delete_playlist_with_store, doctor_report_with_options, list_playlists_with_store,
         list_sources_from_config, local_stats_with_cache_path, parse_args, paths_text_with_options,
-        remove_source_from_config, scan_local_with_cache_path, show_playlist_with_store, CliAction,
-        DoctorOptions,
+        remove_source_from_config, scan_local_with_cache_path,
+        search_local_with_config_and_cache_path, show_playlist_with_store, CliAction,
+        DoctorOptions, DEFAULT_LOCAL_SEARCH_LIMIT,
     };
     use std::{
         env, fs,
@@ -1314,6 +1558,48 @@ mod tests {
             fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
         }
         dir
+    }
+
+    fn toml_string(value: &str) -> String {
+        toml::Value::String(value.to_string()).to_string()
+    }
+
+    fn write_cached_track(
+        cache_path: &std::path::Path,
+        track_path: &std::path::Path,
+        title: &str,
+        artist: &str,
+        album_name: &str,
+    ) {
+        let metadata = fs::metadata(track_path).unwrap();
+        let modified = metadata
+            .modified()
+            .unwrap()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default();
+        fs::write(
+            cache_path,
+            format!(
+                "\
+[[tracks]]
+path = {}
+len = {}
+modified_secs = {}
+modified_nanos = {}
+title = {}
+artist = {}
+album_name = {}
+",
+                toml_string(&track_path.to_string_lossy()),
+                metadata.len(),
+                modified.as_secs(),
+                modified.subsec_nanos(),
+                toml_string(title),
+                toml_string(artist),
+                toml_string(album_name)
+            ),
+        )
+        .unwrap();
     }
 
     fn doctor_options(path_env: Option<std::ffi::OsString>) -> DoctorOptions {
@@ -1703,6 +1989,169 @@ tracks = []
         assert_eq!(summary.track_count, 0);
         assert_eq!(
             summary.message(),
+            "No local sources configured; add folders in Settings first"
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn search_local_command_accepts_query_and_limit() {
+        assert_eq!(
+            parse_args(["rmus", "search-local", "joy"]),
+            Ok(CliAction::SearchLocal {
+                query: "joy".to_string(),
+                limit: DEFAULT_LOCAL_SEARCH_LIMIT,
+            })
+        );
+        assert_eq!(
+            parse_args(["rmus", "search-local", "joy", "--limit", "10"]),
+            Ok(CliAction::SearchLocal {
+                query: "joy".to_string(),
+                limit: 10,
+            })
+        );
+
+        let missing_query =
+            parse_args(["rmus", "search-local"]).expect_err("query should be required");
+        assert!(missing_query.contains("missing query for search-local"));
+
+        let missing_limit = parse_args(["rmus", "search-local", "joy", "--limit"])
+            .expect_err("limit should require value");
+        assert!(missing_limit.contains("missing value for --limit"));
+
+        let invalid_limit = parse_args(["rmus", "search-local", "joy", "--limit", "0"])
+            .expect_err("zero limit should fail");
+        assert!(invalid_limit.contains("--limit must be greater than 0"));
+
+        let unexpected = parse_args(["rmus", "search-local", "joy", "extra"])
+            .expect_err("extra search args should fail");
+        assert!(unexpected.contains("unexpected argument after search query"));
+    }
+
+    #[test]
+    fn search_local_uses_cached_metadata_and_limits_output() {
+        let dir = test_dir("search-local");
+        let track = dir.join("01 - Track.flac");
+        let other = dir.join("02 - Other.flac");
+        fs::write(&track, "audio").unwrap();
+        fs::write(&other, "audio").unwrap();
+        let cache_path = dir.join("local-cache.toml");
+        write_cached_track(
+            &cache_path,
+            &track,
+            "Disorder",
+            "Joy Division",
+            "Unknown Pleasures",
+        );
+
+        let summary = search_local_with_config_and_cache_path(
+            crate::config::Config {
+                local: crate::config::LocalConfig {
+                    sources: vec![crate::config::LocalSource {
+                        name: "Library".to_string(),
+                        path: dir.clone(),
+                    }],
+                },
+                ..crate::config::Config::default()
+            },
+            "joy",
+            1,
+            cache_path,
+        )
+        .unwrap();
+
+        assert_eq!(summary.source_count, 1);
+        assert_eq!(summary.missing_source_count, 0);
+        assert_eq!(summary.match_count, 1);
+        assert_eq!(summary.matches.len(), 1);
+        assert_eq!(summary.matches[0].source_name, "Library");
+        assert_eq!(summary.matches[0].title, "Disorder");
+        assert_eq!(summary.matches[0].artist, "Joy Division");
+        assert_eq!(summary.matches[0].album_name, "Unknown Pleasures");
+        assert_eq!(summary.matches[0].path, track);
+        let message = summary.message();
+        assert!(message.contains("Local search 'joy': 1 match, showing 1"));
+        assert!(message.contains("Joy Division - Disorder (Unknown Pleasures) [Library]"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn search_local_matches_filename_path_and_reports_missing_sources() {
+        let dir = test_dir("search-local-fallback");
+        let missing = dir.join("Missing");
+        let album = dir.join("Live");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("01 - Encore.flac"), "audio").unwrap();
+
+        let summary = search_local_with_config_and_cache_path(
+            crate::config::Config {
+                local: crate::config::LocalConfig {
+                    sources: vec![
+                        crate::config::LocalSource {
+                            name: "Shows".to_string(),
+                            path: dir.clone(),
+                        },
+                        crate::config::LocalSource {
+                            name: "Missing".to_string(),
+                            path: missing,
+                        },
+                    ],
+                },
+                ..crate::config::Config::default()
+            },
+            "encore",
+            25,
+            dir.join("local-cache.toml"),
+        )
+        .unwrap();
+
+        assert_eq!(summary.source_count, 2);
+        assert_eq!(summary.missing_source_count, 1);
+        assert_eq!(summary.match_count, 1);
+        assert_eq!(summary.matches[0].title, "01 - Encore.flac");
+        assert!(summary.matches[0].path.ends_with("01 - Encore.flac"));
+        let message = summary.message();
+        assert!(message.contains("2 configured sources, 1 missing"));
+        assert!(message.contains("01 - Encore.flac [Shows]"));
+
+        let none = search_local_with_config_and_cache_path(
+            crate::config::Config {
+                local: crate::config::LocalConfig {
+                    sources: vec![crate::config::LocalSource {
+                        name: "Shows".to_string(),
+                        path: dir.clone(),
+                    }],
+                },
+                ..crate::config::Config::default()
+            },
+            "zzzz",
+            25,
+            dir.join("local-cache.toml"),
+        )
+        .unwrap();
+        assert_eq!(none.match_count, 0);
+        assert!(none.message().contains("No matching local tracks."));
+
+        let blank = search_local_with_config_and_cache_path(
+            crate::config::Config::default(),
+            " ",
+            25,
+            dir.join("local-cache.toml"),
+        )
+        .expect_err("blank query should fail");
+        assert_eq!(blank, "search query is required");
+
+        let empty = search_local_with_config_and_cache_path(
+            crate::config::Config::default(),
+            "anything",
+            25,
+            dir.join("local-cache.toml"),
+        )
+        .unwrap();
+        assert_eq!(
+            empty.message(),
             "No local sources configured; add folders in Settings first"
         );
 

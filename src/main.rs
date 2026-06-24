@@ -31,6 +31,18 @@ fn main() -> color_eyre::Result<()> {
             println!("{}", summary.message());
             return Ok(());
         }
+        Ok(rmus::cli::CliAction::SearchLocal { query, limit }) => {
+            match rmus::cli::search_local(&query, limit) {
+                Ok(summary) => {
+                    print!("{}", summary.message());
+                    return Ok(());
+                }
+                Err(error) => {
+                    eprintln!("{error}");
+                    std::process::exit(2);
+                }
+            }
+        }
         Ok(rmus::cli::CliAction::ScanLocal { name }) => {
             match rmus::cli::scan_local(name.as_deref()) {
                 Ok(summary) => {
