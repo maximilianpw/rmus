@@ -9029,6 +9029,14 @@ fn test_keybind_tab_shows_generic_search_text() {
         "Search keybinds should document switching between album, artist, and track search"
     );
     assert!(
+        text.contains("Open Account settings"),
+        "Search keybinds should document the login popup Enter action"
+    );
+    assert!(
+        text.contains("Dismiss login popup"),
+        "Search keybinds should document the login popup Esc action"
+    );
+    assert!(
         text.contains("Space/Enter"),
         "Center keybinds should document that Enter plays selected songs"
     );
@@ -9255,6 +9263,53 @@ fn test_keybind_tab_shows_generic_search_text() {
     assert!(
         text.contains("Clear streaming accounts"),
         "Settings keybinds should document account clearing"
+    );
+    assert!(
+        text.contains("Scroll keybind help"),
+        "Keybinds should document their own scroll controls"
+    );
+    assert!(
+        text.contains("Jump keybind help top/bottom"),
+        "Keybinds should document help top/bottom navigation"
+    );
+}
+
+#[test]
+fn test_keybind_tab_scrolls_on_small_terminal() {
+    let mut app = make_app(None, None);
+    let backend = TestBackend::new(100, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+
+    app.execute(Action::ToggleSettings);
+    app.delegate_key_to_panel(make_key(KeyCode::Tab));
+    app.delegate_key_to_panel(make_key(KeyCode::Tab));
+
+    let text = render_app_text(&mut app, &mut terminal);
+    assert!(
+        text.contains("Global"),
+        "keybinds should open at the top of the help text"
+    );
+    assert!(
+        !text.contains("Clear streaming accounts"),
+        "small terminals should not show the bottom of keybind help before scrolling"
+    );
+
+    app.delegate_key_to_panel(make_key(KeyCode::Char('G')));
+    let text = render_app_text(&mut app, &mut terminal);
+    assert!(
+        text.contains("Clear streaming accounts"),
+        "G should scroll keybind help to the bottom"
+    );
+    assert!(
+        !text.contains("Global"),
+        "bottom scroll should move the top keybind content out of view"
+    );
+
+    app.delegate_key_to_panel(make_key(KeyCode::Char('g')));
+    let text = render_app_text(&mut app, &mut terminal);
+    assert!(
+        text.contains("Global"),
+        "g should scroll keybind help back to the top"
     );
 }
 

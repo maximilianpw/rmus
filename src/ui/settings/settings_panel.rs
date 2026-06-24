@@ -20,6 +20,7 @@ use crate::{
 pub struct SettingsPanel {
     pub opened: bool,
     selected_tab: usize,
+    keybind_scroll: u16,
     source_settings: SourceSettings,
     account_settings: AccountSettings,
 }
@@ -56,6 +57,7 @@ impl SettingsPanel {
         Self {
             opened: false,
             selected_tab: 0,
+            keybind_scroll: 0,
             source_settings: SourceSettings::new(config),
             account_settings,
         }
@@ -149,6 +151,24 @@ impl SettingsPanel {
             KeyCode::Esc => {
                 self.close();
             }
+            KeyCode::Down | KeyCode::Char('j') if self.current_tab() == SettingsTab::Keybinds => {
+                self.scroll_keybinds(1);
+            }
+            KeyCode::Up | KeyCode::Char('k') if self.current_tab() == SettingsTab::Keybinds => {
+                self.scroll_keybinds(-1);
+            }
+            KeyCode::PageDown if self.current_tab() == SettingsTab::Keybinds => {
+                self.scroll_keybinds(10);
+            }
+            KeyCode::PageUp if self.current_tab() == SettingsTab::Keybinds => {
+                self.scroll_keybinds(-10);
+            }
+            KeyCode::Home | KeyCode::Char('g') if self.current_tab() == SettingsTab::Keybinds => {
+                self.keybind_scroll = 0;
+            }
+            KeyCode::End | KeyCode::Char('G') if self.current_tab() == SettingsTab::Keybinds => {
+                self.keybind_scroll = self.keybind_max_scroll();
+            }
             KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => {
                 self.next_tab();
             }
@@ -168,6 +188,21 @@ impl SettingsPanel {
             .selected_tab
             .checked_sub(1)
             .unwrap_or(SettingsTab::ALL.len() - 1);
+    }
+
+    fn scroll_keybinds(&mut self, delta: i16) {
+        let max_scroll = self.keybind_max_scroll();
+        let next = if delta.is_negative() {
+            self.keybind_scroll.saturating_sub(delta.unsigned_abs())
+        } else {
+            self.keybind_scroll.saturating_add(delta as u16)
+        };
+        self.keybind_scroll = next.min(max_scroll);
+    }
+
+    fn keybind_max_scroll(&self) -> u16 {
+        let (left, right) = Self::keybind_columns();
+        left.len().max(right.len()).saturating_sub(1) as u16
     }
 
     fn current_tab(&self) -> SettingsTab {
@@ -203,7 +238,7 @@ impl SettingsPanel {
         }
     }
 
-    fn render_keybinds(&self, frame: &mut ratatui::Frame, area: Rect) {
+    fn keybind_columns() -> (Vec<Line<'static>>, Vec<Line<'static>>) {
         let keybind = |key: &str, desc: &str| -> Line<'static> {
             Line::from(vec![
                 Span::styled(format!("{:<12}", key), theme::accent_style()),
@@ -272,6 +307,8 @@ impl SettingsPanel {
             keybind("/", "Open search"),
             keybind("Tab", "Cycle search type"),
             keybind("Enter", "Execute search / play"),
+            keybind("Login: Enter", "Open Account settings"),
+            keybind("Login: Esc", "Dismiss login popup"),
             keybind("PageUp / PageDown", "Move by page"),
             keybind("g/G Home/End", "Jump first / last result"),
             keybind("Esc", "Close search"),
@@ -341,13 +378,27 @@ impl SettingsPanel {
             keybind("Account: q", "Check Qobuz login"),
             keybind("Account: t", "Log in to Tidal"),
             keybind("Account: c", "Clear streaming accounts"),
+            keybind("Keybinds: j/k", "Scroll keybind help"),
+            keybind("Keybinds: PgUp/PgDn", "Move keybind help by page"),
+            keybind("Keybinds: g/G", "Jump keybind help top/bottom"),
         ];
+
+        (left, right)
+    }
+
+    fn render_keybinds(&self, frame: &mut ratatui::Frame, area: Rect) {
+        let (left, right) = Self::keybind_columns();
+        let max_scroll = left
+            .len()
+            .max(right.len())
+            .saturating_sub(area.height as usize) as u16;
+        let scroll = self.keybind_scroll.min(max_scroll);
 
         let [left_area, right_area] =
             Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
                 .areas(area);
-        frame.render_widget(Paragraph::new(left), left_area);
-        frame.render_widget(Paragraph::new(right), right_area);
+        frame.render_widget(Paragraph::new(left).scroll((scroll, 0)), left_area);
+        frame.render_widget(Paragraph::new(right).scroll((scroll, 0)), right_area);
     }
 }
 
