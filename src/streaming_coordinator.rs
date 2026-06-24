@@ -720,54 +720,33 @@ fn resolve_album_streams(
     tracks: Vec<StreamTrack>,
     start_index: usize,
 ) -> StreamingTaskOutput {
-    let mut failed_count = 0;
-    let mut resolved: Vec<Option<Song>> = Vec::with_capacity(tracks.len());
+    if start_index >= tracks.len() {
+        return StreamingTaskOutput::Error("Album start index out of bounds".to_string());
+    }
 
-    for (i, track) in tracks.iter().enumerate() {
-        if i == start_index {
-            match service.get_stream_url(&track.id) {
-                Ok(Some(stream)) => {
-                    resolved.push(Some(song_from_resolved_stream(service_id, track, stream)))
-                }
-                _ => {
-                    failed_count += 1;
-                    resolved.push(None);
-                }
-            }
-        } else {
-            resolved.push(None);
+    let mut failed_count = 0;
+    let mut first_song = None;
+
+    let start_track = &tracks[start_index];
+    match service.get_stream_url(&start_track.id) {
+        Ok(Some(stream)) => {
+            first_song = Some(song_from_resolved_stream(service_id, start_track, stream));
+        }
+        _ => {
+            failed_count += 1;
         }
     }
 
-    for (i, track) in tracks.iter().enumerate() {
-        if i == start_index {
-            continue;
-        }
+    let mut remaining_songs = Vec::new();
+    for track in tracks.iter().skip(start_index + 1) {
         match service.get_stream_url(&track.id) {
             Ok(Some(stream)) => {
-                resolved[i] = Some(song_from_resolved_stream(service_id, track, stream));
+                remaining_songs.push(song_from_resolved_stream(service_id, track, stream));
             }
             _ => {
                 failed_count += 1;
             }
         }
-    }
-
-    let first_song = resolved[start_index].take();
-    let mut remaining_songs = Vec::new();
-    for song in resolved
-        .iter_mut()
-        .skip(start_index + 1)
-        .filter_map(Option::take)
-    {
-        remaining_songs.push(song);
-    }
-    for song in resolved
-        .iter_mut()
-        .take(start_index)
-        .filter_map(Option::take)
-    {
-        remaining_songs.push(song);
     }
 
     StreamingTaskOutput::AlbumStreamUrls {
@@ -787,42 +766,36 @@ fn resolve_mixed_playlist_streams(
     }
 
     let mut failed_count = 0;
-    let mut resolved: Vec<Option<Song>> = Vec::with_capacity(songs.len());
+    let mut first_song = resolve_playlist_song(service, &songs[start_index], &mut failed_count);
 
-    for song in &songs {
-        if let Some(track_id) = song.stream_track_id.as_deref() {
-            match service.get_stream_url(track_id) {
-                Ok(Some(stream)) => resolved.push(Some(song_from_playlist_stream(song, stream))),
-                _ => {
-                    failed_count += 1;
-                    resolved.push(None);
-                }
-            }
-        } else {
-            resolved.push(Some(song.clone()));
+    let mut remaining_songs = Vec::new();
+    for song in songs.iter().skip(start_index + 1) {
+        if let Some(song) = resolve_playlist_song(service, song, &mut failed_count) {
+            remaining_songs.push(song);
         }
     }
 
-    let first_song = resolved[start_index].take();
-    let mut remaining_songs = Vec::new();
-    for song in resolved
-        .iter_mut()
-        .skip(start_index + 1)
-        .filter_map(Option::take)
-    {
-        remaining_songs.push(song);
-    }
-    for song in resolved
-        .iter_mut()
-        .take(start_index)
-        .filter_map(Option::take)
-    {
-        remaining_songs.push(song);
-    }
-
     StreamingTaskOutput::AlbumStreamUrls {
-        first_song,
+        first_song: first_song.take(),
         remaining_songs,
         failed_count,
+    }
+}
+
+fn resolve_playlist_song(
+    service: &mut Box<dyn StreamingService>,
+    song: &Song,
+    failed_count: &mut usize,
+) -> Option<Song> {
+    if let Some(track_id) = song.stream_track_id.as_deref() {
+        match service.get_stream_url(track_id) {
+            Ok(Some(stream)) => Some(song_from_playlist_stream(song, stream)),
+            _ => {
+                *failed_count += 1;
+                None
+            }
+        }
+    } else {
+        Some(song.clone())
     }
 }

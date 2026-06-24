@@ -2807,7 +2807,6 @@ impl App {
         }
 
         ordered_songs.extend(songs[start_index..].iter().cloned());
-        ordered_songs.extend(songs[..start_index].iter().cloned());
         ordered_songs
     }
 

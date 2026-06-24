@@ -5520,6 +5520,60 @@ fn test_play_streaming_album_preserves_track_metadata() {
     app.focused_window = FocusedWindow::Center;
     app.delegate_key_to_panel(make_key(KeyCode::Enter));
     app.tick();
+
+    app.execute(Action::PlaySelected);
+    app.tick();
+
+    let played = played.lock().unwrap();
+    let enqueued = enqueued.lock().unwrap();
+    assert_eq!(played.len(), 1);
+    assert_eq!(played[0].title, "Track1");
+    assert_eq!(played[0].artist, "Artist1");
+    assert_eq!(played[0].album_name, "Album1");
+    assert_eq!(played[0].stream_service.as_deref(), Some("Qobuz"));
+    assert_eq!(played[0].stream_track_id.as_deref(), Some("1"));
+    assert_eq!(
+        played[0].url.as_deref(),
+        Some("https://example.com/track1.flac")
+    );
+
+    assert_eq!(enqueued.len(), 1);
+    assert_eq!(enqueued[0].title, "Track2");
+    assert_eq!(enqueued[0].artist, "Artist1");
+    assert_eq!(enqueued[0].album_name, "Album1");
+    assert_eq!(enqueued[0].stream_service.as_deref(), Some("Qobuz"));
+    assert_eq!(enqueued[0].stream_track_id.as_deref(), Some("2"));
+    assert_eq!(
+        enqueued[0].url.as_deref(),
+        Some("https://example.com/track2.flac")
+    );
+}
+
+#[test]
+fn test_play_streaming_album_from_last_track_does_not_wrap() {
+    let mock = MockStreamingService::new_authenticated("Qobuz", mock_albums())
+        .with_stream_url("1", "https://example.com/track1.flac")
+        .with_stream_url("2", "https://example.com/track2.flac");
+    let (player, played, enqueued) = MockPlayer::new();
+    let mut app = App::new_for_test_with_playlist_store_and_player(
+        default_config(),
+        Some(Box::new(mock)),
+        None,
+        PlaylistStore::with_dir(test_dir("streaming-album-last-no-wrap")),
+        Box::new(player),
+    );
+
+    switch_to_tab(&mut app, "Qobuz");
+    app.execute(Action::OpenSearch);
+    for c in "album".chars() {
+        app.delegate_key_to_panel(make_key(KeyCode::Char(c)));
+    }
+    app.delegate_key_to_panel(make_key(KeyCode::Enter));
+    app.tick();
+
+    app.focused_window = FocusedWindow::Center;
+    app.delegate_key_to_panel(make_key(KeyCode::Enter));
+    app.tick();
     app.delegate_key_to_panel(make_key(KeyCode::Char('j')));
 
     app.execute(Action::PlaySelected);
@@ -5529,25 +5583,7 @@ fn test_play_streaming_album_preserves_track_metadata() {
     let enqueued = enqueued.lock().unwrap();
     assert_eq!(played.len(), 1);
     assert_eq!(played[0].title, "Track2");
-    assert_eq!(played[0].artist, "Artist1");
-    assert_eq!(played[0].album_name, "Album1");
-    assert_eq!(played[0].stream_service.as_deref(), Some("Qobuz"));
-    assert_eq!(played[0].stream_track_id.as_deref(), Some("2"));
-    assert_eq!(
-        played[0].url.as_deref(),
-        Some("https://example.com/track2.flac")
-    );
-
-    assert_eq!(enqueued.len(), 1);
-    assert_eq!(enqueued[0].title, "Track1");
-    assert_eq!(enqueued[0].artist, "Artist1");
-    assert_eq!(enqueued[0].album_name, "Album1");
-    assert_eq!(enqueued[0].stream_service.as_deref(), Some("Qobuz"));
-    assert_eq!(enqueued[0].stream_track_id.as_deref(), Some("1"));
-    assert_eq!(
-        enqueued[0].url.as_deref(),
-        Some("https://example.com/track1.flac")
-    );
+    assert!(enqueued.is_empty());
 }
 
 #[test]
@@ -5712,7 +5748,6 @@ fn test_play_streaming_playlist_resolves_remaining_tracks() {
     switch_to_tab(&mut app, "Playlists");
     app.execute(Action::SelectAlbum);
     app.focused_window = FocusedWindow::Center;
-    app.delegate_key_to_panel(make_key(KeyCode::Char('j')));
     app.execute(Action::PlaySelected);
     app.tick();
 
@@ -5720,8 +5755,8 @@ fn test_play_streaming_playlist_resolves_remaining_tracks() {
     let enqueued = enqueued.lock().unwrap();
     assert_eq!(played.len(), 1);
     assert_eq!(enqueued.len(), 1);
-    assert_eq!(played[0].title, "Saved Two");
-    assert_eq!(enqueued[0].title, "Saved One");
+    assert_eq!(played[0].title, "Saved One");
+    assert_eq!(enqueued[0].title, "Saved Two");
     assert_eq!(
         played[0].url.as_deref(),
         Some("https://example.com/stream.flac")
@@ -5735,7 +5770,62 @@ fn test_play_streaming_playlist_resolves_remaining_tracks() {
 }
 
 #[test]
-fn test_play_mixed_playlist_resolves_streams_and_keeps_local_tracks() {
+fn test_play_streaming_playlist_from_last_track_does_not_wrap() {
+    let dir = test_dir("play-streaming-playlist-last-no-wrap");
+    let store = PlaylistStore::with_dir(dir.clone());
+    store.create("Streams".to_string()).unwrap();
+    store
+        .add_songs_to_index(
+            0,
+            &[
+                Song {
+                    title: "Saved One".to_string(),
+                    artist: "Artist".to_string(),
+                    album_name: "Album".to_string(),
+                    stream_service: Some("Qobuz".to_string()),
+                    stream_track_id: Some("1".to_string()),
+                    ..Default::default()
+                },
+                Song {
+                    title: "Saved Two".to_string(),
+                    artist: "Artist".to_string(),
+                    album_name: "Album".to_string(),
+                    stream_service: Some("Qobuz".to_string()),
+                    stream_track_id: Some("2".to_string()),
+                    ..Default::default()
+                },
+            ],
+        )
+        .unwrap();
+
+    let mock = MockStreamingService::new_authenticated("Qobuz", mock_albums());
+    let (player, played, enqueued) = MockPlayer::new();
+    let mut app = App::new_for_test_with_playlist_store_and_player(
+        default_config(),
+        Some(Box::new(mock)),
+        None,
+        store.clone(),
+        Box::new(player),
+    );
+
+    switch_to_tab(&mut app, "Playlists");
+    app.execute(Action::SelectAlbum);
+    app.focused_window = FocusedWindow::Center;
+    app.delegate_key_to_panel(make_key(KeyCode::Char('j')));
+    app.execute(Action::PlaySelected);
+    app.tick();
+
+    let played = played.lock().unwrap();
+    let enqueued = enqueued.lock().unwrap();
+    assert_eq!(played.len(), 1);
+    assert_eq!(played[0].title, "Saved Two");
+    assert!(enqueued.is_empty());
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn test_play_mixed_playlist_from_last_track_does_not_wrap() {
     let dir = test_dir("play-mixed-playlist");
     let store = PlaylistStore::with_dir(dir.clone());
     store.create("Mixed".to_string()).unwrap();
@@ -5780,14 +5870,12 @@ fn test_play_mixed_playlist_resolves_streams_and_keeps_local_tracks() {
     let played = played.lock().unwrap();
     let enqueued = enqueued.lock().unwrap();
     assert_eq!(played.len(), 1);
-    assert_eq!(enqueued.len(), 1);
     assert_eq!(played[0].title, "Saved Stream");
     assert_eq!(
         played[0].url.as_deref(),
         Some("https://example.com/stream.flac")
     );
-    assert_eq!(enqueued[0].title, "Local Track");
-    assert_eq!(enqueued[0].path, PathBuf::from("/music/local.flac"));
+    assert!(enqueued.is_empty());
 
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -5917,7 +6005,7 @@ fn test_play_mixed_playlist_skips_unknown_stream_service_and_continues() {
 }
 
 #[test]
-fn test_play_multi_service_playlist_resolves_each_service_and_keeps_local_tracks() {
+fn test_play_multi_service_playlist_queues_only_later_tracks() {
     let dir = test_dir("play-multi-service-playlist");
     let store = PlaylistStore::with_dir(dir.clone());
     store.create("Mixed Services".to_string()).unwrap();
@@ -5981,16 +6069,9 @@ fn test_play_multi_service_playlist_resolves_each_service_and_keeps_local_tracks
         Some("https://example.com/tidal.flac")
     );
 
-    assert_eq!(enqueued.len(), 2);
+    assert_eq!(enqueued.len(), 1);
     assert_eq!(enqueued[0].title, "Local Track");
     assert_eq!(enqueued[0].path, PathBuf::from("/music/local.flac"));
-    assert_eq!(enqueued[1].title, "Qobuz Track");
-    assert_eq!(enqueued[1].artist, "Qobuz Artist");
-    assert_eq!(enqueued[1].stream_service.as_deref(), Some("Qobuz"));
-    assert_eq!(
-        enqueued[1].url.as_deref(),
-        Some("https://example.com/qobuz.flac")
-    );
 
     let _ = std::fs::remove_dir_all(dir);
 }
