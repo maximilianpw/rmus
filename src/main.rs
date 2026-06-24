@@ -26,12 +26,12 @@ fn main() -> color_eyre::Result<()> {
             print!("{}", rmus::cli::list_playlists().message());
             return Ok(());
         }
-        Ok(rmus::cli::CliAction::ShowHistory) => {
-            print!("{}", rmus::cli::show_history().message());
+        Ok(rmus::cli::CliAction::ShowHistory { limit }) => {
+            print!("{}", rmus::cli::show_history_with_limit(limit).message());
             return Ok(());
         }
-        Ok(rmus::cli::CliAction::ShowQueue) => {
-            print!("{}", rmus::cli::show_queue().message());
+        Ok(rmus::cli::CliAction::ShowQueue { limit }) => {
+            print!("{}", rmus::cli::show_queue_with_limit(limit).message());
             return Ok(());
         }
         Ok(rmus::cli::CliAction::LocalStats) => {

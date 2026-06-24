@@ -30,8 +30,12 @@ pub enum CliAction {
     Paths,
     ListSources,
     ListPlaylists,
-    ShowHistory,
-    ShowQueue,
+    ShowHistory {
+        limit: Option<usize>,
+    },
+    ShowQueue {
+        limit: Option<usize>,
+    },
     LocalStats,
     SearchLocal {
         query: String,
@@ -99,8 +103,8 @@ where
         "paths" => no_more_args(args, CliAction::Paths, &first),
         "list-sources" => no_more_args(args, CliAction::ListSources, &first),
         "list-playlists" => no_more_args(args, CliAction::ListPlaylists, &first),
-        "show-history" => no_more_args(args, CliAction::ShowHistory, &first),
-        "show-queue" => no_more_args(args, CliAction::ShowQueue, &first),
+        "show-history" => parse_optional_limit_args(args, |limit| CliAction::ShowHistory { limit }),
+        "show-queue" => parse_optional_limit_args(args, |limit| CliAction::ShowQueue { limit }),
         "local-stats" => no_more_args(args, CliAction::LocalStats, &first),
         "search-local" => parse_search_local_args(args),
         "scan-local" => parse_scan_local_args(args),
@@ -269,6 +273,30 @@ where
     Ok(CliAction::SearchLocal { query, limit })
 }
 
+fn parse_optional_limit_args<I, F>(mut args: I, action: F) -> Result<CliAction, String>
+where
+    I: Iterator<Item = String>,
+    F: FnOnce(Option<usize>) -> CliAction,
+{
+    let Some(flag) = args.next() else {
+        return Ok(action(None));
+    };
+    if flag != "--limit" {
+        return Err(format!("unexpected argument '{flag}'\n\n{}", help_text()));
+    }
+    let Some(value) = args.next() else {
+        return Err(format!("missing value for --limit\n\n{}", help_text()));
+    };
+    if args.next().is_some() {
+        return Err(format!(
+            "unexpected argument after --limit value\n\n{}",
+            help_text()
+        ));
+    }
+
+    Ok(action(Some(parse_positive_limit(&value)?)))
+}
+
 fn parse_positive_limit(value: &str) -> Result<usize, String> {
     let limit = value
         .parse::<usize>()
@@ -388,8 +416,10 @@ pub fn help_text() -> &'static str {
         "  paths           Print app storage paths\n",
         "  list-sources    Print configured local music folders\n",
         "  list-playlists  Print saved playlists and track counts\n",
-        "  show-history    Print saved recently played tracks\n",
-        "  show-queue      Print saved playback queue state\n",
+        "  show-history [--limit N]\n",
+        "                  Print saved recently played tracks\n",
+        "  show-queue [--limit N]\n",
+        "                  Print saved playback queue state\n",
         "  local-stats     Count configured local sources, albums, and tracks\n",
         "  search-local <QUERY> [--limit N]\n",
         "                  Search configured local tracks without launching the TUI\n",
@@ -501,6 +531,7 @@ fn list_playlists_with_store(store: PlaylistStore) -> PlaylistListSummary {
 #[derive(Debug, Clone)]
 pub struct HistoryDetailSummary {
     pub tracks: Vec<Song>,
+    pub limit: Option<usize>,
 }
 
 impl HistoryDetailSummary {
@@ -514,20 +545,35 @@ impl HistoryDetailSummary {
             return text;
         }
 
-        for (index, song) in self.tracks.iter().enumerate() {
+        let visible_count = limited_visible_count(self.tracks.len(), self.limit);
+        for (index, song) in self.tracks.iter().take(visible_count).enumerate() {
             text.push_str(&format!("{}. {}\n", index + 1, song_detail(song)));
         }
+        append_limited_tracks_notice(&mut text, self.tracks.len(), visible_count);
         text
     }
 }
 
 pub fn show_history() -> HistoryDetailSummary {
-    show_history_with_store(HistoryStore::default())
+    show_history_with_limit(None)
 }
 
+pub fn show_history_with_limit(limit: Option<usize>) -> HistoryDetailSummary {
+    show_history_with_store_and_limit(HistoryStore::default(), limit)
+}
+
+#[cfg(test)]
 fn show_history_with_store(store: HistoryStore) -> HistoryDetailSummary {
+    show_history_with_store_and_limit(store, None)
+}
+
+fn show_history_with_store_and_limit(
+    store: HistoryStore,
+    limit: Option<usize>,
+) -> HistoryDetailSummary {
     HistoryDetailSummary {
         tracks: store.load(),
+        limit,
     }
 }
 
@@ -535,6 +581,7 @@ fn show_history_with_store(store: HistoryStore) -> HistoryDetailSummary {
 pub struct QueueDetailSummary {
     pub tracks: Vec<Song>,
     pub position: usize,
+    pub limit: Option<usize>,
 }
 
 impl QueueDetailSummary {
@@ -555,24 +602,52 @@ impl QueueDetailSummary {
             return text;
         }
 
-        for (index, song) in self.tracks.iter().enumerate() {
+        let visible_count = limited_visible_count(self.tracks.len(), self.limit);
+        for (index, song) in self.tracks.iter().take(visible_count).enumerate() {
             let marker = if index == self.position { ">" } else { " " };
             text.push_str(&format!("{marker} {}. {}\n", index + 1, song_detail(song)));
         }
+        append_limited_tracks_notice(&mut text, self.tracks.len(), visible_count);
         text
     }
 }
 
 pub fn show_queue() -> QueueDetailSummary {
-    show_queue_with_store(QueueStore::default())
+    show_queue_with_limit(None)
 }
 
+pub fn show_queue_with_limit(limit: Option<usize>) -> QueueDetailSummary {
+    show_queue_with_store_and_limit(QueueStore::default(), limit)
+}
+
+#[cfg(test)]
 fn show_queue_with_store(store: QueueStore) -> QueueDetailSummary {
+    show_queue_with_store_and_limit(store, None)
+}
+
+fn show_queue_with_store_and_limit(store: QueueStore, limit: Option<usize>) -> QueueDetailSummary {
     let state = store.load();
     QueueDetailSummary {
         tracks: state.tracks,
         position: state.position,
+        limit,
     }
+}
+
+fn limited_visible_count(total: usize, limit: Option<usize>) -> usize {
+    limit.unwrap_or(total).min(total)
+}
+
+fn append_limited_tracks_notice(text: &mut String, total: usize, visible_count: usize) {
+    if visible_count >= total {
+        return;
+    }
+
+    let hidden = total - visible_count;
+    let noun = if hidden == 1 { "track" } else { "tracks" };
+    text.push_str(&format!(
+        "... {hidden} more {noun}; rerun with --limit {total} to show all\n"
+    ));
 }
 
 #[derive(Debug, Clone)]
@@ -1867,8 +1942,9 @@ mod tests {
         list_playlists_with_store, list_sources_from_config, local_stats_with_cache_path,
         move_source_in_config, parse_args, paths_text_with_options, remove_source_from_config,
         scan_local_with_cache_path, search_local_with_config_and_cache_path,
-        show_history_with_store, show_playlist_with_store, show_queue_with_store, CliAction,
-        DoctorOptions, LocalSourceMoveTarget, DEFAULT_LOCAL_SEARCH_LIMIT,
+        show_history_with_store, show_history_with_store_and_limit, show_playlist_with_store,
+        show_queue_with_store, show_queue_with_store_and_limit, CliAction, DoctorOptions,
+        LocalSourceMoveTarget, DEFAULT_LOCAL_SEARCH_LIMIT,
     };
     use crate::{
         history::HistoryStore,
@@ -2142,7 +2218,11 @@ title = "Only"
     fn show_history_command_prints_saved_history() {
         assert_eq!(
             parse_args(["rmus", "show-history"]),
-            Ok(CliAction::ShowHistory)
+            Ok(CliAction::ShowHistory { limit: None })
+        );
+        assert_eq!(
+            parse_args(["rmus", "show-history", "--limit", "1"]),
+            Ok(CliAction::ShowHistory { limit: Some(1) })
         );
 
         let dir = test_dir("show-history");
@@ -2179,6 +2259,52 @@ title = "Only"
     }
 
     #[test]
+    fn show_history_command_rejects_invalid_limit_args() {
+        let missing_limit = parse_args(["rmus", "show-history", "--limit"])
+            .expect_err("limit should require value");
+        assert!(missing_limit.contains("missing value for --limit"));
+
+        let invalid_limit = parse_args(["rmus", "show-history", "--limit", "0"])
+            .expect_err("zero limit should fail");
+        assert!(invalid_limit.contains("--limit must be greater than 0"));
+
+        let unexpected = parse_args(["rmus", "show-history", "extra"])
+            .expect_err("extra show-history args should fail");
+        assert!(unexpected.contains("unexpected argument 'extra'"));
+    }
+
+    #[test]
+    fn show_history_command_limits_saved_history_output() {
+        let dir = test_dir("show-history-limit");
+        let store = HistoryStore::with_path(dir.join("history.toml"));
+        store
+            .save(&[
+                Song {
+                    title: "First Song".to_string(),
+                    artist: "First Artist".to_string(),
+                    path: PathBuf::from("/music/first.flac"),
+                    ..Default::default()
+                },
+                Song {
+                    title: "Second Song".to_string(),
+                    artist: "Second Artist".to_string(),
+                    path: PathBuf::from("/music/second.flac"),
+                    ..Default::default()
+                },
+            ])
+            .unwrap();
+
+        let text = show_history_with_store_and_limit(store, Some(1)).message();
+
+        assert!(text.contains("Recently played (2 tracks)"));
+        assert!(text.contains("1. First Artist - First Song [local] /music/first.flac"));
+        assert!(!text.contains("Second Song"));
+        assert!(text.contains("... 1 more track; rerun with --limit 2 to show all"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn show_history_reports_empty_store() {
         let dir = test_dir("show-history-empty");
         let text =
@@ -2192,7 +2318,14 @@ title = "Only"
 
     #[test]
     fn show_queue_command_prints_saved_queue_position() {
-        assert_eq!(parse_args(["rmus", "show-queue"]), Ok(CliAction::ShowQueue));
+        assert_eq!(
+            parse_args(["rmus", "show-queue"]),
+            Ok(CliAction::ShowQueue { limit: None })
+        );
+        assert_eq!(
+            parse_args(["rmus", "show-queue", "--limit", "1"]),
+            Ok(CliAction::ShowQueue { limit: Some(1) })
+        );
 
         let dir = test_dir("show-queue");
         let store = QueueStore::with_path(dir.join("queue.toml"));
@@ -2221,6 +2354,55 @@ title = "Only"
         assert!(text.contains("Saved queue (2 tracks, position 2 of 2)"));
         assert!(text.contains("  1. Queue Artist - First [local] /music/first.flac"));
         assert!(text.contains("> 2. Queue Artist - Second [local] /music/second.flac"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn show_queue_command_rejects_invalid_limit_args() {
+        let missing_limit =
+            parse_args(["rmus", "show-queue", "--limit"]).expect_err("limit should require value");
+        assert!(missing_limit.contains("missing value for --limit"));
+
+        let invalid_limit =
+            parse_args(["rmus", "show-queue", "--limit", "0"]).expect_err("zero limit should fail");
+        assert!(invalid_limit.contains("--limit must be greater than 0"));
+
+        let unexpected = parse_args(["rmus", "show-queue", "extra"])
+            .expect_err("extra show-queue args should fail");
+        assert!(unexpected.contains("unexpected argument 'extra'"));
+    }
+
+    #[test]
+    fn show_queue_command_limits_saved_queue_output() {
+        let dir = test_dir("show-queue-limit");
+        let store = QueueStore::with_path(dir.join("queue.toml"));
+        store
+            .save(&QueueState::new(
+                vec![
+                    Song {
+                        title: "First".to_string(),
+                        artist: "Queue Artist".to_string(),
+                        path: PathBuf::from("/music/first.flac"),
+                        ..Default::default()
+                    },
+                    Song {
+                        title: "Second".to_string(),
+                        artist: "Queue Artist".to_string(),
+                        path: PathBuf::from("/music/second.flac"),
+                        ..Default::default()
+                    },
+                ],
+                1,
+            ))
+            .unwrap();
+
+        let text = show_queue_with_store_and_limit(store, Some(1)).message();
+
+        assert!(text.contains("Saved queue (2 tracks, position 2 of 2)"));
+        assert!(text.contains("  1. Queue Artist - First [local] /music/first.flac"));
+        assert!(!text.contains("Second"));
+        assert!(text.contains("... 1 more track; rerun with --limit 2 to show all"));
 
         let _ = fs::remove_dir_all(dir);
     }
