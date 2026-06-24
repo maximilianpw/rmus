@@ -126,6 +126,30 @@ pub fn now_playing_widget(info: &PlaybackInfo, is_focused: bool, frame: &mut Fra
     );
 }
 
+pub fn now_playing_progress_area(info: &PlaybackInfo, area: Rect) -> Option<Rect> {
+    let inner = Block::bordered().inner(area);
+    if inner.height < 3 || inner.width == 0 {
+        return None;
+    }
+
+    let metadata_row_limit = inner.height.saturating_sub(3) as usize;
+    let metadata_rows = info
+        .current_song
+        .as_ref()
+        .map(|song| {
+            now_playing_metadata_lines(song)
+                .len()
+                .min(metadata_row_limit)
+        })
+        .unwrap_or(0);
+    let progress_y = inner
+        .y
+        .saturating_add(metadata_rows as u16)
+        .saturating_add(1);
+
+    Some(Rect::new(inner.x, progress_y, inner.width, 1))
+}
+
 fn playback_progress_label(position: f64, duration: f64) -> String {
     let elapsed = playback_time_label(position);
     let total = playback_time_label(duration);

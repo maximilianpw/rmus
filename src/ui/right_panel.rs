@@ -5,7 +5,11 @@ use ratatui::{
 
 use crate::{
     players::PlaybackInfo,
-    ui::{log_panel::LogPanel, widget::now_playing_widget, AppPanel},
+    ui::{
+        log_panel::LogPanel,
+        widget::{now_playing_progress_area, now_playing_widget},
+        AppPanel,
+    },
 };
 
 #[derive(Debug)]
@@ -35,6 +39,30 @@ impl RightPanel {
         (playing_area, log_area)
     }
 
+    pub fn seek_position_at(&self, area: Rect, column: u16, row: u16) -> Option<f64> {
+        let duration = self.playback_info.duration;
+        if !duration.is_finite() || duration <= 0.0 {
+            return None;
+        }
+
+        let progress_area = self.progress_area(area)?;
+        if !rect_contains(progress_area, column, row) {
+            return None;
+        }
+
+        let width = progress_area.width.saturating_sub(1);
+        let ratio = if width == 0 {
+            0.0
+        } else {
+            f64::from(column.saturating_sub(progress_area.x).min(width)) / f64::from(width)
+        };
+        Some(duration * ratio)
+    }
+
+    pub(crate) fn progress_area(&self, area: Rect) -> Option<Rect> {
+        now_playing_progress_area(&self.playback_info, area)
+    }
+
     pub fn render_with_focus(
         &mut self,
         frame: &mut Frame,
@@ -55,4 +83,11 @@ impl AppPanel for RightPanel {
     fn render(&mut self, frame: &mut Frame, area: Rect, is_focused: bool) {
         self.render_with_focus(frame, area, is_focused, is_focused);
     }
+}
+
+fn rect_contains(rect: Rect, column: u16, row: u16) -> bool {
+    column >= rect.x
+        && column < rect.x.saturating_add(rect.width)
+        && row >= rect.y
+        && row < rect.y.saturating_add(rect.height)
 }

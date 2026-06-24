@@ -1947,9 +1947,37 @@ impl App {
                     self.center_panel
                         .select_at(self.last_panel_layout.center, column, row);
                 }
+                FocusedWindow::Right => {
+                    self.seek_playback_at(column, row);
+                }
                 _ => {}
             }
         }
+    }
+
+    fn seek_playback_at(&mut self, column: u16, row: u16) -> bool {
+        let Some(position) =
+            self.right_panel
+                .seek_position_at(self.last_panel_layout.playback, column, row)
+        else {
+            return false;
+        };
+
+        let info = self.player.get_playback_info();
+        if info.state == PlaybackState::Stopped {
+            self.logger.info("Nothing playing".to_string());
+            return true;
+        }
+
+        let position = Self::bounded_seek_position(position, info.duration);
+        match self.player.seek(position) {
+            Ok(()) => self.logger.info(format!(
+                "Seeked to {}",
+                Self::format_playback_position(position)
+            )),
+            Err(e) => self.logger.error(format!("Could not seek: {}", e)),
+        }
+        true
     }
 
     fn delegate_key_to_window(&mut self, window: FocusedWindow, key: KeyEvent) {
@@ -4292,6 +4320,57 @@ mod tests {
 
         assert_eq!(app.focused_window, FocusedWindow::Center);
         assert_eq!(app.center_panel.get_selected_index(), Some(1));
+    }
+
+    #[test]
+    fn mouse_click_on_playback_progress_seeks_to_position() {
+        let mut player = VolumeTestPlayer::new(50);
+        player.info.state = PlaybackState::Playing;
+        player.info.current_song = Some(Song {
+            title: "Clickable Progress".to_string(),
+            artist: "Test Artist".to_string(),
+            album_name: "Test Album".to_string(),
+            duration_secs: Some(120.0),
+            ..Default::default()
+        });
+        player.info.duration = 120.0;
+
+        let mut app = App::new_for_test_with_playlist_store_and_player(
+            default_config(),
+            None,
+            None,
+            PlaylistStore::with_dir(temp_dir("mouse-click-progress-playlists")),
+            Box::new(player),
+        );
+        app.right_panel
+            .update_playback_info(app.player.get_playback_info().clone());
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+
+        let progress_area = app
+            .right_panel
+            .progress_area(app.last_panel_layout.playback)
+            .expect("playback progress area should be visible");
+        let column = progress_area.x + (progress_area.width / 2);
+        let row = progress_area.y;
+        let expected_position = app
+            .right_panel
+            .seek_position_at(app.last_panel_layout.playback, column, row)
+            .expect("click should resolve to a seek position");
+        let expected_label = App::format_playback_position(expected_position);
+
+        app.focus_at(column, row);
+
+        assert_eq!(app.focused_window, FocusedWindow::Right);
+        assert!((app.player.get_playback_info().position - expected_position).abs() < f64::EPSILON);
+
+        let frame = terminal.draw(|frame| app.render(frame)).unwrap();
+        let text = extract_buffer_text(frame.buffer);
+        assert!(
+            text.contains(&format!("Seeked to {expected_label}")),
+            "clicking the playback progress bar should log seek feedback"
+        );
     }
 
     #[test]
