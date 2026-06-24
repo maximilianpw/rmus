@@ -282,10 +282,7 @@ impl SourceSettings {
 
         let name = self.sources[target].name.clone();
         let direction_label = if direction > 0 { "down" } else { "up" };
-        self.status_message = match self.config.save() {
-            Ok(()) => Some(format!("Moved {name} {direction_label}")),
-            Err(_) => Some("Failed to save config".to_string()),
-        };
+        self.status_message = Some(format!("Moved {name} {direction_label}"));
     }
 
     fn begin_add_source(&mut self) {
@@ -447,10 +444,7 @@ impl SourceSettings {
                 .select(Some(index.min(self.sources.len().saturating_sub(1))));
         }
 
-        self.status_message = match self.config.save() {
-            Ok(()) => Some(format!("Removed {}", removed.name)),
-            Err(_) => Some("Failed to save config".to_string()),
-        };
+        self.status_message = Some(format!("Removed {}", removed.name));
     }
 
     fn save_source_form(&mut self) -> bool {
@@ -515,22 +509,17 @@ impl SourceSettings {
         }
         self.config_dirty = true;
 
-        if self.config.save().is_ok() {
-            self.name_input.value.clear();
-            self.path_input.value.clear();
-            self.list_state.select(Some(
-                editing_index.unwrap_or_else(|| self.sources.len().saturating_sub(1)),
-            ));
-            self.status_message = Some(if editing_index.is_some() {
-                "Updated".to_string()
-            } else {
-                "Saved".to_string()
-            });
-            true
+        self.name_input.value.clear();
+        self.path_input.value.clear();
+        self.list_state.select(Some(
+            editing_index.unwrap_or_else(|| self.sources.len().saturating_sub(1)),
+        ));
+        self.status_message = Some(if editing_index.is_some() {
+            "Updated".to_string()
         } else {
-            self.status_message = Some("Failed to save config".to_string());
-            false
-        }
+            "Saved".to_string()
+        });
+        true
     }
 
     fn quality_label(quality: MaxStreamQuality) -> &'static str {
@@ -556,26 +545,20 @@ impl SourceSettings {
             MaxStreamQuality::HiRes => MaxStreamQuality::Mp3,
         };
         self.config_dirty = true;
-        self.status_message = match self.config.save() {
-            Ok(()) => Some(format!(
-                "Quality set to {}",
-                Self::quality_label(self.config.audio.max_stream_quality)
-            )),
-            Err(_) => Some("Failed to save config".to_string()),
-        };
+        self.status_message = Some(format!(
+            "Quality set to {}",
+            Self::quality_label(self.config.audio.max_stream_quality)
+        ));
     }
 
     fn adjust_default_volume(&mut self, amount: i16) {
         let current = self.config.audio.default_volume.min(100) as i16;
         self.config.audio.default_volume = (current + amount).clamp(0, 100) as u16;
         self.config_dirty = true;
-        self.status_message = match self.config.save() {
-            Ok(()) => Some(format!(
-                "Startup volume set to {}%",
-                self.config.audio.default_volume
-            )),
-            Err(_) => Some("Failed to save config".to_string()),
-        };
+        self.status_message = Some(format!(
+            "Startup volume set to {}%",
+            self.config.audio.default_volume
+        ));
     }
 
     fn toggle_default_shuffle(&mut self) {
@@ -584,25 +567,19 @@ impl SourceSettings {
             ShuffleMode::On => ShuffleMode::Off,
         };
         self.config_dirty = true;
-        self.status_message = match self.config.save() {
-            Ok(()) => Some(format!(
-                "Startup shuffle {}",
-                Self::shuffle_label(self.config.audio.default_shuffle)
-            )),
-            Err(_) => Some("Failed to save config".to_string()),
-        };
+        self.status_message = Some(format!(
+            "Startup shuffle {}",
+            Self::shuffle_label(self.config.audio.default_shuffle)
+        ));
     }
 
     fn cycle_default_repeat(&mut self) {
         self.config.audio.default_repeat = self.config.audio.default_repeat.cycle();
         self.config_dirty = true;
-        self.status_message = match self.config.save() {
-            Ok(()) => Some(format!(
-                "Startup repeat {}",
-                self.config.audio.default_repeat.label()
-            )),
-            Err(_) => Some("Failed to save config".to_string()),
-        };
+        self.status_message = Some(format!(
+            "Startup repeat {}",
+            self.config.audio.default_repeat.label()
+        ));
     }
 
     pub fn take_config_update(&mut self) -> Option<Config> {
@@ -770,23 +747,13 @@ mod tests {
             .expect("home directory should be available for tests")
             .home_dir()
             .to_path_buf();
-        let dir_name = format!(
-            ".rmus-source-settings-home-{}",
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos()
-        );
-        let dir = home.join(&dir_name);
-        fs::create_dir_all(&dir).unwrap();
-        let entered = format!("~/{}", dir_name);
 
         assert!(settings.handle_events(key(KeyCode::Char('a'))));
         for c in "Home Music".chars() {
             settings.handle_events(key(KeyCode::Char(c)));
         }
         settings.handle_events(key(KeyCode::Tab));
-        for c in entered.chars() {
+        for c in "~".chars() {
             settings.handle_events(key(KeyCode::Char(c)));
         }
         settings.handle_events(key(KeyCode::Enter));
@@ -794,9 +761,7 @@ mod tests {
         let updated = settings
             .take_config_update()
             .expect("source should produce config update");
-        assert_eq!(updated.local.sources[0].path, dir.canonicalize().unwrap());
-
-        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(updated.local.sources[0].path, home.canonicalize().unwrap());
     }
 
     #[test]

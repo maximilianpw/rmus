@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{backend::TestBackend, buffer::Buffer, Terminal};
@@ -65,6 +65,31 @@ fn extract_buffer_text(buffer: &Buffer) -> String {
         text.push('\n');
     }
     text
+}
+
+fn render_app_text(app: &mut App, terminal: &mut Terminal<TestBackend>) -> String {
+    let frame = terminal.draw(|f| app.render(f)).unwrap();
+    extract_buffer_text(frame.buffer)
+}
+
+fn tick_until_rendered(
+    app: &mut App,
+    terminal: &mut Terminal<TestBackend>,
+    timeout: Duration,
+    predicate: impl Fn(&str) -> bool,
+) -> String {
+    let deadline = Instant::now() + timeout;
+    let mut text = render_app_text(app, terminal);
+
+    loop {
+        if predicate(&text) || Instant::now() >= deadline {
+            return text;
+        }
+
+        std::thread::sleep(Duration::from_millis(10));
+        app.tick();
+        text = render_app_text(app, terminal);
+    }
 }
 
 fn default_config() -> Config {
@@ -8348,16 +8373,17 @@ fn test_timeout_cancels_stale_search_and_replacement_wins() {
         app.delegate_key_to_panel(make_key(KeyCode::Char(c)));
     }
     app.delegate_key_to_panel(make_key(KeyCode::Enter));
-    app.tick();
-
-    // Wait past the test timeout so the slow request is canceled.
-    std::thread::sleep(Duration::from_millis(180));
+    let slow_query_started = Instant::now();
     app.tick();
 
     let backend = TestBackend::new(100, 24);
     let mut terminal = Terminal::new(backend).unwrap();
-    let frame = terminal.draw(|f| app.render(f)).unwrap();
-    let text = extract_buffer_text(frame.buffer);
+    let text = tick_until_rendered(
+        &mut app,
+        &mut terminal,
+        Duration::from_millis(700),
+        |text| text.contains("timed out"),
+    );
     assert!(
         text.contains("timed out"),
         "Should show timeout status after in-flight request exceeds timeout"
@@ -8371,12 +8397,15 @@ fn test_timeout_cancels_stale_search_and_replacement_wins() {
     app.delegate_key_to_panel(make_key(KeyCode::Enter));
     app.tick();
 
-    // Let stale slow result arrive, then process again; it must be ignored.
-    std::thread::sleep(Duration::from_millis(220));
-    app.tick();
-
-    let frame = terminal.draw(|f| app.render(f)).unwrap();
-    let text = extract_buffer_text(frame.buffer);
+    let text = tick_until_rendered(
+        &mut app,
+        &mut terminal,
+        Duration::from_millis(900),
+        |text| {
+            slow_query_started.elapsed() >= Duration::from_millis(340)
+                && text.contains("Artist - fast Album")
+        },
+    );
     assert!(
         text.contains("Artist - fast Album"),
         "Replacement query results should be rendered"

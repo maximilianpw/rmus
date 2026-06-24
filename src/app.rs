@@ -12,7 +12,7 @@ use std::{
 
 use crate::{
     action::Action,
-    config::{Config, LocalSource, TidalConfig},
+    config::{config_path, Config, LocalSource, TidalConfig},
     history::HistoryStore,
     local_cache::LocalTrackCache,
     players::{MusicPlayer, PlaybackState, SafePlayer},
@@ -157,6 +157,7 @@ pub struct App {
     /// Which service produced the current search results (needed for playback).
     search_source: Option<StreamingServiceId>,
     config: Config,
+    config_path: PathBuf,
     logger: Logger,
     local_scan_result: Option<Receiver<Result<usize, String>>>,
     local_scan_restart_requested: bool,
@@ -248,6 +249,7 @@ impl App {
             artist_results: Vec::new(),
             search_source: None,
             config,
+            config_path: config_path(),
             logger,
             local_scan_result: None,
             local_scan_restart_requested: false,
@@ -361,6 +363,17 @@ impl App {
         ))
     }
 
+    fn test_config_path() -> std::path::PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "rmus-test-config-{}-{nanos}.toml",
+            std::process::id()
+        ))
+    }
+
     pub fn new_for_test_with_stores_and_player(
         config: Config,
         qobuz: Option<Box<dyn StreamingService>>,
@@ -428,6 +441,7 @@ impl App {
             artist_results: Vec::new(),
             search_source: None,
             config,
+            config_path: Self::test_config_path(),
             logger,
             local_scan_result: None,
             local_scan_restart_requested: false,
@@ -1273,7 +1287,7 @@ impl App {
     fn save_current_volume_as_startup(&mut self) {
         let volume = self.player.get_playback_info().volume.min(100) as u16;
         self.config.audio.default_volume = volume;
-        match self.config.save() {
+        match self.save_config() {
             Ok(()) => {
                 self.settings_panel.update_config(&self.config);
                 self.logger
@@ -1283,6 +1297,10 @@ impl App {
                 .logger
                 .error(format!("Failed to save startup volume: {}", e)),
         }
+    }
+
+    fn save_config(&self) -> std::io::Result<()> {
+        self.config.save_to(&self.config_path)
     }
 
     fn clear_queued_tracks(&mut self) {
@@ -1919,6 +1937,9 @@ impl App {
                 self.streaming.replace_tidal(tidal);
             }
             self.config = new_config;
+            if let Err(e) = self.save_config() {
+                self.logger.error(format!("Failed to save config: {}", e));
+            }
             if local_changed {
                 self.rebuild_left_panel_for_source_save();
                 self.left_panel.select_tab_by_name("Local");
@@ -2263,7 +2284,7 @@ impl App {
                     if let Ok(tidal_cfg) = serde_json::from_str::<TidalConfig>(&data) {
                         if self.config.tidal.as_ref() != Some(&tidal_cfg) {
                             self.config.tidal = Some(tidal_cfg);
-                            if let Err(e) = self.config.save() {
+                            if let Err(e) = self.save_config() {
                                 self.logger
                                     .error(format!("Failed to save refreshed token: {}", e));
                             }
@@ -2280,7 +2301,7 @@ impl App {
                                 qc.app_id = app_id;
                                 qc.app_secret = app_secret;
                             }
-                            if let Err(e) = self.config.save() {
+                            if let Err(e) = self.save_config() {
                                 self.logger
                                     .error(format!("Failed to save Qobuz credentials: {}", e));
                             }
@@ -2311,7 +2332,7 @@ impl App {
             }
         }
 
-        match self.config.save() {
+        match self.save_config() {
             Ok(()) => self.logger.info("Credentials saved".to_string()),
             Err(e) => self.logger.error(format!("Failed to save config: {}", e)),
         }
@@ -3488,6 +3509,20 @@ mod tests {
         let qobuz = app.config.qobuz.expect("qobuz account should be saved");
         assert_eq!(qobuz.email, "user@example.com");
         assert_eq!(qobuz.password, "secret");
+
+        let saved_config_text =
+            fs::read_to_string(&app.config_path).expect("settings sync should persist config");
+        let saved_config: Config =
+            toml::from_str(&saved_config_text).expect("saved config should parse");
+        assert_eq!(saved_config.local.sources.len(), 1);
+        assert_eq!(saved_config.local.sources[0].name, "Library");
+        assert_eq!(
+            saved_config.local.sources[0].path,
+            dir.canonicalize().unwrap()
+        );
+        let saved_qobuz = saved_config.qobuz.expect("saved qobuz account expected");
+        assert_eq!(saved_qobuz.email, "user@example.com");
+        assert_eq!(saved_qobuz.password, "secret");
 
         let _ = fs::remove_dir_all(dir);
     }

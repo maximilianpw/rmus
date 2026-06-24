@@ -353,16 +353,10 @@ impl AccountSettings {
         }
 
         self.config_dirty = true;
-        self.status_message = match self.config.save() {
-            Ok(()) => Some(AccountStatusMessage {
-                text: success_message.to_string(),
-                is_error: false,
-            }),
-            Err(_) => Some(AccountStatusMessage {
-                text: "Failed to save account".to_string(),
-                is_error: true,
-            }),
-        };
+        self.status_message = Some(AccountStatusMessage {
+            text: success_message.to_string(),
+            is_error: false,
+        });
     }
 
     fn clear_accounts(&mut self) {
@@ -376,16 +370,10 @@ impl AccountSettings {
         self.qobuz_auth_requested = false;
         self.tidal_auth_requested = false;
         self.tidal_status_message = None;
-        self.status_message = match self.config.save() {
-            Ok(()) => Some(AccountStatusMessage {
-                text: "Streaming accounts cleared".to_string(),
-                is_error: false,
-            }),
-            Err(_) => Some(AccountStatusMessage {
-                text: "Failed to clear accounts".to_string(),
-                is_error: true,
-            }),
-        };
+        self.status_message = Some(AccountStatusMessage {
+            text: "Streaming accounts cleared".to_string(),
+            is_error: false,
+        });
     }
 
     pub fn take_tidal_clear_requested(&mut self) -> bool {

@@ -31,7 +31,7 @@ impl TidalClient {
         Self {
             access_token,
             country_code,
-            client: reqwest::Client::new(),
+            client: new_http_client(),
         }
     }
 
@@ -498,6 +498,13 @@ fn make_runtime() -> tokio::runtime::Runtime {
         .expect("Failed to create tokio runtime")
 }
 
+fn new_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .expect("Failed to create reqwest client")
+}
+
 fn now_epoch() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -523,7 +530,7 @@ impl TidalSource {
             config,
             max_stream_quality,
             api_client: None,
-            http_client: reqwest::Client::new(),
+            http_client: new_http_client(),
             pending_device_code: None,
             last_poll: None,
             poll_interval: POLL_INTERVAL,

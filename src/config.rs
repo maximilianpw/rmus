@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::{
     players::{RepeatMode, ShuffleMode},
@@ -196,11 +196,15 @@ impl Config {
 
     pub fn save(&self) -> Result<(), std::io::Error> {
         let config_path = config_path();
+        self.save_to(&config_path)
+    }
+
+    pub fn save_to(&self, config_path: &Path) -> Result<(), std::io::Error> {
         if let Some(parent) = config_path.parent() {
             fs::create_dir_all(parent)?;
         }
         let toml_string = toml::to_string_pretty(self).unwrap();
-        write_config_file(&config_path, &toml_string)
+        write_config_file(config_path, &toml_string)
     }
 
     pub fn get_local_sources(&self) -> Vec<LocalSource> {
@@ -223,7 +227,7 @@ pub fn config_path() -> PathBuf {
     rmus_config_dir().join("config.toml")
 }
 
-fn write_config_file(path: &PathBuf, content: &str) -> Result<(), std::io::Error> {
+fn write_config_file(path: &Path, content: &str) -> Result<(), std::io::Error> {
     fs::write(path, content)?;
     #[cfg(unix)]
     {
