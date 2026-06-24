@@ -38,6 +38,7 @@ pub struct LeftPanel {
     cached_items: Vec<String>,
     visible_indices: Vec<SourceItemIndex>,
     filter_input: InputLine,
+    empty_tab_messages: Vec<(String, Vec<String>)>,
     status_line: Option<String>,
     logger: Logger,
 }
@@ -53,6 +54,7 @@ impl LeftPanel {
             cached_items: Vec::new(),
             visible_indices: Vec::new(),
             filter_input: InputLine::new(),
+            empty_tab_messages: Vec::new(),
             status_line: None,
             logger,
         };
@@ -358,6 +360,19 @@ impl LeftPanel {
         self.status_line = status_line;
     }
 
+    pub fn set_empty_tab_message(&mut self, tab_name: &str, lines: Vec<String>) {
+        if let Some((_, existing_lines)) = self
+            .empty_tab_messages
+            .iter_mut()
+            .find(|(name, _)| name == tab_name)
+        {
+            *existing_lines = lines;
+            return;
+        }
+
+        self.empty_tab_messages.push((tab_name.to_string(), lines));
+    }
+
     pub fn handles_escape(&self) -> bool {
         self.filter_input.is_input_mode() || self.has_filter_query()
     }
@@ -415,20 +430,36 @@ impl LeftPanel {
     }
 
     fn empty_tab_items(&self) -> Vec<ListItem<'static>> {
-        let lines: &[&str] = if self.has_filter_query() {
-            &["No matches", "Esc clears the filter."]
+        let active_tab = self.active_tab_name();
+        let lines: Vec<String> = if self.has_filter_query() {
+            vec![
+                "No matches".to_string(),
+                "Esc clears the filter.".to_string(),
+            ]
+        } else if let Some((_, lines)) = self
+            .empty_tab_messages
+            .iter()
+            .find(|(tab_name, _)| tab_name == &active_tab)
+        {
+            lines.clone()
         } else {
-            match self.active_tab_name().as_str() {
-                "Local" => &["No local sources", "Open Settings to add folders."],
-                "Playlists" => &["No playlists yet", "Create one from Playlists."],
-                "Qobuz" => &["Use / to search Qobuz"],
-                "Tidal" => &["Use / to search Tidal"],
-                _ => &["No items"],
+            match active_tab.as_str() {
+                "Local" => vec![
+                    "No local sources".to_string(),
+                    "Open Settings to add folders.".to_string(),
+                ],
+                "Playlists" => vec![
+                    "No playlists yet".to_string(),
+                    "Create one from Playlists.".to_string(),
+                ],
+                "Qobuz" => vec!["Use / to search Qobuz".to_string()],
+                "Tidal" => vec!["Use / to search Tidal".to_string()],
+                _ => vec!["No items".to_string()],
             }
         };
         lines
             .iter()
-            .map(|line| ListItem::new(*line).style(theme::muted_style()))
+            .map(|line| ListItem::new(line.clone()).style(theme::muted_style()))
             .collect()
     }
 

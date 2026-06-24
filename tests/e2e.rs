@@ -2196,8 +2196,12 @@ fn test_empty_left_tabs_render_contextual_guidance() {
     switch_to_tab(&mut app, "Qobuz");
     let text = render_text(&mut app);
     assert!(
-        text.contains("Use / to search Qobuz"),
-        "empty Qobuz tab should point users to search"
+        text.contains("Configure Qobuz in Settings"),
+        "empty Qobuz tab without credentials should point users to account setup"
+    );
+    assert!(
+        text.contains("Enter or / opens login prompt"),
+        "empty Qobuz tab without credentials should explain how to open the login prompt"
     );
 
     switch_to_tab(&mut app, "Tidal");
@@ -2205,6 +2209,27 @@ fn test_empty_left_tabs_render_contextual_guidance() {
     assert!(
         text.contains("Use / to search Tidal"),
         "empty Tidal tab should point users to search"
+    );
+}
+
+#[test]
+fn test_empty_qobuz_tab_with_service_points_to_search() {
+    let mock = MockStreamingService::new_authenticated("Qobuz", mock_albums());
+    let mut app = make_app(Some(Box::new(mock)), None);
+    switch_to_tab(&mut app, "Qobuz");
+
+    let backend = TestBackend::new(220, 40);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let frame = terminal.draw(|frame| app.render(frame)).unwrap();
+    let text = extract_buffer_text(frame.buffer);
+
+    assert!(
+        text.contains("Use / to search Qobuz"),
+        "empty Qobuz tab with a service should point users to search"
+    );
+    assert!(
+        !text.contains("Configure Qobuz in Settings"),
+        "configured Qobuz tab should not show setup guidance"
     );
 }
 

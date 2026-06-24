@@ -3042,6 +3042,7 @@ impl App {
 
         self.left_panel
             .set_status_line(self.local_scan_status.as_ref().map(LocalScanStatus::label));
+        self.sync_left_panel_empty_guidance();
         self.center_panel
             .set_current_song(self.player.get_playback_info().current_song.clone());
         self.left_panel
@@ -3060,6 +3061,19 @@ impl App {
         self.settings_panel
             .render(frame, area, self.focused_window == FocusedWindow::Settings);
         self.render_login_notice(frame, area);
+    }
+
+    fn sync_left_panel_empty_guidance(&mut self) {
+        let qobuz_lines = if self.streaming.can_submit_search(StreamingServiceId::Qobuz) {
+            vec!["Use / to search Qobuz".to_string()]
+        } else {
+            vec![
+                "Configure Qobuz in Settings".to_string(),
+                "Enter or / opens login prompt.".to_string(),
+            ]
+        };
+
+        self.left_panel.set_empty_tab_message("Qobuz", qobuz_lines);
     }
 
     fn render_login_notice(&self, frame: &mut Frame, area: Rect) {
