@@ -1,10 +1,12 @@
-use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 use std::fs;
 use std::path::PathBuf;
 
-use crate::players::{RepeatMode, ShuffleMode};
+use crate::{
+    players::{RepeatMode, ShuffleMode},
+    utils::rmus_config_dir,
+};
 
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
 pub struct Config {
@@ -218,9 +220,7 @@ impl Config {
 }
 
 pub fn config_path() -> PathBuf {
-    ProjectDirs::from("com", "maximilianpw", "rmus")
-        .map(|dirs| dirs.config_dir().join("config.toml"))
-        .unwrap_or_else(|| PathBuf::from("config.toml"))
+    rmus_config_dir().join("config.toml")
 }
 
 fn write_config_file(path: &PathBuf, content: &str) -> Result<(), std::io::Error> {

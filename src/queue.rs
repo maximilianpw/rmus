@@ -1,9 +1,11 @@
-use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::sources::song::{Song, StreamManifest};
+use crate::{
+    sources::song::{Song, StreamManifest},
+    utils::rmus_config_dir,
+};
 
 #[derive(Debug, Clone)]
 pub struct QueueStore {
@@ -106,9 +108,7 @@ impl QueueStore {
 }
 
 fn default_queue_path() -> PathBuf {
-    ProjectDirs::from("com", "maximilianpw", "rmus")
-        .map(|dirs| dirs.config_dir().join("queue.toml"))
-        .unwrap_or_else(|| PathBuf::from("queue.toml"))
+    rmus_config_dir().join("queue.toml")
 }
 
 fn clamped_position(track_count: usize, position: usize) -> usize {

@@ -1,7 +1,10 @@
 use std::path::{Path, PathBuf};
 
-use directories::BaseDirs;
+use directories::{BaseDirs, ProjectDirs};
 use ratatui::layout::{Constraint, Layout, Rect};
+
+const CONFIG_DIR_ENV: &str = "RMUS_CONFIG_DIR";
+const CACHE_DIR_ENV: &str = "RMUS_CACHE_DIR";
 
 pub fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
     let [_, center, _] = Layout::vertical([
@@ -43,6 +46,22 @@ pub fn expand_home_path(path: &Path) -> PathBuf {
         .strip_prefix("~/")
         .or_else(|| path_text.strip_prefix("~\\"))
         .map_or_else(|| path.to_path_buf(), |rest| home.join(rest))
+}
+
+pub fn rmus_config_dir() -> PathBuf {
+    std::env::var_os(CONFIG_DIR_ENV)
+        .map(PathBuf::from)
+        .or_else(|| {
+            ProjectDirs::from("com", "maximilianpw", "rmus")
+                .map(|dirs| dirs.config_dir().to_path_buf())
+        })
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+pub fn rmus_cache_dir() -> PathBuf {
+    std::env::var_os(CACHE_DIR_ENV)
+        .map(PathBuf::from)
+        .unwrap_or_else(rmus_config_dir)
 }
 
 #[cfg(test)]

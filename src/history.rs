@@ -1,9 +1,11 @@
-use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::sources::song::{Song, StreamManifest};
+use crate::{
+    sources::song::{Song, StreamManifest},
+    utils::rmus_config_dir,
+};
 
 #[derive(Debug, Clone)]
 pub struct HistoryStore {
@@ -87,9 +89,7 @@ impl HistoryStore {
 }
 
 fn default_history_path() -> PathBuf {
-    ProjectDirs::from("com", "maximilianpw", "rmus")
-        .map(|dirs| dirs.config_dir().join("history.toml"))
-        .unwrap_or_else(|| PathBuf::from("history.toml"))
+    rmus_config_dir().join("history.toml")
 }
 
 fn non_empty_string(value: &str) -> Option<String> {

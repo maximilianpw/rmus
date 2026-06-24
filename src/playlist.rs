@@ -1,11 +1,10 @@
-use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::{
     sources::{song::Song, MusicSource},
-    utils::track_count_label,
+    utils::{rmus_config_dir, track_count_label},
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -137,9 +136,7 @@ pub struct PlaylistSource {
 }
 
 fn default_playlists_dir() -> PathBuf {
-    ProjectDirs::from("com", "maximilianpw", "rmus")
-        .map(|dirs| dirs.config_dir().join("playlists"))
-        .unwrap_or_else(|| PathBuf::from("playlists"))
+    rmus_config_dir().join("playlists")
 }
 
 fn sanitize_filename(name: &str) -> String {

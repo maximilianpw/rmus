@@ -132,11 +132,16 @@ fn find_file_named(root: &Path, file_name: &str) -> Option<PathBuf> {
 }
 
 fn state_env(command: &mut Command, state_dir: &Path) {
+    let config_dir = state_dir.join("rmus-config");
+    let cache_dir = state_dir.join("rmus-cache");
     command
         .env("HOME", state_dir)
+        .env("USERPROFILE", state_dir)
         .env("XDG_CONFIG_HOME", state_dir.join("xdg-config"))
         .env("APPDATA", state_dir.join("appdata"))
         .env("LOCALAPPDATA", state_dir.join("localappdata"))
+        .env("RMUS_CONFIG_DIR", config_dir)
+        .env("RMUS_CACHE_DIR", cache_dir)
         .current_dir(state_dir);
 }
 
@@ -808,15 +813,12 @@ song.flac
     )
     .unwrap();
 
-    let output = rmus_binary()
-        .args(["import-playlist", m3u.to_str().unwrap(), "Imported Mix"])
-        .env("HOME", &state_dir)
-        .env("XDG_CONFIG_HOME", state_dir.join("xdg-config"))
-        .env("APPDATA", state_dir.join("appdata"))
-        .env("LOCALAPPDATA", state_dir.join("localappdata"))
-        .current_dir(&state_dir)
-        .output()
-        .expect("rmus import-playlist should run");
+    let mut command = rmus_binary();
+    state_env(
+        command.args(["import-playlist", m3u.to_str().unwrap(), "Imported Mix"]),
+        &state_dir,
+    );
+    let output = command.output().expect("rmus import-playlist should run");
 
     assert!(output.status.success());
     assert!(output.stderr.is_empty());
@@ -854,17 +856,11 @@ first.flac
 ",
     )
     .unwrap();
-    let state_env = |command: &mut Command| {
-        command
-            .env("HOME", &state_dir)
-            .env("XDG_CONFIG_HOME", state_dir.join("xdg-config"))
-            .env("APPDATA", state_dir.join("appdata"))
-            .env("LOCALAPPDATA", state_dir.join("localappdata"))
-            .current_dir(&state_dir);
-    };
-
     let mut import_command = rmus_binary();
-    state_env(import_command.args(["import-playlist", m3u.to_str().unwrap(), "Export Me"]));
+    state_env(
+        import_command.args(["import-playlist", m3u.to_str().unwrap(), "Export Me"]),
+        &state_dir,
+    );
     let import_output = import_command
         .output()
         .expect("rmus import-playlist should run");
@@ -872,11 +868,14 @@ first.flac
 
     let export_path = state_dir.join("exported.m3u8");
     let mut export_command = rmus_binary();
-    state_env(export_command.args([
-        "export-playlist",
-        "Export Me",
-        export_path.to_str().unwrap(),
-    ]));
+    state_env(
+        export_command.args([
+            "export-playlist",
+            "Export Me",
+            export_path.to_str().unwrap(),
+        ]),
+        &state_dir,
+    );
     let export_output = export_command
         .output()
         .expect("rmus export-playlist should run");
@@ -907,16 +906,9 @@ fn test_cli_doctor_reports_runtime_checks_without_launching_tui() {
     std::fs::create_dir_all(&state_dir).unwrap();
     let path = std::env::join_paths([fake_mpv_bin_dir("cli-doctor-mpv")]).unwrap();
 
-    let output = rmus_binary()
-        .arg("doctor")
-        .env("PATH", path)
-        .env("HOME", &state_dir)
-        .env("XDG_CONFIG_HOME", state_dir.join("xdg-config"))
-        .env("APPDATA", state_dir.join("appdata"))
-        .env("LOCALAPPDATA", state_dir.join("localappdata"))
-        .current_dir(&state_dir)
-        .output()
-        .expect("rmus doctor should run");
+    let mut command = rmus_binary();
+    state_env(command.arg("doctor").env("PATH", path), &state_dir);
+    let output = command.output().expect("rmus doctor should run");
 
     assert!(output.status.success());
     assert!(output.stderr.is_empty());

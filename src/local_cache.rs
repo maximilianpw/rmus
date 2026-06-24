@@ -1,4 +1,3 @@
-use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -7,7 +6,7 @@ use std::{
     time::UNIX_EPOCH,
 };
 
-use crate::{config::LocalSource, sources::song::Song};
+use crate::{config::LocalSource, sources::song::Song, utils::rmus_cache_dir};
 
 #[derive(Debug, Clone)]
 pub struct LocalTrackCache {
@@ -401,9 +400,7 @@ impl CachedLocalTrack {
 }
 
 fn default_local_cache_path() -> PathBuf {
-    ProjectDirs::from("com", "maximilianpw", "rmus")
-        .map(|dirs| dirs.config_dir().join("local-cache.toml"))
-        .unwrap_or_else(|| PathBuf::from("local-cache.toml"))
+    rmus_cache_dir().join("local-cache.toml")
 }
 
 fn source_cache_key(sources: &[LocalSource]) -> Vec<CachedAlbumSource> {
