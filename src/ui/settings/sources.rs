@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     layout::Rect,
@@ -424,7 +422,7 @@ impl SourceSettings {
             return false;
         }
 
-        let raw_path = Self::expand_home_path(raw_path);
+        let raw_path = crate::utils::expand_home_path(std::path::Path::new(raw_path));
         if !raw_path.is_dir() {
             self.status_message = Some("Path must be an existing directory".to_string());
             return false;
@@ -475,20 +473,6 @@ impl SourceSettings {
             self.status_message = Some("Failed to save config".to_string());
             false
         }
-    }
-
-    fn expand_home_path(raw_path: &str) -> PathBuf {
-        let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
-            return PathBuf::from(raw_path);
-        };
-
-        if raw_path == "~" {
-            return home;
-        }
-
-        raw_path
-            .strip_prefix("~/")
-            .map_or_else(|| PathBuf::from(raw_path), |rest| home.join(rest))
     }
 
     fn quality_label(quality: MaxStreamQuality) -> &'static str {
@@ -594,6 +578,7 @@ mod tests {
     use crate::players::RepeatMode;
     use crossterm::event::{KeyEvent, KeyModifiers};
     use std::fs;
+    use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -723,7 +708,10 @@ mod tests {
     #[test]
     fn expands_tilde_source_path() {
         let mut settings = SourceSettings::new(default_config());
-        let home = PathBuf::from(std::env::var_os("HOME").expect("HOME should be set for tests"));
+        let home = directories::BaseDirs::new()
+            .expect("home directory should be available for tests")
+            .home_dir()
+            .to_path_buf();
         let dir_name = format!(
             ".rmus-source-settings-home-{}",
             SystemTime::now()

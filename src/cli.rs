@@ -12,7 +12,7 @@ use crate::{
     playlist::{PlaylistExportSummary, PlaylistImportSummary, PlaylistStore},
     queue::QueueStore,
     sources::local::{LocalFiles, LocalLibraryStats},
-    utils::track_count_label,
+    utils::{expand_home_path, track_count_label},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -712,22 +712,6 @@ fn add_source_to_config(
         path,
         source_count: config.local.sources.len(),
     })
-}
-
-fn expand_home_path(path: &Path) -> PathBuf {
-    let path_text = path.to_string_lossy();
-    if path_text == "~" {
-        return env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| path.to_path_buf());
-    }
-    if let Some(rest) = path_text.strip_prefix("~/") {
-        return env::var_os("HOME")
-            .map(PathBuf::from)
-            .map(|home| home.join(rest))
-            .unwrap_or_else(|| path.to_path_buf());
-    }
-    path.to_path_buf()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

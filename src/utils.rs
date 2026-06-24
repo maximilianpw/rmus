@@ -1,3 +1,6 @@
+use std::path::{Path, PathBuf};
+
+use directories::BaseDirs;
 use ratatui::layout::{Constraint, Layout, Rect};
 
 pub fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
@@ -26,6 +29,22 @@ pub fn track_count_label(count: usize) -> String {
     }
 }
 
+pub fn expand_home_path(path: &Path) -> PathBuf {
+    let path_text = path.to_string_lossy();
+    let Some(home) = BaseDirs::new().map(|dirs| dirs.home_dir().to_path_buf()) else {
+        return path.to_path_buf();
+    };
+
+    if path_text == "~" {
+        return home;
+    }
+
+    path_text
+        .strip_prefix("~/")
+        .or_else(|| path_text.strip_prefix("~\\"))
+        .map_or_else(|| path.to_path_buf(), |rest| home.join(rest))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -39,5 +58,12 @@ mod tests {
     fn track_count_label_uses_plural_for_zero_and_many_tracks() {
         assert_eq!(track_count_label(0), "0 tracks");
         assert_eq!(track_count_label(2), "2 tracks");
+    }
+
+    #[test]
+    fn expand_home_path_preserves_non_home_paths() {
+        let path = PathBuf::from("music");
+
+        assert_eq!(expand_home_path(&path), path);
     }
 }

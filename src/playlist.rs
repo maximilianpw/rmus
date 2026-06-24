@@ -1178,15 +1178,24 @@ mod tests {
         let dir = test_dir("import-m3u");
         fs::create_dir_all(dir.join("tracks")).unwrap();
         let playlist_file = dir.join("Road.m3u");
+        let absolute_track = if cfg!(windows) {
+            PathBuf::from("C:/absolute/second.mp3")
+        } else {
+            PathBuf::from("/absolute/second.mp3")
+        };
+        let absolute_track_text = absolute_track.to_string_lossy().into_owned();
         fs::write(
             &playlist_file,
-            "\
+            format!(
+                "\
 #EXTM3U
 #EXTINF:123,Artist - First
 tracks/first.flac
 https://example.com/stream.flac
-/absolute/second.mp3
+{}
 ",
+                absolute_track_text
+            ),
         )
         .unwrap();
         let store = PlaylistStore::with_dir(dir.join("playlists"));
@@ -1215,7 +1224,7 @@ https://example.com/stream.flac
         assert_eq!(loaded[0].tracks[1].title, "second.mp3");
         assert_eq!(
             loaded[0].tracks[1].path.as_deref(),
-            Some("/absolute/second.mp3")
+            Some(absolute_track_text.as_str())
         );
 
         let _ = fs::remove_dir_all(dir);
