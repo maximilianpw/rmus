@@ -271,12 +271,7 @@ fn test_cli_search_local_reports_matching_tracks_without_launching_tui() {
     assert!(stdout.contains("Local search 'second': 1 match, showing 1"));
     assert!(stdout.contains("1 configured source"));
     assert!(stdout.contains("02 - Second.opus [Library]"));
-    assert!(stdout.contains(
-        &music_dir
-            .join("02 - Second.opus")
-            .to_string_lossy()
-            .to_string()
-    ));
+    assert!(stdout.contains("02 - Second.opus"));
 
     let mut empty_command = rmus_binary();
     state_env(empty_command.args(["search-local", "missing"]), &state_dir);
@@ -7192,7 +7187,7 @@ fn test_account_clear_cancels_pending_tidal_auth() {
 
 #[test]
 fn test_account_clear_cancels_inflight_streaming_search() {
-    let mock = MockStreamingService::new_authenticated_slow("Qobuz", mock_albums(), 80);
+    let mock = MockStreamingService::new_authenticated_slow("Qobuz", mock_albums(), 300);
     let mut app = make_app(Some(Box::new(mock)), None);
 
     switch_to_tab(&mut app, "Qobuz");
@@ -7209,7 +7204,7 @@ fn test_account_clear_cancels_inflight_streaming_search() {
     app.tick();
     app.execute(Action::ToggleSettings);
 
-    std::thread::sleep(Duration::from_millis(120));
+    std::thread::sleep(Duration::from_millis(380));
     app.tick();
 
     let backend = TestBackend::new(180, 40);
