@@ -8172,7 +8172,7 @@ fn test_question_mark_opens_keybinds_help_directly() {
 
 #[test]
 fn test_search_status_visible_while_background_query_runs() {
-    let mock = MockStreamingService::new_authenticated_slow("Qobuz", mock_albums(), 80);
+    let mock = MockStreamingService::new_authenticated_slow("Qobuz", mock_albums(), 300);
     let mut app = make_app(Some(Box::new(mock)), None);
 
     switch_to_tab(&mut app, "Qobuz");
@@ -8194,7 +8194,7 @@ fn test_search_status_visible_while_background_query_runs() {
     );
 
     // Let background worker complete and flush results.
-    std::thread::sleep(Duration::from_millis(120));
+    std::thread::sleep(Duration::from_millis(380));
     app.tick();
     let frame = terminal.draw(|f| app.render(f)).unwrap();
     let text = extract_buffer_text(frame.buffer);
