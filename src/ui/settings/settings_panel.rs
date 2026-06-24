@@ -329,6 +329,7 @@ impl SettingsPanel {
             keybind("General: z", "Toggle startup shuffle"),
             keybind("General: r", "Cycle startup repeat"),
             keybind("General: j/k", "Move source selection"),
+            keybind("General: J/K", "Reorder selected source"),
             keybind("General: PageUp/PageDown", "Move sources by page"),
             keybind("General: g/G Home/End", "Jump first / last source"),
             keybind("General: a", "Add local source"),

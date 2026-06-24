@@ -2071,6 +2071,61 @@ fn test_editing_local_source_updates_left_panel_immediately() {
 }
 
 #[test]
+fn test_reordering_local_sources_updates_left_panel_immediately() {
+    let first_dir = test_dir("reorder-local-source-first");
+    let second_dir = test_dir("reorder-local-source-second");
+    std::fs::create_dir_all(&first_dir).unwrap();
+    std::fs::create_dir_all(&second_dir).unwrap();
+    std::fs::write(first_dir.join("01 - First.flac"), "").unwrap();
+    std::fs::write(second_dir.join("01 - Second.flac"), "").unwrap();
+
+    let mut config = default_config();
+    config.local.sources.push(LocalSource {
+        name: "First Library".to_string(),
+        path: first_dir.clone(),
+    });
+    config.local.sources.push(LocalSource {
+        name: "Second Library".to_string(),
+        path: second_dir.clone(),
+    });
+    let mut app = App::new_for_test(config, None, None);
+    let backend = TestBackend::new(180, 40);
+    let mut terminal = Terminal::new(backend).unwrap();
+
+    app.execute(Action::ToggleSettings);
+    app.delegate_key_to_panel(make_key(KeyCode::Char('J')));
+    app.tick();
+
+    let frame = terminal.draw(|frame| app.render(frame)).unwrap();
+    let text = extract_buffer_text(frame.buffer);
+    assert!(
+        text.contains("Moved First Library down"),
+        "reordering a local source should show settings feedback"
+    );
+
+    app.delegate_key_to_panel(make_key(KeyCode::Esc));
+    app.execute(Action::SelectAlbum);
+
+    let frame = terminal.draw(|frame| app.render(frame)).unwrap();
+    let text = extract_buffer_text(frame.buffer);
+    assert!(
+        text.contains("Second Library"),
+        "moved source order should refresh in the Local tab without restarting"
+    );
+    assert!(
+        text.contains("01 - Second.flac"),
+        "the new first source should be selectable immediately"
+    );
+    assert!(
+        !text.contains("01 - First.flac"),
+        "the old first source should no longer be selected after reordering"
+    );
+
+    let _ = std::fs::remove_dir_all(first_dir);
+    let _ = std::fs::remove_dir_all(second_dir);
+}
+
+#[test]
 fn test_renaming_open_local_source_updates_center_title() {
     let dir = test_dir("rename-open-local-source");
     std::fs::create_dir_all(&dir).unwrap();
@@ -7950,6 +8005,10 @@ fn test_keybind_tab_shows_generic_search_text() {
     assert!(
         text.contains("Edit local source"),
         "Settings keybinds should document source editing"
+    );
+    assert!(
+        text.contains("Reorder selected source"),
+        "Settings keybinds should document source reordering"
     );
     assert!(
         text.contains("Next / previous track"),

@@ -246,6 +246,7 @@ Settings panel:
 - `General: z`: toggle startup shuffle.
 - `General: r`: cycle startup repeat mode.
 - `General: j/k`, `PageUp/PageDown`, `g/G`, `Home/End`: move local source selection.
+- `General: J/K`: move selected local source down/up.
 - `General: a`: add local source.
 - `General: e`: edit selected local source.
 - `General: d`: remove selected local source.

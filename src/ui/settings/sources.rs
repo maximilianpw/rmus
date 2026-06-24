@@ -201,6 +201,14 @@ impl SourceSettings {
                     self.remove_selected_source();
                     true
                 }
+                KeyCode::Char('J') => {
+                    self.move_selected_source_down();
+                    true
+                }
+                KeyCode::Char('K') => {
+                    self.move_selected_source_up();
+                    true
+                }
                 KeyCode::Down | KeyCode::Char('j') => {
                     self.scroll_down();
                     false
@@ -228,6 +236,56 @@ impl SourceSettings {
                 _ => false,
             }
         }
+    }
+
+    fn move_selected_source_down(&mut self) {
+        self.move_selected_source(1);
+    }
+
+    fn move_selected_source_up(&mut self) {
+        self.move_selected_source(-1);
+    }
+
+    fn move_selected_source(&mut self, direction: isize) {
+        if self.sources.is_empty() {
+            self.status_message = Some("No source selected".to_string());
+            return;
+        }
+
+        let Some(index) = self
+            .list_state
+            .selected()
+            .filter(|index| *index < self.sources.len())
+        else {
+            self.status_message = Some("No source selected".to_string());
+            return;
+        };
+
+        let target = if direction > 0 {
+            if index + 1 >= self.sources.len() {
+                self.status_message = Some("Already last source".to_string());
+                return;
+            }
+            index + 1
+        } else if index == 0 {
+            self.status_message = Some("Already first source".to_string());
+            return;
+        } else {
+            index - 1
+        };
+
+        self.sources.swap(index, target);
+        self.config.local.sources = self.sources.clone();
+        self.config_dirty = true;
+        self.list_state.select(Some(target));
+        self.h_scroll = 0;
+
+        let name = self.sources[target].name.clone();
+        let direction_label = if direction > 0 { "down" } else { "up" };
+        self.status_message = match self.config.save() {
+            Ok(()) => Some(format!("Moved {name} {direction_label}")),
+            Err(_) => Some("Failed to save config".to_string()),
+        };
     }
 
     fn begin_add_source(&mut self) {
@@ -1076,6 +1134,80 @@ mod tests {
         assert_eq!(updated.local.sources[0].name, "Second");
         assert_eq!(settings.sources.len(), 1);
         assert_eq!(settings.sources[0].path, second);
+
+        let _ = fs::remove_dir_all(first);
+        let _ = fs::remove_dir_all(second);
+    }
+
+    #[test]
+    fn moves_selected_source_down_and_up_and_persists_order() {
+        let first = unique_temp_dir();
+        let second = unique_temp_dir();
+        let third = unique_temp_dir();
+        let mut config = default_config();
+        config.add_local_source("First".to_string(), first.clone());
+        config.add_local_source("Second".to_string(), second.clone());
+        config.add_local_source("Third".to_string(), third.clone());
+        let mut settings = SourceSettings::new(config);
+
+        assert!(settings.handle_events(key(KeyCode::Char('J'))));
+        let updated = settings
+            .take_config_update()
+            .expect("moving a source should produce config update");
+        let names: Vec<_> = updated
+            .local
+            .sources
+            .iter()
+            .map(|source| source.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["Second", "First", "Third"]);
+        assert_eq!(settings.list_state.selected(), Some(1));
+        assert_eq!(settings.status_message.as_deref(), Some("Moved First down"));
+
+        assert!(settings.handle_events(key(KeyCode::Char('K'))));
+        let updated = settings
+            .take_config_update()
+            .expect("moving a source should produce config update");
+        let names: Vec<_> = updated
+            .local
+            .sources
+            .iter()
+            .map(|source| source.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["First", "Second", "Third"]);
+        assert_eq!(settings.list_state.selected(), Some(0));
+        assert_eq!(settings.status_message.as_deref(), Some("Moved First up"));
+
+        let _ = fs::remove_dir_all(first);
+        let _ = fs::remove_dir_all(second);
+        let _ = fs::remove_dir_all(third);
+    }
+
+    #[test]
+    fn source_move_boundaries_show_feedback_without_dirtying_config() {
+        let first = unique_temp_dir();
+        let second = unique_temp_dir();
+        let mut config = default_config();
+        config.add_local_source("First".to_string(), first.clone());
+        config.add_local_source("Second".to_string(), second.clone());
+        let mut settings = SourceSettings::new(config);
+
+        assert!(settings.handle_events(key(KeyCode::Char('K'))));
+        assert!(settings.take_config_update().is_none());
+        assert_eq!(settings.list_state.selected(), Some(0));
+        assert_eq!(
+            settings.status_message.as_deref(),
+            Some("Already first source")
+        );
+
+        settings.handle_events(key(KeyCode::End));
+        assert!(settings.handle_events(key(KeyCode::Char('J'))));
+        assert!(settings.take_config_update().is_none());
+        assert_eq!(settings.list_state.selected(), Some(1));
+        assert_eq!(
+            settings.status_message.as_deref(),
+            Some("Already last source")
+        );
 
         let _ = fs::remove_dir_all(first);
         let _ = fs::remove_dir_all(second);
