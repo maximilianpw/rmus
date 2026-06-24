@@ -64,6 +64,9 @@ pub enum CliAction {
         name: String,
         limit: Option<usize>,
     },
+    CreatePlaylist {
+        name: String,
+    },
     RenamePlaylist {
         name: String,
         new_name: String,
@@ -135,6 +138,7 @@ where
         "remove-source" => parse_remove_source_args(args),
         "move-source" => parse_move_source_args(args),
         "show-playlist" => parse_show_playlist_args(args),
+        "create-playlist" => parse_create_playlist_args(args),
         "rename-playlist" => parse_rename_playlist_args(args),
         "duplicate-playlist" => parse_duplicate_playlist_args(args),
         "delete-playlist" => parse_delete_playlist_args(args),
@@ -378,6 +382,26 @@ where
     parse_optional_limit_args(args, |limit| CliAction::ShowPlaylist { name, limit })
 }
 
+fn parse_create_playlist_args<I>(mut args: I) -> Result<CliAction, String>
+where
+    I: Iterator<Item = String>,
+{
+    let Some(name) = args.next() else {
+        return Err(format!(
+            "missing playlist name for create-playlist\n\n{}",
+            help_text()
+        ));
+    };
+    if args.next().is_some() {
+        return Err(format!(
+            "unexpected argument after playlist name\n\n{}",
+            help_text()
+        ));
+    }
+
+    Ok(CliAction::CreatePlaylist { name })
+}
+
 fn parse_rename_playlist_args<I>(mut args: I) -> Result<CliAction, String>
 where
     I: Iterator<Item = String>,
@@ -542,6 +566,8 @@ pub fn help_text() -> &'static str {
         "                  Reorder configured local music folders\n",
         "  show-playlist <NAME> [--limit N]\n",
         "                  Print saved tracks in a playlist\n",
+        "  create-playlist <NAME>\n",
+        "                  Create an empty saved playlist\n",
         "  rename-playlist <NAME> <NEW_NAME>\n",
         "                  Rename a saved playlist\n",
         "  duplicate-playlist <NAME> [NEW_NAME]\n",
@@ -569,7 +595,7 @@ _rmus() {
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
-    commands="status doctor paths completions list-sources list-playlists show-history show-queue local-stats search-local scan-local add-source remove-source move-source show-playlist rename-playlist duplicate-playlist delete-playlist import-playlist export-playlist clear-cache clear-accounts clear-history clear-queue"
+    commands="status doctor paths completions list-sources list-playlists show-history show-queue local-stats search-local scan-local add-source remove-source move-source show-playlist create-playlist rename-playlist duplicate-playlist delete-playlist import-playlist export-playlist clear-cache clear-accounts clear-history clear-queue"
     global_opts="-h --help -V --version"
 
     case "$prev" in
@@ -621,6 +647,7 @@ _rmus() {
         'remove-source:remove a local music folder'
         'move-source:reorder configured local music folders'
         'show-playlist:print saved tracks in a playlist'
+        'create-playlist:create an empty saved playlist'
         'rename-playlist:rename a saved playlist'
         'duplicate-playlist:duplicate a saved playlist'
         'delete-playlist:delete a saved playlist'
@@ -684,6 +711,7 @@ complete -c rmus -n '__fish_use_subcommand' -a add-source -d 'Add a local music 
 complete -c rmus -n '__fish_use_subcommand' -a remove-source -d 'Remove a local music folder'
 complete -c rmus -n '__fish_use_subcommand' -a move-source -d 'Reorder configured local music folders'
 complete -c rmus -n '__fish_use_subcommand' -a show-playlist -d 'Print saved tracks in a playlist'
+complete -c rmus -n '__fish_use_subcommand' -a create-playlist -d 'Create an empty saved playlist'
 complete -c rmus -n '__fish_use_subcommand' -a rename-playlist -d 'Rename a saved playlist'
 complete -c rmus -n '__fish_use_subcommand' -a duplicate-playlist -d 'Duplicate a saved playlist'
 complete -c rmus -n '__fish_use_subcommand' -a delete-playlist -d 'Delete a saved playlist'
@@ -1221,6 +1249,39 @@ fn nonblank(value: &str) -> Option<&str> {
     } else {
         Some(value)
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlaylistCreateSummary {
+    pub name: String,
+}
+
+impl PlaylistCreateSummary {
+    pub fn message(&self) -> String {
+        format!("Created playlist '{}' (0 tracks)", self.name)
+    }
+}
+
+pub fn create_playlist(name: &str) -> Result<PlaylistCreateSummary, String> {
+    create_playlist_with_store(PlaylistStore::default(), name)
+}
+
+fn create_playlist_with_store(
+    store: PlaylistStore,
+    name: &str,
+) -> Result<PlaylistCreateSummary, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("Playlist name is required".to_string());
+    }
+
+    store
+        .create(name.to_string())
+        .map_err(|error| playlist_store_error("create", name, error))?;
+
+    Ok(PlaylistCreateSummary {
+        name: name.to_string(),
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2572,16 +2633,16 @@ mod tests {
     use super::{
         add_source_and_scan_with_config_and_cache_path, add_source_to_config,
         clear_accounts_in_config, clear_cache_at, clear_history_at, clear_queue_at,
-        completions_text, delete_playlist_with_store, doctor_report_with_options,
-        duplicate_playlist_with_store, list_playlists_with_store, list_sources_from_config,
-        local_stats_with_cache_path, move_source_in_config, parse_args, paths_text_with_options,
-        remove_source_from_config, rename_playlist_with_store, scan_local_with_cache_path,
-        search_local_with_config_and_cache_path, show_history_with_store,
-        show_history_with_store_and_limit, show_playlist_with_store,
+        completions_text, create_playlist_with_store, delete_playlist_with_store,
+        doctor_report_with_options, duplicate_playlist_with_store, list_playlists_with_store,
+        list_sources_from_config, local_stats_with_cache_path, move_source_in_config, parse_args,
+        paths_text_with_options, remove_source_from_config, rename_playlist_with_store,
+        scan_local_with_cache_path, search_local_with_config_and_cache_path,
+        show_history_with_store, show_history_with_store_and_limit, show_playlist_with_store,
         show_playlist_with_store_and_limit, show_queue_with_store, show_queue_with_store_and_limit,
         status_with_config_and_stores, CliAction, CompletionShell, DoctorOptions,
-        LocalSourceMoveTarget, PlaylistDuplicateSummary, PlaylistRenameSummary,
-        DEFAULT_LOCAL_SEARCH_LIMIT,
+        LocalSourceMoveTarget, PlaylistCreateSummary, PlaylistDuplicateSummary,
+        PlaylistRenameSummary, DEFAULT_LOCAL_SEARCH_LIMIT,
     };
     use crate::{
         config::{
@@ -3332,6 +3393,52 @@ tracks = []
         let missing =
             show_playlist_with_store(store, "Missing").expect_err("unknown playlists should fail");
         assert_eq!(missing, "Playlist 'Missing' not found");
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn create_playlist_command_creates_empty_playlist() {
+        assert_eq!(
+            parse_args(["rmus", "create-playlist", "Road Mix"]),
+            Ok(CliAction::CreatePlaylist {
+                name: "Road Mix".to_string()
+            })
+        );
+        let missing_name =
+            parse_args(["rmus", "create-playlist"]).expect_err("name should be required");
+        assert!(missing_name.contains("missing playlist name for create-playlist"));
+        let extra = parse_args(["rmus", "create-playlist", "Road Mix", "extra"])
+            .expect_err("extra args should fail");
+        assert!(extra.contains("unexpected argument after playlist name"));
+
+        let dir = test_dir("create-playlist-cli");
+        let playlists_dir = dir.join("playlists");
+        let store = crate::playlist::PlaylistStore::with_dir(playlists_dir.clone());
+
+        let summary =
+            create_playlist_with_store(store.clone(), " Road Mix ").expect("create should succeed");
+
+        assert_eq!(
+            summary,
+            PlaylistCreateSummary {
+                name: "Road Mix".to_string(),
+            }
+        );
+        assert_eq!(summary.message(), "Created playlist 'Road Mix' (0 tracks)");
+        assert!(playlists_dir.join("Road Mix.toml").exists());
+        let created = show_playlist_with_store(store.clone(), "road mix").unwrap();
+        assert_eq!(
+            created.message(),
+            "Playlist 'Road Mix' (0 tracks)\nNo tracks saved.\n"
+        );
+
+        let duplicate = create_playlist_with_store(store.clone(), "road mix")
+            .expect_err("duplicate names should fail");
+        assert_eq!(duplicate, "Playlist 'road mix' already exists");
+        let blank =
+            create_playlist_with_store(store, " ").expect_err("blank names should be rejected");
+        assert_eq!(blank, "Playlist name is required");
 
         let _ = fs::remove_dir_all(dir);
     }

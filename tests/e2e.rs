@@ -838,6 +838,47 @@ stream_track_id = "qbz-1"
 }
 
 #[test]
+fn test_cli_create_playlist_creates_empty_playlist_without_launching_tui() {
+    let state_dir = test_dir("cli-create-playlist");
+    std::fs::create_dir_all(&state_dir).unwrap();
+    let playlists_dir = isolated_playlists_dir(&state_dir);
+
+    let mut command = rmus_binary();
+    state_env(command.args(["create-playlist", "Road Mix"]), &state_dir);
+    let output = command.output().expect("rmus create-playlist should run");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Created playlist 'Road Mix' (0 tracks)"));
+    assert!(playlists_dir.join("Road Mix.toml").exists());
+
+    let mut show_command = rmus_binary();
+    state_env(show_command.args(["show-playlist", "road mix"]), &state_dir);
+    let show_output = show_command
+        .output()
+        .expect("rmus show-playlist should run after create");
+    assert!(show_output.status.success());
+    let show_stdout = String::from_utf8(show_output.stdout).unwrap();
+    assert!(show_stdout.contains("Playlist 'Road Mix' (0 tracks)"));
+    assert!(show_stdout.contains("No tracks saved."));
+
+    let mut duplicate_command = rmus_binary();
+    state_env(
+        duplicate_command.args(["create-playlist", "road mix"]),
+        &state_dir,
+    );
+    let duplicate_output = duplicate_command
+        .output()
+        .expect("duplicate rmus create-playlist should run");
+    assert!(!duplicate_output.status.success());
+    let stderr = String::from_utf8(duplicate_output.stderr).unwrap();
+    assert!(stderr.contains("Playlist 'road mix' already exists"));
+
+    let _ = std::fs::remove_dir_all(state_dir);
+}
+
+#[test]
 fn test_cli_delete_playlist_removes_saved_playlist_without_launching_tui() {
     let state_dir = test_dir("cli-delete-playlist");
     std::fs::create_dir_all(&state_dir).unwrap();
