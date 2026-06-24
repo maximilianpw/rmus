@@ -996,6 +996,11 @@ impl App {
     }
 
     fn play_selected_collection(&mut self) {
+        if self.left_panel.selected_all_local_tracks() {
+            self.play_all_local_tracks();
+            return;
+        }
+
         let Some((path, songs)) = self.left_panel.get_selected_album() else {
             self.log_empty_left_selection();
             return;
@@ -1016,6 +1021,11 @@ impl App {
     }
 
     fn enqueue_selected_collection(&mut self) {
+        if self.left_panel.selected_all_local_tracks() {
+            self.enqueue_collection(self.local_library_songs());
+            return;
+        }
+
         let Some((_path, songs)) = self.left_panel.get_selected_album() else {
             self.log_empty_left_selection();
             return;
@@ -1092,6 +1102,15 @@ impl App {
     fn favorite_target_songs(&self, empty_left_message: &str) -> Option<Vec<Song>> {
         match self.focused_window {
             FocusedWindow::Left => {
+                if self.left_panel.selected_all_local_tracks() {
+                    let songs = self.local_library_songs();
+                    if songs.is_empty() {
+                        self.logger.info(empty_left_message.to_string());
+                        return None;
+                    }
+                    return Some(songs);
+                }
+
                 let Some((_path, songs)) = self.left_panel.get_selected_album() else {
                     self.log_empty_left_selection();
                     return None;
@@ -1470,7 +1489,10 @@ impl App {
             Action::ToggleSettings => self.toggle_settings(),
             Action::OpenKeybinds => self.open_keybinds(),
             Action::SelectAlbum => {
-                if let Some((path, songs)) = self.left_panel.get_selected_album() {
+                if self.left_panel.selected_all_local_tracks() {
+                    self.open_all_local_tracks();
+                    self.focused_window = FocusedWindow::Center;
+                } else if let Some((path, songs)) = self.left_panel.get_selected_album() {
                     if let Some(title) = self.left_panel.selected_item_label() {
                         self.center_panel.set_album_with_title(path, title, songs);
                     } else {
@@ -2275,16 +2297,33 @@ impl App {
     }
 
     fn local_library_songs(&self) -> Vec<Song> {
-        self.config
-            .get_local_sources()
-            .into_iter()
-            .flat_map(|source| {
-                LocalFiles::songs_from_path_using_cached_metadata_with_cache_path(
-                    source.path,
-                    self.local_cache_path.clone(),
-                )
-            })
-            .collect()
+        LocalFiles::songs_from_sources_using_cached_metadata_with_cache_path(
+            &self.config.get_local_sources(),
+            self.local_cache_path.clone(),
+        )
+    }
+
+    fn open_all_local_tracks(&mut self) {
+        let songs = self.local_library_songs();
+        if songs.is_empty() {
+            self.logger
+                .info("No local songs found. Check Settings sources.".to_string());
+            return;
+        }
+
+        self.center_panel.set_local_library(songs);
+    }
+
+    fn play_all_local_tracks(&mut self) {
+        let songs = self.local_library_songs();
+        if songs.is_empty() {
+            self.logger
+                .info("No local songs found. Check Settings sources.".to_string());
+            return;
+        }
+
+        self.center_panel.set_local_library(songs.clone());
+        self.play_album_from(songs, 0);
     }
 
     fn paths_equivalent(left: &Path, right: &Path) -> bool {
@@ -4054,14 +4093,14 @@ mod tests {
 
         assert_eq!(
             app.left_panel.selected_item_label().as_deref(),
-            Some("Alpha")
+            Some("All Local Tracks")
         );
 
         app.delegate_scroll_at(1, 5, key(KeyCode::Down));
 
         assert_eq!(
             app.left_panel.selected_item_label().as_deref(),
-            Some("Beta")
+            Some("Alpha")
         );
         assert_eq!(app.focused_window, FocusedWindow::Center);
 

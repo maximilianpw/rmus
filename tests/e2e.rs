@@ -2066,7 +2066,21 @@ fn test_local_tab_discovers_album_folders_under_source() {
         text.contains("Beta"),
         "second local child album folder should appear in the left panel"
     );
+    assert!(
+        text.contains("All Local Tracks"),
+        "local tab should offer a whole-library collection when multiple albums are available"
+    );
 
+    app.execute(Action::SelectAlbum);
+    let frame = terminal.draw(|frame| app.render(frame)).unwrap();
+    let text = extract_buffer_text(frame.buffer);
+    assert!(text.contains("01 - First.flac"));
+    assert!(
+        text.contains("01 - Second.flac"),
+        "opening All Local Tracks should show tracks from sibling albums"
+    );
+
+    app.left_panel.handle_events(make_key(KeyCode::Down));
     app.execute(Action::SelectAlbum);
     let frame = terminal.draw(|frame| app.render(frame)).unwrap();
     let text = extract_buffer_text(frame.buffer);
@@ -2099,6 +2113,7 @@ fn test_local_source_entry_excludes_child_album_tracks() {
     let backend = TestBackend::new(180, 40);
     let mut terminal = Terminal::new(backend).unwrap();
 
+    app.left_panel.handle_events(make_key(KeyCode::Down));
     app.execute(Action::SelectAlbum);
     let frame = terminal.draw(|frame| app.render(frame)).unwrap();
     let text = extract_buffer_text(frame.buffer);
@@ -2161,6 +2176,55 @@ fn test_left_panel_play_selected_local_album_starts_collection() {
     assert!(text.contains("Queue (2 tracks)"));
     assert!(text.contains("> 1. 01 - First.flac"));
     assert!(text.contains("  2. 02 - Second.flac"));
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn test_left_panel_play_all_local_tracks_starts_full_library() {
+    let dir = test_dir("left-play-all-local-tracks");
+    std::fs::create_dir_all(dir.join("Alpha")).unwrap();
+    std::fs::create_dir_all(dir.join("Beta")).unwrap();
+    std::fs::write(dir.join("Alpha").join("01 - Alpha.flac"), "").unwrap();
+    std::fs::write(dir.join("Beta").join("01 - Beta.flac"), "").unwrap();
+
+    let config = Config {
+        local: LocalConfig {
+            sources: vec![LocalSource {
+                name: "Library".to_string(),
+                path: dir.clone(),
+            }],
+        },
+        ..default_config()
+    };
+    let (player, played, _enqueued) = MockPlayer::new();
+    let mut app = App::new_for_test_with_playlist_store_and_player(
+        config,
+        None,
+        None,
+        PlaylistStore::with_dir(test_dir("left-play-all-local-tracks-playlists")),
+        Box::new(player),
+    );
+
+    assert_eq!(
+        app.left_panel.selected_item_label().as_deref(),
+        Some("All Local Tracks")
+    );
+    app.execute(Action::PlaySelectedCollection);
+
+    let played = played.lock().unwrap();
+    assert_eq!(played.len(), 1);
+    assert_eq!(played[0].title, "01 - Alpha.flac");
+    drop(played);
+
+    app.execute(Action::ShowQueue);
+    let backend = TestBackend::new(180, 40);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let frame = terminal.draw(|frame| app.render(frame)).unwrap();
+    let text = extract_buffer_text(frame.buffer);
+    assert!(text.contains("Queue (2 tracks)"));
+    assert!(text.contains("> 1. 01 - Alpha.flac"));
+    assert!(text.contains("  2. 01 - Beta.flac"));
 
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -2312,6 +2376,7 @@ fn test_added_local_source_can_be_opened_immediately() {
     );
 
     app.delegate_key_to_panel(make_key(KeyCode::Esc));
+    app.left_panel.handle_events(make_key(KeyCode::Down));
     app.execute(Action::SelectAlbum);
 
     let frame = terminal.draw(|frame| app.render(frame)).unwrap();
@@ -2354,6 +2419,7 @@ fn test_added_local_source_returns_focus_to_browsable_local_list() {
     assert_eq!(app.focused_window, FocusedWindow::Left);
     assert_eq!(app.left_panel.active_tab_name(), "Local");
 
+    dispatch_key(&mut app, make_key(KeyCode::Down));
     dispatch_key(&mut app, make_key(KeyCode::Down));
     dispatch_key(&mut app, make_key(KeyCode::Enter));
 
@@ -2456,6 +2522,7 @@ fn test_editing_local_source_updates_left_panel_immediately() {
     );
 
     app.delegate_key_to_panel(make_key(KeyCode::Esc));
+    app.left_panel.handle_events(make_key(KeyCode::Down));
     app.execute(Action::SelectAlbum);
 
     let frame = terminal.draw(|frame| app.render(frame)).unwrap();
@@ -2511,6 +2578,7 @@ fn test_reordering_local_sources_updates_left_panel_immediately() {
     );
 
     app.delegate_key_to_panel(make_key(KeyCode::Esc));
+    app.left_panel.handle_events(make_key(KeyCode::Down));
     app.execute(Action::SelectAlbum);
 
     let frame = terminal.draw(|frame| app.render(frame)).unwrap();
@@ -4537,6 +4605,7 @@ fn test_refresh_library_keeps_open_source_root_tracks_separate_from_child_albums
     let backend = TestBackend::new(180, 40);
     let mut terminal = Terminal::new(backend).unwrap();
 
+    app.left_panel.handle_events(make_key(KeyCode::Down));
     app.execute(Action::SelectAlbum);
     std::fs::write(dir.join("02 - Added Root Track.flac"), "").unwrap();
     app.execute(Action::RefreshLibrary);

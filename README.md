@@ -6,7 +6,7 @@ It is focused on fast local-library playback with playlist and queue workflows, 
 
 ## Features
 
-- Local music sources configured from the settings UI, with cached album-folder discovery under each source.
+- Local music sources configured from the settings UI, with cached album-folder discovery under each source and an all-local-tracks collection for whole-library playback.
 - Audio-file filtering, album-aware row labels, disc/track-aware ordering, and cached best-effort metadata reading via `lofty`.
 - mpv-backed playback with pause, stop, next/previous, seek, volume/mute, shuffle, and repeat controls.
 - Now-playing metadata for artist, album, disc, track, stream source, quality, duration, remaining time, queue position, current-track markers, and favorite markers in song lists.
@@ -171,6 +171,7 @@ Global:
 
 Left panel:
 
+- Local tab: `All Local Tracks` opens, plays, queues, or favorites the full configured local library when more than one local collection is available.
 - `h` / `l` or arrow keys: switch source tabs.
 - `j` / `k` or arrow keys: move selection.
 - `PageUp` / `PageDown`: move selection by 10 rows.

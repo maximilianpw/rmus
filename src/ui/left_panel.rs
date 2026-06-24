@@ -20,6 +20,13 @@ use crate::{
 
 pub const TABS_HEIGHT: u16 = 3;
 const PAGE_STEP: usize = 10;
+const ALL_LOCAL_TRACKS_LABEL: &str = "All Local Tracks";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SourceItemIndex {
+    AllLocalTracks,
+    Album(usize),
+}
 
 #[derive(Debug)]
 pub struct LeftPanel {
@@ -27,8 +34,9 @@ pub struct LeftPanel {
     items: Vec<Box<dyn MusicSource>>,
     list_state: ListState,
     all_items: Vec<String>,
+    all_item_indices: Vec<SourceItemIndex>,
     cached_items: Vec<String>,
-    visible_indices: Vec<usize>,
+    visible_indices: Vec<SourceItemIndex>,
     filter_input: InputLine,
     status_line: Option<String>,
     logger: Logger,
@@ -41,6 +49,7 @@ impl LeftPanel {
             items: sources,
             list_state: ListState::default(),
             all_items: Vec::new(),
+            all_item_indices: Vec::new(),
             cached_items: Vec::new(),
             visible_indices: Vec::new(),
             filter_input: InputLine::new(),
@@ -53,9 +62,21 @@ impl LeftPanel {
 
     pub fn update_cache(&mut self) {
         if let Some(sources) = self.items.get(self.selected_tab_index) {
-            self.all_items = sources.get_albums();
+            let albums = sources.get_albums();
+            self.all_items.clear();
+            self.all_item_indices.clear();
+
+            if sources.name() == "Local" && albums.len() > 1 {
+                self.all_items.push(ALL_LOCAL_TRACKS_LABEL.to_string());
+                self.all_item_indices.push(SourceItemIndex::AllLocalTracks);
+            }
+
+            self.all_items.extend(albums.iter().cloned());
+            self.all_item_indices
+                .extend((0..albums.len()).map(SourceItemIndex::Album));
         } else {
             self.all_items.clear();
+            self.all_item_indices.clear();
         }
 
         self.apply_filter_to_cache();
@@ -69,7 +90,9 @@ impl LeftPanel {
         for (index, item) in self.all_items.iter().enumerate() {
             if query.is_empty() || item.to_lowercase().contains(&query) {
                 self.cached_items.push(item.clone());
-                self.visible_indices.push(index);
+                if let Some(item_index) = self.all_item_indices.get(index) {
+                    self.visible_indices.push(*item_index);
+                }
             }
         }
 
@@ -262,11 +285,20 @@ impl LeftPanel {
 
     pub fn get_selected_album(&self) -> Option<(PathBuf, Vec<Song>)> {
         let visible_idx = self.list_state.selected()?;
-        let idx = *self.visible_indices.get(visible_idx)?;
+        let SourceItemIndex::Album(idx) = *self.visible_indices.get(visible_idx)? else {
+            return None;
+        };
         let source = self.items.get(self.selected_tab_index)?;
         let path = source.get_album_path(idx)?;
         let songs = source.get_songs_from_album(path.clone());
         Some((path, songs))
+    }
+
+    pub fn selected_all_local_tracks(&self) -> bool {
+        self.list_state
+            .selected()
+            .and_then(|index| self.visible_indices.get(index))
+            .is_some_and(|index| *index == SourceItemIndex::AllLocalTracks)
     }
 
     pub fn active_tab_name(&self) -> String {
@@ -295,7 +327,10 @@ impl LeftPanel {
         self.list_state
             .selected()
             .and_then(|index| self.visible_indices.get(index))
-            .copied()
+            .and_then(|index| match index {
+                SourceItemIndex::Album(index) => Some(*index),
+                SourceItemIndex::AllLocalTracks => None,
+            })
     }
 
     pub fn selected_item_label(&self) -> Option<String> {
@@ -487,7 +522,7 @@ mod tests {
         let (_log_panel, logger) = crate::ui::log_panel::LogPanel::new();
         let mut panel = LeftPanel::new(
             vec![Box::new(FakeSource::new(
-                "Local",
+                "Albums",
                 &["First", "Second", "Third"],
             ))],
             logger,
@@ -512,7 +547,7 @@ mod tests {
         let albums: Vec<String> = (1..=12).map(|n| format!("Album {n}")).collect();
         let album_refs: Vec<&str> = albums.iter().map(String::as_str).collect();
         let mut panel = LeftPanel::new(
-            vec![Box::new(FakeSource::new("Local", &album_refs))],
+            vec![Box::new(FakeSource::new("Albums", &album_refs))],
             logger,
         );
 
@@ -534,7 +569,7 @@ mod tests {
         let (_log_panel, logger) = crate::ui::log_panel::LogPanel::new();
         let mut panel = LeftPanel::new(
             vec![Box::new(FakeSource::new(
-                "Local",
+                "Albums",
                 &["Jazz Records", "Road Songs", "Sleep Sounds"],
             ))],
             logger,
@@ -558,7 +593,7 @@ mod tests {
         let (_log_panel, logger) = crate::ui::log_panel::LogPanel::new();
         let mut panel = LeftPanel::new(
             vec![Box::new(FakeSource::new(
-                "Local",
+                "Albums",
                 &["Jazz Records", "Road Songs"],
             ))],
             logger,
@@ -573,6 +608,30 @@ mod tests {
         assert!(!panel.handles_escape());
         assert_eq!(panel.selected_item_index(), Some(0));
         assert_eq!(panel.selected_item_label().as_deref(), Some("Jazz Records"));
+    }
+
+    #[test]
+    fn local_tab_prepends_all_tracks_for_multiple_collections() {
+        let (_log_panel, logger) = crate::ui::log_panel::LogPanel::new();
+        let mut panel = LeftPanel::new(
+            vec![Box::new(FakeSource::new(
+                "Local",
+                &["Jazz Records", "Road Songs"],
+            ))],
+            logger,
+        );
+
+        assert_eq!(
+            panel.selected_item_label().as_deref(),
+            Some(ALL_LOCAL_TRACKS_LABEL)
+        );
+        assert!(panel.selected_all_local_tracks());
+        assert!(panel.get_selected_album().is_none());
+
+        panel.handle_events(KeyEvent::from(KeyCode::Down));
+        assert_eq!(panel.selected_item_label().as_deref(), Some("Jazz Records"));
+        assert_eq!(panel.selected_item_index(), Some(0));
+        assert!(!panel.selected_all_local_tracks());
     }
 
     #[test]

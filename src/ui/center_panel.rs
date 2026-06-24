@@ -228,6 +228,20 @@ impl CenterPanel {
         }
     }
 
+    pub fn set_local_library(&mut self, songs: Vec<Song>) {
+        self.selected_album = None;
+        self.selected_album_title = Some(LOCAL_LIBRARY_TITLE.to_string());
+        self.local_filter_mode = false;
+        self.album_songs = songs.clone();
+        self.songs = songs;
+        self.mode = CenterPanelMode::Album;
+        if !self.songs.is_empty() {
+            self.list_state.select(Some(0));
+        } else {
+            self.list_state.select(None);
+        }
+    }
+
     pub fn selected_album_path(&self) -> Option<&PathBuf> {
         self.selected_album.as_ref()
     }

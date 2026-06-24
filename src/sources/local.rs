@@ -597,6 +597,21 @@ impl LocalFiles {
         Self::songs_from_files_using_cached_metadata(files, &cache)
     }
 
+    pub(crate) fn songs_from_sources_using_cached_metadata_with_cache_path(
+        sources: &[LocalSource],
+        cache_path: PathBuf,
+    ) -> Vec<Song> {
+        let mut files = Vec::new();
+        for source in sources {
+            collect_audio_files(&source.path, &mut files);
+        }
+        sort_audio_paths(&mut files);
+        files.dedup();
+
+        let cache = LocalTrackCache::with_path(cache_path);
+        Self::songs_from_files_using_cached_metadata(files, &cache)
+    }
+
     pub fn scan_sources(sources: &[LocalSource]) -> Result<usize, std::io::Error> {
         Self::scan_sources_with_cache_path(sources, LocalTrackCache::default_path())
     }
