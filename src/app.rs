@@ -1889,6 +1889,11 @@ impl App {
         true
     }
 
+    fn show_login_notice(&mut self, message: String) {
+        self.login_notice = Some(message.clone());
+        self.logger.info(message);
+    }
+
     pub(crate) fn delegate_scroll_at(&mut self, column: u16, row: u16, key: KeyEvent) {
         if self.settings_panel.opened {
             self.delegate_key_to_panel(key);
@@ -2054,7 +2059,7 @@ impl App {
             let message = "Enter Qobuz email and password first".to_string();
             self.settings_panel
                 .set_qobuz_status_message(Some(message.clone()), true);
-            self.login_notice = Some(message);
+            self.show_login_notice(message);
             return;
         }
 
@@ -2480,8 +2485,7 @@ impl App {
             }
             StreamingSubmitResult::Unavailable { status } => {
                 self.center_panel.set_status(Some(status.clone()));
-                self.login_notice = Some(status.clone());
-                self.logger.info(status);
+                self.show_login_notice(status);
             }
             StreamingSubmitResult::Busy => {
                 self.logger
@@ -3130,7 +3134,6 @@ impl App {
                 self.pending_auth_service = Some(service_id);
                 self.deferred_search = deferred_query;
                 self.center_panel.set_status(Some(message.clone()));
-                self.login_notice = Some(message.clone());
                 match service_id {
                     StreamingServiceId::Qobuz => self
                         .settings_panel
@@ -3139,7 +3142,7 @@ impl App {
                         .settings_panel
                         .set_tidal_status_message(Some(message.clone()), false),
                 }
-                self.logger.info(message);
+                self.show_login_notice(message);
             }
             StreamingTaskOutput::AuthCompleted => {
                 self.logger

@@ -8735,6 +8735,42 @@ fn test_account_settings_can_check_qobuz_login() {
 }
 
 #[test]
+fn test_qobuz_login_without_credentials_shows_same_notice_in_popup_and_log() {
+    let notice = "Enter Qobuz email and password first";
+    let mut app = make_app(None, None);
+    let backend = TestBackend::new(240, 40);
+    let mut terminal = Terminal::new(backend).unwrap();
+
+    app.execute(Action::ToggleSettings);
+    app.settings_panel.next_tab();
+    app.delegate_key_to_panel(make_key(KeyCode::Char('q')));
+    app.tick();
+
+    let text = render_app_text(&mut app, &mut terminal);
+    assert!(
+        text.contains("Login Required"),
+        "missing Qobuz credentials should show a login popup"
+    );
+    assert!(
+        text.contains(notice),
+        "login popup should show the same notice text as the log"
+    );
+
+    app.delegate_key_to_panel(make_key(KeyCode::Esc));
+    app.delegate_key_to_panel(make_key(KeyCode::Esc));
+
+    let text = render_app_text(&mut app, &mut terminal);
+    assert!(
+        !text.contains("Login Required"),
+        "Esc should dismiss the login popup before closing settings"
+    );
+    assert!(
+        text.contains(&format!("INFO: {notice}")),
+        "the same Qobuz login notice should remain visible in the log"
+    );
+}
+
+#[test]
 fn test_account_clear_shows_feedback() {
     let config = Config {
         qobuz: Some(QobuzConfig {
