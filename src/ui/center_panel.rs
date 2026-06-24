@@ -2149,6 +2149,98 @@ impl CenterPanel {
         }
     }
 
+    pub fn select_at(&mut self, area: Rect, column: u16, row: u16) -> bool {
+        match self.mode {
+            CenterPanelMode::SearchInput if self.local_filter_mode => {
+                let [_input_area, list_area] =
+                    Layout::vertical([Constraint::Length(3), Constraint::Fill(1)]).areas(area);
+                select_list_state_at(
+                    &mut self.list_state,
+                    list_area,
+                    self.songs.len(),
+                    column,
+                    row,
+                )
+            }
+            CenterPanelMode::SearchInput => {
+                let [_input_area, list_area] =
+                    Layout::vertical([Constraint::Length(3), Constraint::Fill(1)]).areas(area);
+                select_list_state_at(
+                    &mut self.album_list_state,
+                    list_area,
+                    self.album_display_titles.len(),
+                    column,
+                    row,
+                )
+            }
+            CenterPanelMode::Album
+            | CenterPanelMode::SearchResults
+            | CenterPanelMode::AlbumTracks => {
+                select_list_state_at(&mut self.list_state, area, self.songs.len(), column, row)
+            }
+            CenterPanelMode::AlbumResults => select_list_state_at(
+                &mut self.album_list_state,
+                area,
+                self.album_display_titles.len(),
+                column,
+                row,
+            ),
+            CenterPanelMode::Queue => {
+                let list_area = if self.queue_filter_input.is_input_mode()
+                    || self.has_queue_filter_query()
+                {
+                    let [_filter_area, list_area] =
+                        Layout::vertical([Constraint::Length(3), Constraint::Fill(1)]).areas(area);
+                    list_area
+                } else {
+                    area
+                };
+                select_list_state_at(
+                    &mut self.queue_list_state,
+                    list_area,
+                    self.queue_visible_indices.len(),
+                    column,
+                    row,
+                )
+            }
+            CenterPanelMode::History => {
+                let list_area = if self.history_filter_input.is_input_mode()
+                    || self.has_history_filter_query()
+                {
+                    let [_filter_area, list_area] =
+                        Layout::vertical([Constraint::Length(3), Constraint::Fill(1)]).areas(area);
+                    list_area
+                } else {
+                    area
+                };
+                select_list_state_at(
+                    &mut self.history_list_state,
+                    list_area,
+                    self.history_visible_indices.len(),
+                    column,
+                    row,
+                )
+            }
+            CenterPanelMode::ArtistResults => select_list_state_at(
+                &mut self.artist_list_state,
+                area,
+                self.artist_display_titles.len(),
+                column,
+                row,
+            ),
+            CenterPanelMode::PlaylistPicker => select_list_state_at(
+                &mut self.playlist_picker_state,
+                area,
+                self.playlist_picker_names.len(),
+                column,
+                row,
+            ),
+            CenterPanelMode::CreatePlaylist
+            | CenterPanelMode::RenamePlaylist
+            | CenterPanelMode::DuplicatePlaylist => false,
+        }
+    }
+
     pub fn get_songs(&self) -> Vec<Song> {
         self.songs.clone()
     }
@@ -2379,6 +2471,49 @@ impl CenterPanel {
         };
         self.artist_list_state.select(Some(i));
     }
+}
+
+fn select_list_state_at(
+    list_state: &mut ListState,
+    list_area: Rect,
+    len: usize,
+    column: u16,
+    row: u16,
+) -> bool {
+    let Some(index) = list_index_at(list_area, list_state.offset(), len, column, row) else {
+        return false;
+    };
+
+    list_state.select(Some(index));
+    true
+}
+
+fn list_index_at(
+    list_area: Rect,
+    offset: usize,
+    len: usize,
+    column: u16,
+    row: u16,
+) -> Option<usize> {
+    if len == 0 {
+        return None;
+    }
+
+    let inner = Block::bordered().inner(list_area);
+    if !rect_contains(inner, column, row) {
+        return None;
+    }
+
+    let clicked_row = usize::from(row.saturating_sub(inner.y));
+    let index = offset.saturating_add(clicked_row);
+    (index < len).then_some(index)
+}
+
+fn rect_contains(rect: Rect, column: u16, row: u16) -> bool {
+    column >= rect.x
+        && column < rect.x.saturating_add(rect.width)
+        && row >= rect.y
+        && row < rect.y.saturating_add(rect.height)
 }
 
 impl Default for CenterPanel {
@@ -2629,6 +2764,18 @@ mod tests {
 
         panel.handle_events(KeyEvent::from(KeyCode::PageUp));
         assert_eq!(panel.get_selected_index(), Some(0));
+    }
+
+    #[test]
+    fn mouse_selection_respects_visible_center_list_offset() {
+        let mut panel = CenterPanel::new();
+        let songs: Vec<Song> = (1..=12).map(|n| song(&format!("Song {n}"))).collect();
+        panel.set_album(PathBuf::from("/music/album"), songs);
+        *panel.list_state.offset_mut() = 5;
+
+        assert!(panel.select_at(Rect::new(0, 0, 40, 8), 1, 1));
+
+        assert_eq!(panel.get_selected_index(), Some(5));
     }
 
     #[test]

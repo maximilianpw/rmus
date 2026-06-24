@@ -28,6 +28,14 @@ enum SourceItemIndex {
     Album(usize),
 }
 
+#[derive(Debug, Clone, Copy)]
+struct LeftPanelLayout {
+    tabs: Rect,
+    filter: Option<Rect>,
+    status: Option<Rect>,
+    list: Rect,
+}
+
 #[derive(Debug)]
 pub struct LeftPanel {
     selected_tab_index: usize,
@@ -106,56 +114,16 @@ impl LeftPanel {
     }
 
     pub fn render(&mut self, frame: &mut Frame, area: Rect, is_focused: bool) {
-        let show_filter = self.filter_input.is_input_mode() || self.has_filter_query();
-        let show_status = self
-            .status_line
-            .as_deref()
-            .is_some_and(|line| !line.trim().is_empty());
-        let (tabs_area, filter_area, status_area, list_area) = match (show_filter, show_status) {
-            (true, true) => {
-                let layout = Layout::vertical([
-                    Constraint::Length(TABS_HEIGHT),
-                    Constraint::Length(3),
-                    Constraint::Length(1),
-                    Constraint::Fill(1),
-                ]);
-                let [tabs_area, filter_area, status_area, list_area] = layout.areas(area);
-                (tabs_area, Some(filter_area), Some(status_area), list_area)
-            }
-            (true, false) => {
-                let layout = Layout::vertical([
-                    Constraint::Length(TABS_HEIGHT),
-                    Constraint::Length(3),
-                    Constraint::Fill(1),
-                ]);
-                let [tabs_area, filter_area, list_area] = layout.areas(area);
-                (tabs_area, Some(filter_area), None, list_area)
-            }
-            (false, true) => {
-                let layout = Layout::vertical([
-                    Constraint::Length(TABS_HEIGHT),
-                    Constraint::Length(1),
-                    Constraint::Fill(1),
-                ]);
-                let [tabs_area, status_area, list_area] = layout.areas(area);
-                (tabs_area, None, Some(status_area), list_area)
-            }
-            (false, false) => {
-                let layout =
-                    Layout::vertical([Constraint::Length(TABS_HEIGHT), Constraint::Fill(1)]);
-                let [tabs_area, list_area] = layout.areas(area);
-                (tabs_area, None, None, list_area)
-            }
-        };
+        let layout = self.layout(area);
         let tab_names: Vec<String> = self.items.iter().map(|s| s.name()).collect();
 
         let tabs = tabs_from_strings(&tab_names, self.selected_tab_index, is_focused);
-        frame.render_widget(tabs, tabs_area);
+        frame.render_widget(tabs, layout.tabs);
 
-        if let Some(filter_area) = filter_area {
+        if let Some(filter_area) = layout.filter {
             self.render_filter(frame, filter_area, is_focused);
         }
-        if let Some(status_area) = status_area {
+        if let Some(status_area) = layout.status {
             self.render_status(frame, status_area);
         }
 
@@ -168,7 +136,86 @@ impl LeftPanel {
                 .collect()
         };
         let list = self.list_from_items(list_items, is_focused);
-        frame.render_stateful_widget(list, list_area, &mut self.list_state);
+        frame.render_stateful_widget(list, layout.list, &mut self.list_state);
+    }
+
+    fn layout(&self, area: Rect) -> LeftPanelLayout {
+        let show_filter = self.filter_input.is_input_mode() || self.has_filter_query();
+        let show_status = self
+            .status_line
+            .as_deref()
+            .is_some_and(|line| !line.trim().is_empty());
+        match (show_filter, show_status) {
+            (true, true) => {
+                let layout = Layout::vertical([
+                    Constraint::Length(TABS_HEIGHT),
+                    Constraint::Length(3),
+                    Constraint::Length(1),
+                    Constraint::Fill(1),
+                ]);
+                let [tabs_area, filter_area, status_area, list_area] = layout.areas(area);
+                LeftPanelLayout {
+                    tabs: tabs_area,
+                    filter: Some(filter_area),
+                    status: Some(status_area),
+                    list: list_area,
+                }
+            }
+            (true, false) => {
+                let layout = Layout::vertical([
+                    Constraint::Length(TABS_HEIGHT),
+                    Constraint::Length(3),
+                    Constraint::Fill(1),
+                ]);
+                let [tabs_area, filter_area, list_area] = layout.areas(area);
+                LeftPanelLayout {
+                    tabs: tabs_area,
+                    filter: Some(filter_area),
+                    status: None,
+                    list: list_area,
+                }
+            }
+            (false, true) => {
+                let layout = Layout::vertical([
+                    Constraint::Length(TABS_HEIGHT),
+                    Constraint::Length(1),
+                    Constraint::Fill(1),
+                ]);
+                let [tabs_area, status_area, list_area] = layout.areas(area);
+                LeftPanelLayout {
+                    tabs: tabs_area,
+                    filter: None,
+                    status: Some(status_area),
+                    list: list_area,
+                }
+            }
+            (false, false) => {
+                let layout =
+                    Layout::vertical([Constraint::Length(TABS_HEIGHT), Constraint::Fill(1)]);
+                let [tabs_area, list_area] = layout.areas(area);
+                LeftPanelLayout {
+                    tabs: tabs_area,
+                    filter: None,
+                    status: None,
+                    list: list_area,
+                }
+            }
+        }
+    }
+
+    pub fn select_at(&mut self, area: Rect, column: u16, row: u16) -> bool {
+        let Some(index) = list_index_at(
+            self.layout(area).list,
+            self.list_state.offset(),
+            self.cached_items.len(),
+            column,
+            row,
+        ) else {
+            return false;
+        };
+
+        self.list_state.select(Some(index));
+        true
     }
 
     pub fn handle_events(&mut self, key: KeyEvent) {
@@ -494,6 +541,34 @@ impl LeftPanel {
     }
 }
 
+fn list_index_at(
+    list_area: Rect,
+    offset: usize,
+    len: usize,
+    column: u16,
+    row: u16,
+) -> Option<usize> {
+    if len == 0 {
+        return None;
+    }
+
+    let inner = Block::bordered().inner(list_area);
+    if !rect_contains(inner, column, row) {
+        return None;
+    }
+
+    let clicked_row = usize::from(row.saturating_sub(inner.y));
+    let index = offset.saturating_add(clicked_row);
+    (index < len).then_some(index)
+}
+
+fn rect_contains(rect: Rect, column: u16, row: u16) -> bool {
+    column >= rect.x
+        && column < rect.x.saturating_add(rect.width)
+        && row >= rect.y
+        && row < rect.y.saturating_add(rect.height)
+}
+
 #[cfg(test)]
 mod tests {
     use ratatui::{backend::TestBackend, buffer::Buffer, Terminal};
@@ -593,6 +668,22 @@ mod tests {
 
         panel.handle_events(KeyEvent::from(KeyCode::PageUp));
         assert_eq!(panel.selected_item_index(), Some(0));
+    }
+
+    #[test]
+    fn mouse_selection_respects_visible_list_offset() {
+        let (_log_panel, logger) = crate::ui::log_panel::LogPanel::new();
+        let albums: Vec<String> = (1..=12).map(|n| format!("Album {n}")).collect();
+        let album_refs: Vec<&str> = albums.iter().map(String::as_str).collect();
+        let mut panel = LeftPanel::new(
+            vec![Box::new(FakeSource::new("Albums", &album_refs))],
+            logger,
+        );
+        *panel.list_state.offset_mut() = 5;
+
+        assert!(panel.select_at(Rect::new(0, 0, 40, 8), 1, 4));
+
+        assert_eq!(panel.selected_item_index(), Some(5));
     }
 
     #[test]

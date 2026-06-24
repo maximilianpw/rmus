@@ -1938,6 +1938,17 @@ impl App {
 
         if let Some(target) = self.focused_window_at(column, row) {
             self.focused_window = target;
+            match target {
+                FocusedWindow::Left => {
+                    self.left_panel
+                        .select_at(self.last_panel_layout.left, column, row);
+                }
+                FocusedWindow::Center => {
+                    self.center_panel
+                        .select_at(self.last_panel_layout.center, column, row);
+                }
+                _ => {}
+            }
         }
     }
 
@@ -4216,6 +4227,71 @@ mod tests {
 
         app.focus_at(1, 5);
         assert_eq!(app.focused_window, FocusedWindow::Left);
+    }
+
+    #[test]
+    fn mouse_click_selects_left_panel_row() {
+        let dir = temp_dir("mouse-click-selects-left-panel-row");
+        fs::create_dir_all(dir.join("Alpha")).unwrap();
+        fs::create_dir_all(dir.join("Beta")).unwrap();
+        fs::write(dir.join("Alpha").join("01 - Alpha.flac"), "").unwrap();
+        fs::write(dir.join("Beta").join("01 - Beta.flac"), "").unwrap();
+        let mut config = default_config();
+        config.local.sources.push(LocalSource {
+            name: "Library".to_string(),
+            path: dir.clone(),
+        });
+        let mut app = App::new_for_test(config, None, None);
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+
+        assert_eq!(
+            app.left_panel.selected_item_label().as_deref(),
+            Some("All Local Tracks")
+        );
+
+        app.focus_at(1, 6);
+
+        assert_eq!(app.focused_window, FocusedWindow::Left);
+        assert_eq!(
+            app.left_panel.selected_item_label().as_deref(),
+            Some("Beta")
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn mouse_click_selects_center_panel_song_row() {
+        let mut app = App::new_for_test(default_config(), None, None);
+        app.center_panel.set_album(
+            PathBuf::from("/music/album"),
+            vec![
+                Song {
+                    title: "First".to_string(),
+                    ..Default::default()
+                },
+                Song {
+                    title: "Second".to_string(),
+                    ..Default::default()
+                },
+                Song {
+                    title: "Third".to_string(),
+                    ..Default::default()
+                },
+            ],
+        );
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+
+        assert_eq!(app.center_panel.get_selected_index(), Some(0));
+
+        app.focus_at(30, 2);
+
+        assert_eq!(app.focused_window, FocusedWindow::Center);
+        assert_eq!(app.center_panel.get_selected_index(), Some(1));
     }
 
     #[test]
