@@ -119,15 +119,22 @@ pub fn now_playing_widget(info: &PlaybackInfo, is_focused: bool, frame: &mut Fra
     frame.render_widget(gauge, Rect::new(inner.x, row_y, inner.width, 1));
     row_y += 1;
 
-    let time_str = format!(
-        "{} / {}",
-        playback_time_label(info.position),
-        playback_time_label(info.duration)
-    );
+    let time_str = playback_progress_label(info.position, info.duration);
     frame.render_widget(
         Paragraph::new(time_str).alignment(Alignment::Center),
         Rect::new(inner.x, row_y, inner.width, 1),
     );
+}
+
+fn playback_progress_label(position: f64, duration: f64) -> String {
+    let elapsed = playback_time_label(position);
+    let total = playback_time_label(duration);
+    if duration.is_finite() && duration > 0.0 && position.is_finite() {
+        let remaining = (duration - position).max(0.0);
+        return format!("{elapsed} / {total} (-{})", playback_time_label(remaining));
+    }
+
+    format!("{elapsed} / {total}")
 }
 
 fn playback_time_label(seconds: f64) -> String {
@@ -350,6 +357,57 @@ mod tests {
     }
 
     #[test]
+    fn now_playing_widget_shows_remaining_time_when_duration_is_known() {
+        let backend = TestBackend::new(80, 5);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let info = PlaybackInfo {
+            state: PlaybackState::Playing,
+            current_song: Some(Song {
+                title: "Countdown".to_string(),
+                ..Default::default()
+            }),
+            position: 30.0,
+            duration: 120.0,
+            volume: 50,
+            last_error: None,
+            ..Default::default()
+        };
+
+        let frame = terminal
+            .draw(|frame| now_playing_widget(&info, false, frame, frame.area()))
+            .unwrap();
+        let text = extract_buffer_text(frame.buffer);
+
+        assert!(text.contains("00:30 / 02:00 (-01:30)"));
+    }
+
+    #[test]
+    fn now_playing_widget_omits_remaining_time_when_duration_is_unknown() {
+        let backend = TestBackend::new(80, 5);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let info = PlaybackInfo {
+            state: PlaybackState::Playing,
+            current_song: Some(Song {
+                title: "Live Stream".to_string(),
+                ..Default::default()
+            }),
+            position: 30.0,
+            duration: 0.0,
+            volume: 50,
+            last_error: None,
+            ..Default::default()
+        };
+
+        let frame = terminal
+            .draw(|frame| now_playing_widget(&info, false, frame, frame.area()))
+            .unwrap();
+        let text = extract_buffer_text(frame.buffer);
+
+        assert!(text.contains("00:30 / 00:00"));
+        assert!(!text.contains("(-"));
+    }
+
+    #[test]
     fn now_playing_widget_shows_artist_and_album_metadata() {
         let backend = TestBackend::new(60, 7);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -461,6 +519,6 @@ mod tests {
             .unwrap();
         let text = extract_buffer_text(frame.buffer);
 
-        assert!(text.contains("1:01:01 / 1:10:00"));
+        assert!(text.contains("1:01:01 / 1:10:00 (-08:59)"));
     }
 }
