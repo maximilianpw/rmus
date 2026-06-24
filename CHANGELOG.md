@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.0.1 - 2026-06-24
+
+Fixes:
+
+- Allow volume and mute changes before mpv has been started, avoiding a `Player not connected` error immediately after launching `rmus`.
+
 ## v1.0.0 - 2026-06-24
 
 First stable release of `rmus`, a keyboard-driven terminal music player for local libraries and Qobuz/Tidal streaming.

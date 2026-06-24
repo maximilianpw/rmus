@@ -1,6 +1,6 @@
 [package]
 name = "rmus"
-version = "1.0.0"
+version = "1.0.1"
 description = "Keyboard-driven terminal music player"
 authors = ["Maximilian PINDER-WHITE <mpinderwhite@proton.me>"]
 license = "MIT"
